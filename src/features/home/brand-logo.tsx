@@ -4,6 +4,7 @@ import { companyInfo } from "@/config/company";
 import { cn } from "@/lib/utils";
 
 type BrandLogoProps = {
+  animateArrow?: boolean;
   className?: string;
   imageClassName?: string;
   priority?: boolean;
@@ -11,6 +12,7 @@ type BrandLogoProps = {
 };
 
 export function BrandLogo({
+  animateArrow = false,
   className,
   imageClassName,
   priority = false,
@@ -33,6 +35,12 @@ export function BrandLogo({
         priority={priority}
         className={cn("h-auto w-full object-contain", imageClassName)}
       />
+      {animateArrow ? (
+        <span aria-hidden="true" className="brand-logo-arrow-shine">
+          <span className="brand-logo-arrow-shine__runner" />
+          <span className="brand-logo-arrow-shine__burst" />
+        </span>
+      ) : null}
     </div>
   );
 }

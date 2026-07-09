@@ -22,3 +22,4 @@ credentials.json
 google-credentials.json
 *service-account*.json
 eben-ezer-business-*.json
+.env*

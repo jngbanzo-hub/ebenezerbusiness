@@ -72,3 +72,177 @@ body {
       0 0 0 1px rgba(30, 99, 255, 0.18);
   }
 }
+
+@layer components {
+  .brand-logo-arrow-shine {
+    pointer-events: none;
+    position: absolute;
+    left: 33.5%;
+    top: 4.5%;
+    width: 46.5%;
+    height: 39.5%;
+    overflow: hidden;
+    clip-path: polygon(4% 88%, 24% 56%, 66% 20%, 99% 0, 90% 20%, 40% 54%, 16% 93%);
+    contain: layout paint;
+    mix-blend-mode: screen;
+    opacity: 0.86;
+    transform: translateZ(0);
+  }
+
+  .brand-logo-arrow-shine::before {
+    content: "";
+    position: absolute;
+    inset: -36% auto -36% -50%;
+    width: 31%;
+    background:
+      linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(56, 189, 248, 0.04) 22%,
+        rgba(255, 255, 255, 0.28) 46%,
+        rgba(163, 230, 53, 0.15) 62%,
+        transparent 100%
+      );
+    filter: blur(0.8px);
+    transform: translate3d(-18%, 0, 0) skewX(-18deg);
+    animation: eeb-arrow-light-sweep 2.85s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+    will-change: transform, opacity;
+  }
+
+  .brand-logo-arrow-shine__runner {
+    position: absolute;
+    left: 5%;
+    top: 67%;
+    width: 11%;
+    height: 20%;
+    border-radius: 999px;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.96) 0 13%, rgba(163, 230, 53, 0.58) 24%, rgba(56, 189, 248, 0.26) 46%, transparent 72%);
+    box-shadow:
+      0 0 9px rgba(255, 255, 255, 0.38),
+      0 0 18px rgba(56, 189, 248, 0.24),
+      0 0 24px rgba(163, 230, 53, 0.14);
+    filter: blur(0.15px);
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.58);
+    animation: eeb-arrow-courier-glow 2.85s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+    will-change: transform, opacity;
+  }
+
+  .brand-logo-arrow-shine__burst {
+    position: absolute;
+    right: 0.5%;
+    top: -2%;
+    width: 16%;
+    aspect-ratio: 1;
+    border-radius: 999px;
+    background:
+      radial-gradient(circle, rgba(255, 255, 255, 0.72) 0 8%, rgba(163, 230, 53, 0.26) 18%, rgba(56, 189, 248, 0.16) 38%, transparent 70%);
+    filter: blur(0.3px);
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.22);
+    animation: eeb-arrow-tip-burst 2.85s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+    will-change: transform, opacity;
+  }
+}
+
+@keyframes eeb-arrow-light-sweep {
+  0%,
+  13% {
+    opacity: 0;
+    transform: translate3d(-28%, 0, 0) skewX(-18deg);
+  }
+
+  22% {
+    opacity: 0.36;
+    transform: translate3d(20%, -5%, 0) skewX(-18deg);
+  }
+
+  50% {
+    opacity: 0.42;
+    transform: translate3d(260%, -12%, 0) skewX(-18deg);
+  }
+
+  78% {
+    opacity: 0.32;
+    transform: translate3d(430%, -19%, 0) skewX(-18deg);
+  }
+
+  88%,
+  100% {
+    opacity: 0;
+    transform: translate3d(468%, -22%, 0) skewX(-18deg);
+  }
+}
+
+@keyframes eeb-arrow-courier-glow {
+  0%,
+  11% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.48);
+  }
+
+  17% {
+    opacity: 0.62;
+    transform: translate3d(55%, -24%, 0) scale(0.62);
+  }
+
+  31% {
+    opacity: 0.78;
+    transform: translate3d(180%, -95%, 0) scale(0.78);
+  }
+
+  48% {
+    opacity: 0.82;
+    transform: translate3d(345%, -185%, 0) scale(0.84);
+  }
+
+  65% {
+    opacity: 0.76;
+    transform: translate3d(505%, -270%, 0) scale(0.76);
+  }
+
+  79% {
+    opacity: 0.68;
+    transform: translate3d(650%, -340%, 0) scale(0.64);
+  }
+
+  86%,
+  100% {
+    opacity: 0;
+    transform: translate3d(690%, -360%, 0) scale(0.36);
+  }
+}
+
+@keyframes eeb-arrow-tip-burst {
+  0%,
+  78% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.24);
+  }
+
+  83% {
+    opacity: 0.46;
+    transform: translate3d(0, 0, 0) scale(0.76);
+  }
+
+  88% {
+    opacity: 0.18;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+
+  93%,
+  100% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.92);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-logo-arrow-shine::before,
+  .brand-logo-arrow-shine__runner,
+  .brand-logo-arrow-shine__burst {
+    animation: none;
+    opacity: 0;
+  }
+}

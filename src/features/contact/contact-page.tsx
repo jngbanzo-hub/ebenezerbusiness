@@ -135,6 +135,7 @@ export function ContactPage() {
                   transition={{ duration: 6.6, repeat: Infinity, ease: "easeInOut" }}
                 >
                   <BrandLogo
+                    animateArrow
                     priority
                     surface="dark"
                     className="w-full p-3 sm:p-4"
