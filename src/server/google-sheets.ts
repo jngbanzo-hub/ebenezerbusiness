@@ -9,6 +9,12 @@ import type { TrackingSite } from "@/features/tracking/tracking-validation";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
 const DEFAULT_TRACKING_SHEETS = ["FIH", "LSHI", "KLZ"] as const;
+const TRACKING_ORIGIN_SITE = "📍 Cotonou, Bénin";
+const TRACKING_DESTINATIONS_BY_SHEET: Record<string, string> = {
+  FIH: "📍 Kinshasa",
+  LSHI: "📍 Lubumbashi",
+  KLZ: "📍 Kolwezi"
+};
 
 const sheetsEnvSchema = z.object({
   GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
@@ -217,13 +223,17 @@ function parsePublicTrackingRow(row: string[], sheetName: string): PublicTrackin
   return {
     trackingId: getCell(row, 0),
     customerName: getCell(row, 1) || "Non renseigné",
-    site: getCell(row, 2) || sheetName,
+    site: TRACKING_ORIGIN_SITE,
     weight: getCell(row, 3) || "Non renseigné",
     amount: getCell(row, 4) || "Non renseigné",
     status: getCell(row, 5) || "Non renseigné",
-    destination: getCell(row, 6) || "Non renseigné",
+    destination: getTrackingDestinationFromSheetName(sheetName),
     expectedDeliveryDate: getCell(row, 7) || "Non renseigné"
   };
+}
+
+function getTrackingDestinationFromSheetName(sheetName: string) {
+  return TRACKING_DESTINATIONS_BY_SHEET[sheetName.trim().toUpperCase()] ?? "📍 Non renseigné";
 }
 
 function getTrackingSheetNames(config: GoogleSheetsConfig) {

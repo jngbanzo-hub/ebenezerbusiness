@@ -83,11 +83,11 @@ export function createMockTrackingResult(trackingId: string): TrackingResult {
   return createTrackingResultFromPublicRecord({
     trackingId,
     customerName: "Client de démonstration",
-    site: "FIH",
+    site: "📍 Cotonou, Bénin",
     weight: "12,8 kg",
     amount: "115 $",
     status: "En vol",
-    destination: "Kinshasa",
+    destination: "📍 Kinshasa",
     expectedDeliveryDate: "12 juillet 2026"
   });
 }
