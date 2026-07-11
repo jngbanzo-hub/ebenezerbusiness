@@ -27,9 +27,9 @@ export function toWhatsAppHref(phone: string) {
 
 const officialSocialMedia = {
   youtubeName: "Eben Ezer Business Chez Vanela",
-  youtubeUrl: "",
+  youtubeUrl: "https://youtube.com/@ebenezerbusinesschezmavanela?si=L0bMafSF0c1P-CGT",
   tiktokName: "Eben Ezer Business Chez Vanela",
-  tiktokUrl: ""
+  tiktokUrl: "https://www.tiktok.com/@vanela.shop6?_r=1&_t=ZS-97xCRkjIvGC"
 } as const;
 
 const officialWhatsApp = {
