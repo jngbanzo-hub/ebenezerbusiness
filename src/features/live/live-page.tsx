@@ -10,8 +10,7 @@ import {
   MessageCircle,
   Play,
   Radio,
-  Tv,
-  Youtube
+  Tv
 } from "lucide-react";
 
 import { Container, GlassPanel } from "@/components/design-system";
@@ -20,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { companyInfo } from "@/config/company";
 import { HomeNavbar } from "@/features/home/home-navbar";
 import { SiteFooter } from "@/features/home/site-footer";
-import { TikTokIcon } from "@/features/home/social-links";
+import { TikTokIcon, YouTubeIcon } from "@/features/home/social-links";
 import { getYouTubeEmbedUrl, liveMediaConfig, type LiveScheduleItem } from "@/features/live/live-config";
 
 const youtubeEmbedUrl = getYouTubeEmbedUrl(liveMediaConfig.youtube.liveUrl);
@@ -93,7 +92,7 @@ export function LivePage() {
           </div>
           <div className="grid gap-5 md:grid-cols-2">
             <SocialCard
-              icon={Youtube}
+              icon={YouTubeIcon}
               platform="YouTube"
               title="Suivez-nous en direct sur YouTube"
               name={liveMediaConfig.youtube.channelName}
