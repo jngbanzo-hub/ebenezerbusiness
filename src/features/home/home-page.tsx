@@ -15,6 +15,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { companyInfo } from "@/config/company";
+import { TeamSection } from "@/features/about/team-section";
 import { BrandLogo } from "@/features/home/brand-logo";
 import { HomeNavbar } from "@/features/home/home-navbar";
 import { HeroLogisticsVisual } from "@/features/home/hero-logistics-visual";
@@ -241,6 +242,7 @@ export function HomePage() {
               );
             })}
           </div>
+          <TeamSection />
         </Container>
       </section>
 
