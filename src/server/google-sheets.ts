@@ -16,6 +16,12 @@ const TRACKING_DESTINATIONS_BY_SHEET: Record<string, string> = {
   KLZ: "📍 Kolwezi"
 };
 
+const MANIFEST_DESTINATIONS_BY_SHEET: Record<string, string> = {
+  FIH: "Kinshasa",
+  LSHI: "Lubumbashi",
+  KLZ: "Kolwezi"
+};
+
 const sheetsEnvSchema = z.object({
   GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
   GOOGLE_SERVICE_ACCOUNT_JSON_BASE64: z.string().optional(),
@@ -23,6 +29,16 @@ const sheetsEnvSchema = z.object({
   GOOGLE_SHEETS_CLIENT_EMAIL: z.string().email().optional(),
   GOOGLE_SHEETS_PRIVATE_KEY: z.string().min(1).optional(),
   GOOGLE_SHEETS_SPREADSHEET_ID: z.string().min(1),
+  GOOGLE_SHEETS_TRACKING_TABS: z.string().min(1).default(DEFAULT_TRACKING_SHEETS.join(","))
+});
+
+const manifestSheetsEnvSchema = z.object({
+  GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
+  GOOGLE_SERVICE_ACCOUNT_JSON_BASE64: z.string().optional(),
+  GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),
+  GOOGLE_SHEETS_CLIENT_EMAIL: z.string().email().optional(),
+  GOOGLE_SHEETS_PRIVATE_KEY: z.string().min(1).optional(),
+  GOOGLE_SHEETS_MANIFEST_SPREADSHEET_ID: z.string().min(1),
   GOOGLE_SHEETS_TRACKING_TABS: z.string().min(1).default(DEFAULT_TRACKING_SHEETS.join(","))
 });
 
@@ -53,11 +69,37 @@ type GoogleSheetsValuesResponse = {
   };
 };
 
+export type PublicManifestRow = {
+  sheetName: TrackingSite;
+  rowNumber: number;
+  destination: string;
+  dateDepot: string;
+  codeColis: string;
+  expediteurRaw: string;
+  beneficiaireRaw: string;
+  poids: string;
+  montant: string;
+  paiement: string;
+  statut: string;
+  notificationEnregEnVol: string;
+  notificationArriveLivre: string;
+};
+
 let tokenCache: { token: string; expiresAt: number } | null = null;
 
 export function isGoogleSheetsConfigured() {
   return Boolean(
     process.env.GOOGLE_SHEETS_SPREADSHEET_ID &&
+      (process.env.GOOGLE_SERVICE_ACCOUNT_JSON ||
+        process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 ||
+        process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+        (process.env.GOOGLE_SHEETS_CLIENT_EMAIL && process.env.GOOGLE_SHEETS_PRIVATE_KEY))
+  );
+}
+
+export function isGoogleManifestSheetsConfigured() {
+  return Boolean(
+    process.env.GOOGLE_SHEETS_MANIFEST_SPREADSHEET_ID &&
       (process.env.GOOGLE_SERVICE_ACCOUNT_JSON ||
         process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 ||
         process.env.GOOGLE_APPLICATION_CREDENTIALS ||
@@ -83,6 +125,60 @@ export async function findPublicTrackingRecordByCode(
   }
 
   return null;
+}
+
+export async function readPublicManifestRows(
+  sheetNames?: readonly TrackingSite[]
+): Promise<PublicManifestRow[]> {
+  const config = getGoogleManifestSheetsConfig();
+  const selectedSheetNames = sheetNames?.length ? sheetNames : getTrackingSheetNames(config);
+  const rows: PublicManifestRow[] = [];
+
+  for (const sheetName of selectedSheetNames) {
+    const normalizedSheetName = sheetName.trim().toUpperCase() as TrackingSite;
+    const sheetRows = await readSheetValues(config, `${normalizedSheetName}!A:J`);
+
+    sheetRows.forEach((row, index) => {
+      const rowNumber = index + 1;
+
+      if (isManifestHeaderRow(row) || !hasManifestContent(row)) {
+        return;
+      }
+
+      rows.push(parsePublicManifestRow(row, normalizedSheetName, rowNumber));
+    });
+  }
+
+  return rows;
+}
+
+export async function readPublicManifestStatusValues(
+  sheetNames?: readonly TrackingSite[]
+): Promise<Record<TrackingSite, Array<{ status: string; count: number }>>> {
+  const config = getGoogleManifestSheetsConfig();
+  const selectedSheetNames = sheetNames?.length ? sheetNames : getTrackingSheetNames(config);
+  const valuesBySheet = {} as Record<TrackingSite, Array<{ status: string; count: number }>>;
+
+  for (const sheetName of selectedSheetNames) {
+    const normalizedSheetName = sheetName.trim().toUpperCase() as TrackingSite;
+    const rows = await readSheetValues(config, `${normalizedSheetName}!H:H`);
+    const counts = new Map<string, number>();
+
+    rows.slice(1).forEach((row) => {
+      const status = getCell(row, 0);
+
+      if (status && !isManifestStatusHeader(status)) {
+        counts.set(status, (counts.get(status) ?? 0) + 1);
+      }
+    });
+
+    valuesBySheet[normalizedSheetName] = Array.from(counts.entries()).map(([status, count]) => ({
+      status,
+      count
+    }));
+  }
+
+  return valuesBySheet;
 }
 
 function getGoogleSheetsConfig(): GoogleSheetsConfig {
@@ -114,6 +210,41 @@ function getGoogleSheetsConfig(): GoogleSheetsConfig {
     clientEmail: credentials.client_email,
     privateKey: normalizePrivateKey(credentials.private_key),
     spreadsheetId: normalizeSpreadsheetId(parsed.data.GOOGLE_SHEETS_SPREADSHEET_ID),
+    trackingTabs: parsed.data.GOOGLE_SHEETS_TRACKING_TABS
+  };
+}
+
+function getGoogleManifestSheetsConfig(): GoogleSheetsConfig {
+  const parsed = manifestSheetsEnvSchema.safeParse({
+    GOOGLE_SERVICE_ACCOUNT_JSON: emptyToUndefined(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
+    GOOGLE_SERVICE_ACCOUNT_JSON_BASE64: emptyToUndefined(
+      process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64
+    ),
+    GOOGLE_APPLICATION_CREDENTIALS: emptyToUndefined(process.env.GOOGLE_APPLICATION_CREDENTIALS),
+    GOOGLE_SHEETS_CLIENT_EMAIL: emptyToUndefined(process.env.GOOGLE_SHEETS_CLIENT_EMAIL),
+    GOOGLE_SHEETS_PRIVATE_KEY: emptyToUndefined(process.env.GOOGLE_SHEETS_PRIVATE_KEY),
+    GOOGLE_SHEETS_MANIFEST_SPREADSHEET_ID: emptyToUndefined(
+      process.env.GOOGLE_SHEETS_MANIFEST_SPREADSHEET_ID
+    ),
+    GOOGLE_SHEETS_TRACKING_TABS:
+      emptyToUndefined(process.env.GOOGLE_SHEETS_TRACKING_TABS) ??
+      DEFAULT_TRACKING_SHEETS.join(",")
+  });
+
+  if (!parsed.success) {
+    throw new Error("Configuration Google Sheets MANIFESTE PUBLIC incomplète.");
+  }
+
+  const credentials = getServiceAccountCredentials(parsed.data);
+
+  if (!credentials.client_email || !credentials.private_key) {
+    throw new Error("Identifiants du compte de service Google incomplets.");
+  }
+
+  return {
+    clientEmail: credentials.client_email,
+    privateKey: normalizePrivateKey(credentials.private_key),
+    spreadsheetId: normalizeSpreadsheetId(parsed.data.GOOGLE_SHEETS_MANIFEST_SPREADSHEET_ID),
     trackingTabs: parsed.data.GOOGLE_SHEETS_TRACKING_TABS
   };
 }
@@ -232,8 +363,34 @@ function parsePublicTrackingRow(row: string[], sheetName: string): PublicTrackin
   };
 }
 
+function parsePublicManifestRow(
+  row: string[],
+  sheetName: TrackingSite,
+  rowNumber: number
+): PublicManifestRow {
+  return {
+    sheetName,
+    rowNumber,
+    destination: getManifestDestinationFromSheetName(sheetName),
+    dateDepot: getCell(row, 0),
+    codeColis: getCell(row, 1),
+    expediteurRaw: getCell(row, 2),
+    beneficiaireRaw: getCell(row, 3),
+    poids: getCell(row, 4),
+    montant: getCell(row, 5),
+    paiement: getCell(row, 6),
+    statut: getCell(row, 7),
+    notificationEnregEnVol: getCell(row, 8),
+    notificationArriveLivre: getCell(row, 9)
+  };
+}
+
 function getTrackingDestinationFromSheetName(sheetName: string) {
   return TRACKING_DESTINATIONS_BY_SHEET[sheetName.trim().toUpperCase()] ?? "📍 Non renseigné";
+}
+
+function getManifestDestinationFromSheetName(sheetName: string) {
+  return MANIFEST_DESTINATIONS_BY_SHEET[sheetName.trim().toUpperCase()] ?? "Non renseigné";
 }
 
 function getTrackingSheetNames(config: GoogleSheetsConfig) {
@@ -244,7 +401,7 @@ function getTrackingSheetNames(config: GoogleSheetsConfig) {
 }
 
 function getServiceAccountCredentials(
-  env: z.infer<typeof sheetsEnvSchema>
+  env: z.infer<typeof sheetsEnvSchema> | z.infer<typeof manifestSheetsEnvSchema>
 ): ServiceAccountCredentials {
   if (env.GOOGLE_SERVICE_ACCOUNT_JSON) {
     return parseServiceAccountJson(env.GOOGLE_SERVICE_ACCOUNT_JSON);
@@ -278,6 +435,18 @@ function parseServiceAccountJson(value: string): ServiceAccountCredentials {
 
 function isHeaderRow(value: string) {
   return normalizeHeader(value) === "tracking_id";
+}
+
+function isManifestHeaderRow(row: string[]) {
+  return normalizeHeader(getCell(row, 1)) === "code_colis";
+}
+
+function hasManifestContent(row: string[]) {
+  return Boolean(getCell(row, 1) || getCell(row, 2) || getCell(row, 3) || getCell(row, 7));
+}
+
+function isManifestStatusHeader(value: string) {
+  return normalizeHeader(value).startsWith("statut");
 }
 
 function normalizeHeader(value: string) {

@@ -52,3 +52,54 @@ model VerificationToken {
 
   @@unique([identifier, token])
 }
+
+enum WhatsAppNotificationRole {
+  EXPEDITEUR
+  BENEFICIAIRE
+}
+
+enum WhatsAppProvider {
+  DIALOG360
+  GREEN_API
+  META_CLOUD
+  DRY_RUN
+}
+
+enum WhatsAppNotificationState {
+  DRY_RUN
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  SKIPPED_INVALID_RECIPIENT
+}
+
+model WhatsAppNotificationLog {
+  id                    String                    @id @default(cuid())
+  dedupKey              String                    @unique
+  provider              WhatsAppProvider          @default(DRY_RUN)
+  messageId             String?                   @unique
+  sheetName             String
+  rowNumber             Int
+  codeColis             String
+  templateName          String
+  recipientRole         WhatsAppNotificationRole
+  recipientName         String
+  recipientNumberHash   String
+  recipientNumberMasked String
+  triggerStatus         String
+  dateConcerned         String?
+  whatsappStatus        WhatsAppNotificationState
+  createdAt             DateTime                  @default(now())
+  sentAt                DateTime?
+  deliveredAt           DateTime?
+  readAt                DateTime?
+  failedAt              DateTime?
+  error                 String?                   @db.Text
+  errorCode             String?
+  errorDescription      String?                   @db.Text
+  lastWebhookAt         DateTime?
+
+  @@index([sheetName, codeColis, templateName, recipientRole, recipientNumberHash])
+  @@index([messageId])
+}
