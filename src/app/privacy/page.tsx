@@ -81,7 +81,7 @@ export default function PrivacyPage() {
             <GlassPanel className="p-6 sm:p-7" glow="blue">
               <Badge variant="premium">Données collectées</Badge>
               <h2 className="mt-4 text-2xl font-semibold tracking-normal text-white">
-                Les informations nécessaires à l'application
+                Les informations nécessaires à l&apos;application
               </h2>
               <div className="mt-6 grid gap-4 sm:grid-cols-2">
                 {collectedData.map((item) => (
@@ -120,16 +120,16 @@ export default function PrivacyPage() {
               <div className="mt-5 grid gap-4 text-sm leading-7 text-muted-foreground">
                 <p>
                   {companyInfo.name} met en place des mesures destinées à protéger les accès, les
-                  communications et les données opérationnelles utilisées par l'application.
+                  communications et les données opérationnelles utilisées par l&apos;application.
                 </p>
                 <p>
-                  Les informations affichées dans l'application sont réservées au suivi des colis,
-                  à l'assistance client et aux opérations autorisées. Elles ne sont pas utilisées
+                  Les informations affichées dans l&apos;application sont réservées au suivi des colis,
+                  à l&apos;assistance client et aux opérations autorisées. Elles ne sont pas utilisées
                   pour de la publicité externe et ne sont pas revendues.
                 </p>
                 <p>
-                  Si un utilisateur pense qu'une information doit être corrigée ou supprimée, il
-                  peut contacter l'équipe officielle afin qu'une vérification soit effectuée.
+                  Si un utilisateur pense qu&apos;une information doit être corrigée ou supprimée, il
+                  peut contacter l&apos;équipe officielle afin qu&apos;une vérification soit effectuée.
                 </p>
               </div>
             </GlassPanel>
