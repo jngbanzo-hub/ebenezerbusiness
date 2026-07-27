@@ -41,8 +41,10 @@ export function parseParcelResponse(response: Record<string, unknown>): Parcel {
 }
 
 export function formatAmount(value: number) {
-  return new Intl.NumberFormat("fr-FR", {
+  const formattedAmount = new Intl.NumberFormat("fr-FR", {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2
   }).format(value);
+
+  return `${formattedAmount} $`;
 }
