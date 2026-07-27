@@ -175,6 +175,9 @@ export function AgentWorkspace() {
           "Le montant doit correspondre exactement au solde restant pour cette agence."
         );
       }
+      if (!PAYMENT_MODES.includes(modePaiement)) {
+        throw new Error("Le mode de paiement est invalide.");
+      }
 
       const paymentIntent = {
         codeColis: parcel.codeColis,
@@ -236,11 +239,13 @@ export function AgentWorkspace() {
     exactBalance !== null &&
     profile !== null &&
     isPaymentAmountAllowed(profile.agence, parsedAmount, exactBalance);
+  const isPaymentModeValid = PAYMENT_MODES.includes(modePaiement);
   const canSavePayment =
     Boolean(parcel) &&
     exactBalance !== null &&
     exactBalance > 0 &&
     isAmountValid &&
+    isPaymentModeValid &&
     !isSaving;
 
   if (!profile) {
