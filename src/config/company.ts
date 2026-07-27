@@ -47,7 +47,7 @@ export const companyConfig = {
   whatsapp: officialWhatsApp,
   announcementTicker: {
     messages: [
-      "🚚 Départ des expéditions de colis tous les mercredis et samedis matin.",
+      "🚚 Départs des colis vers Lubumbashi et Kolwezi tous les lundis et jeudis matin.",
       "📦 Merci de bien vouloir apporter vos colis la veille pour faciliter le traitement et le départ.",
       "🇧🇯 Expédition Bénin → RDC en toute sécurité.",
       `📲 Contact WhatsApp : ${officialWhatsApp.primaryNumber}.`
