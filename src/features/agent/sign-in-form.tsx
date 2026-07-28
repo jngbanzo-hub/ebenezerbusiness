@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HomeNavbar } from "@/features/home/home-navbar";
 import { SiteFooter } from "@/features/home/site-footer";
-import { getAgentProfile, signOutAgent } from "@/features/agent/auth";
+import { getProfessionalProfile, signOutAgent } from "@/features/agent/auth";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 
 const inputClassName =
@@ -47,8 +47,8 @@ export function SignInForm() {
         throw new Error("La session n’a pas pu être créée.");
       }
 
-      await getAgentProfile(data.user);
-      router.replace("/agent");
+      const profile = await getProfessionalProfile(data.user);
+      router.replace(profile.role === "ADMIN" ? "/admin" : "/agent");
       router.refresh();
     } catch (caughtError) {
       await signOutAgent().catch(() => undefined);
