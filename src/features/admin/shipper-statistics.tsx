@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   AdminShippersApiError,
+  hasVisibleShipperAnomalies,
   loadShipperStatistics,
   loadShipperSuggestions
 } from "@/features/admin/shippers";
@@ -404,13 +405,9 @@ function ShipperResults({ statistics }: { statistics: ShipperStatistics }) {
         />
       </div>
 
-      {hasAnomalies(statistics.anomalies) ? (
+      {hasVisibleShipperAnomalies(statistics.anomalies) ? (
         <AnomalyPanel anomalies={statistics.anomalies} />
-      ) : (
-        <div className="mt-4 rounded-lg border border-accent/20 bg-accent/10 px-4 py-3 text-sm text-accent">
-          Aucune anomalie détectée pour cette recherche.
-        </div>
-      )}
+      ) : null}
 
       <GlassPanel className="mt-6 overflow-hidden">
         <div className="border-b border-white/10 p-5 sm:p-6">
@@ -537,7 +534,6 @@ function AnomalyPanel({ anomalies }: { anomalies: ShipperAnomalyReport }) {
   const entries = [
     ["Dates invalides exclues", anomalies.invalidDates],
     ["Codes colis manquants", anomalies.missingCodes],
-    ["Expéditeurs manquants", anomalies.missingShippers],
     ["Poids invalides exclus", anomalies.invalidWeights],
     ["Lignes dupliquées", anomalies.duplicateRows],
     ["Conflits de poids", anomalies.conflictingWeights],
@@ -608,8 +604,4 @@ function formatWeight(value: number) {
 function formatDateKey(dateKey: string) {
   const [year, month, day] = dateKey.split("-");
   return `${day}/${month}/${year}`;
-}
-
-function hasAnomalies(anomalies: ShipperAnomalyReport) {
-  return Object.values(anomalies).some((count) => count > 0);
 }
