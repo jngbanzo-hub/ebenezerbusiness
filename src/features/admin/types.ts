@@ -54,3 +54,70 @@ export type AdminPaymentsSummary = {
 export type AdminPaymentsApiResponse = {
   payments: AdminPayment[];
 };
+
+export const MANIFEST_SITES = ["FIH", "LSHI", "KLZ"] as const;
+export type ManifestSite = (typeof MANIFEST_SITES)[number];
+
+export const MANIFEST_DESTINATIONS = ["Kinshasa", "Lubumbashi", "Kolwezi"] as const;
+export type ManifestDestination = (typeof MANIFEST_DESTINATIONS)[number];
+
+export type ManifestShipperRow = {
+  sourceSite: ManifestSite;
+  rowNumber: number;
+  dateRaw: string;
+  codeColisRaw: string;
+  expediteurRaw: string;
+  poidsRaw: string;
+};
+
+export type ShipperSuggestion = {
+  name: string;
+  normalizedName: string;
+};
+
+export type ShipperParcelDetail = {
+  id: string;
+  date: string;
+  codeColis: string;
+  expediteur: string;
+  sourceSite: ManifestSite;
+  destination: ManifestDestination;
+  poidsKg: number | null;
+};
+
+export type ShipperBreakdown = {
+  colis: number;
+  kilogrammes: number;
+};
+
+export type ShipperAnomalyReport = {
+  invalidDates: number;
+  missingCodes: number;
+  missingShippers: number;
+  invalidWeights: number;
+  duplicateRows: number;
+  conflictingWeights: number;
+  crossSiteCodes: number;
+};
+
+export type ShipperStatistics = {
+  expediteur: string;
+  normalizedExpediteur: string;
+  startDate: string;
+  endDate: string;
+  nombreColis: number;
+  totalKilogrammes: number;
+  poidsMoyenKg: number | null;
+  bySite: Record<ManifestSite, ShipperBreakdown>;
+  byDestination: Record<ManifestDestination, ShipperBreakdown>;
+  parcels: ShipperParcelDetail[];
+  anomalies: ShipperAnomalyReport;
+};
+
+export type ShipperSuggestionsApiResponse = {
+  shippers: ShipperSuggestion[];
+};
+
+export type ShipperStatisticsApiResponse = {
+  statistics: ShipperStatistics;
+};
