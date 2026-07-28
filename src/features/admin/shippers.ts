@@ -158,6 +158,19 @@ export function normalizeManifestCode(value: string) {
     .toUpperCase();
 }
 
+export function hasVisibleShipperAnomalies(
+  anomalies: ShipperAnomalyReport
+) {
+  return (
+    anomalies.invalidDates > 0 ||
+    anomalies.missingCodes > 0 ||
+    anomalies.invalidWeights > 0 ||
+    anomalies.duplicateRows > 0 ||
+    anomalies.conflictingWeights > 0 ||
+    anomalies.crossSiteCodes > 0
+  );
+}
+
 export function parseStrictManifestDate(value: string): ParsedDate | null {
   const match = value.trim().match(STRICT_MANIFEST_DATE);
   if (!match) {
@@ -265,14 +278,6 @@ export function calculateShipperStatistics(
     const normalizedExpediteur = normalizeShipperName(expediteur);
 
     if (!normalizedExpediteur) {
-      const missingShipperDate = parseStrictManifestDate(row.dateRaw);
-      if (
-        missingShipperDate &&
-        missingShipperDate.dateKey >= filters.startDate &&
-        missingShipperDate.dateKey <= filters.endDate
-      ) {
-        anomalies.missingShippers += 1;
-      }
       continue;
     }
 

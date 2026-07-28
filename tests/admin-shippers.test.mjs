@@ -21,6 +21,7 @@ const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString(
 const {
   buildShipperSuggestions,
   calculateShipperStatistics,
+  hasVisibleShipperAnomalies,
   normalizeShipperName,
   parseStrictManifestDate,
   parseStrictPositiveWeight
@@ -262,6 +263,70 @@ test("signale poids, date et code invalides sans corriger la source", () => {
   assert.equal(statistics.anomalies.invalidWeights, 1);
   assert.equal(statistics.anomalies.missingCodes, 1);
   assert.equal(statistics.anomalies.invalidDates, 1);
+});
+
+test("masque les anomalies globales non attribuables à l’expéditeur recherché", () => {
+  const statistics = calculateShipperStatistics(
+    [
+      row(),
+      row({
+        rowNumber: 3,
+        expediteurRaw: "",
+        codeColisRaw: "SANS-EXPEDITEUR",
+        poidsRaw: ""
+      }),
+      row({
+        rowNumber: 4,
+        expediteurRaw: "Autre Expéditeur",
+        codeColisRaw: "AUTRE",
+        poidsRaw: "invalide"
+      })
+    ],
+    baseFilters
+  );
+
+  assert.equal(statistics.nombreColis, 1);
+  assert.equal(statistics.totalKilogrammes, 10);
+  assert.equal(statistics.anomalies.missingShippers, 0);
+  assert.equal(hasVisibleShipperAnomalies(statistics.anomalies), false);
+});
+
+test("affiche une anomalie directement liée à un colis retenu", () => {
+  const statistics = calculateShipperStatistics(
+    [row({ poidsRaw: "invalide" })],
+    baseFilters
+  );
+
+  assert.equal(statistics.nombreColis, 1);
+  assert.equal(statistics.totalKilogrammes, 0);
+  assert.equal(statistics.anomalies.invalidWeights, 1);
+  assert.equal(hasVisibleShipperAnomalies(statistics.anomalies), true);
+});
+
+test("n’affiche pas les anomalies hors période ou d’un autre expéditeur", () => {
+  const statistics = calculateShipperStatistics(
+    [
+      row(),
+      row({
+        rowNumber: 3,
+        dateRaw: "30/06/2026",
+        codeColisRaw: "HORS-PERIODE",
+        poidsRaw: "invalide"
+      }),
+      row({
+        rowNumber: 4,
+        expediteurRaw: "Autre Expéditeur",
+        codeColisRaw: "AUTRE",
+        poidsRaw: "invalide"
+      })
+    ],
+    baseFilters
+  );
+
+  assert.equal(statistics.nombreColis, 1);
+  assert.equal(statistics.totalKilogrammes, 10);
+  assert.equal(statistics.anomalies.invalidWeights, 0);
+  assert.equal(hasVisibleShipperAnomalies(statistics.anomalies), false);
 });
 
 test("les deux routes autorisent uniquement GET et autorisent avant toute lecture Google", async () => {
