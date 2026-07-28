@@ -55,7 +55,9 @@ const OPERATIONS = [
     title: "Dépenses",
     description: "Enregistrement des dépenses de l’agence",
     icon: ReceiptText,
-    available: false
+    available: true,
+    href: "/agent/depenses",
+    actionLabel: "Enregistrer une dépense"
   },
   {
     key: "stockage",
@@ -229,7 +231,11 @@ export function AgentDashboard() {
                       {operation.description}
                     </p>
                     <Button asChild variant="growth" className="mt-6 w-full">
-                      <Link href={operation.href}>Ouvrir la caisse</Link>
+                      <Link href={operation.href}>
+                        {"actionLabel" in operation
+                          ? operation.actionLabel
+                          : "Ouvrir la caisse"}
+                      </Link>
                     </Button>
                   </GlassPanel>
                 );
