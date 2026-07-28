@@ -32,6 +32,7 @@ import {
   isValidAdminDateRange,
   type AdminDateRange
 } from "@/features/admin/period";
+import { ShipperStatisticsSection } from "@/features/admin/shipper-statistics";
 import {
   ADMIN_DESTINATIONS,
   ADMIN_SITES,
@@ -509,6 +510,8 @@ export function AdminWorkspace() {
                 <PaymentsTable payments={filteredPayments} />
               )}
             </GlassPanel>
+
+            <ShipperStatisticsSection accessToken={accessTokenRef.current} />
           </>
         )}
       </Container>
