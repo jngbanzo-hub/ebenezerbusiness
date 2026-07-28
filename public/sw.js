@@ -1,4 +1,5 @@
-const CACHE_NAME = "eeb-pwa-v1";
+const CACHE_PREFIX = "eeb-pwa-";
+const CACHE_NAME = `${CACHE_PREFIX}v2`;
 const STATIC_ASSETS = [
   "/manifest.json",
   "/favicon.ico",
@@ -25,7 +26,10 @@ self.addEventListener("activate", (event) => {
       .then((cacheNames) =>
         Promise.all(
           cacheNames
-            .filter((cacheName) => cacheName !== CACHE_NAME)
+            .filter(
+              (cacheName) =>
+                cacheName.startsWith(CACHE_PREFIX) && cacheName !== CACHE_NAME
+            )
             .map((cacheName) => caches.delete(cacheName))
         )
       )
@@ -46,7 +50,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (!url.pathname.startsWith("/_next/static/") && !STATIC_ASSETS.includes(url.pathname)) {
+  if (!STATIC_ASSETS.includes(url.pathname)) {
     return;
   }
 
