@@ -22,7 +22,8 @@ const {
   buildShipperSuggestions,
   calculateShipperStatistics,
   normalizeShipperName,
-  parseStrictManifestDate
+  parseStrictManifestDate,
+  parseStrictPositiveWeight
 } = await import(moduleUrl);
 
 const authorizationSource = await readFile(
@@ -106,6 +107,36 @@ test("accepte uniquement DD/MM/YYYY avec validation calendaire stricte", () => {
   assert.equal(parseStrictManifestDate(""), null);
 });
 
+test("accepte uniquement les formats métier sûrs du poids", () => {
+  assert.equal(parseStrictPositiveWeight(10), 10);
+  assert.equal(parseStrictPositiveWeight(10.5), 10.5);
+  assert.equal(parseStrictPositiveWeight("10"), 10);
+  assert.equal(parseStrictPositiveWeight("10.5"), 10.5);
+  assert.equal(parseStrictPositiveWeight("10,5"), 10.5);
+  assert.equal(parseStrictPositiveWeight("10 KG"), 10);
+  assert.equal(parseStrictPositiveWeight("10,5 KGS"), 10.5);
+  assert.equal(parseStrictPositiveWeight("  10.5 kg  "), 10.5);
+});
+
+test("refuse les poids vides, nuls, négatifs ou ambigus", () => {
+  for (const value of [
+    "",
+    "   ",
+    0,
+    "0",
+    -10,
+    "-10",
+    "poids inconnu",
+    "10 et 12 kg",
+    "10 kg 12",
+    "=10",
+    Number.POSITIVE_INFINITY,
+    Number.NaN
+  ]) {
+    assert.equal(parseStrictPositiveWeight(value), null);
+  }
+});
+
 test("applique une période inclusive et les filtres site et destination", () => {
   const rows = [
     row({ dateRaw: "01/07/2026", codeColisRaw: "A" }),
@@ -157,6 +188,46 @@ test("compte le même code dans deux feuilles comme deux colis distincts", () =>
   assert.equal(statistics.nombreColis, 2);
   assert.equal(statistics.totalKilogrammes, 20);
   assert.equal(statistics.anomalies.crossSiteCodes, 1);
+});
+
+test("calcule les kilogrammes, la moyenne, les sites et les destinations", () => {
+  const statistics = calculateShipperStatistics(
+    [
+      row({ poidsRaw: "10 KGS" }),
+      row({
+        sourceSite: "LSHI",
+        rowNumber: 2,
+        codeColisRaw: "LSHI-1",
+        poidsRaw: "10,5 kg"
+      }),
+      row({
+        sourceSite: "KLZ",
+        rowNumber: 2,
+        codeColisRaw: "KLZ-1",
+        poidsRaw: 9.5
+      })
+    ],
+    baseFilters
+  );
+
+  assert.equal(statistics.nombreColis, 3);
+  assert.equal(statistics.totalKilogrammes, 30);
+  assert.equal(statistics.poidsMoyenKg, 10);
+  assert.deepEqual(statistics.bySite.FIH, { colis: 1, kilogrammes: 10 });
+  assert.deepEqual(statistics.bySite.LSHI, { colis: 1, kilogrammes: 10.5 });
+  assert.deepEqual(statistics.bySite.KLZ, { colis: 1, kilogrammes: 9.5 });
+  assert.deepEqual(statistics.byDestination.Kinshasa, {
+    colis: 1,
+    kilogrammes: 10
+  });
+  assert.deepEqual(statistics.byDestination.Lubumbashi, {
+    colis: 1,
+    kilogrammes: 10.5
+  });
+  assert.deepEqual(statistics.byDestination.Kolwezi, {
+    colis: 1,
+    kilogrammes: 9.5
+  });
 });
 
 test("exclut tout poids en conflit sans exclure le colis", () => {

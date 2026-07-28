@@ -11,7 +11,8 @@ import type {
 } from "@/features/admin/types";
 
 const STRICT_MANIFEST_DATE = /^(\d{2})\/(\d{2})\/(\d{4})$/;
-const STRICT_POSITIVE_WEIGHT = /^\d+(?:[.,]\d+)?$/;
+const STRICT_POSITIVE_WEIGHT =
+  /^\s*(\d+(?:[.,]\d+)?)\s*(?:(?:kg|kgs))?\s*$/i;
 const PHONE_PATTERN = /(\+?\d[\d\s()./-]{6,}\d)/;
 
 const DESTINATION_BY_SITE: Record<ManifestSite, ManifestDestination> = {
@@ -198,17 +199,18 @@ export function parseStrictManifestDate(value: string): ParsedDate | null {
   };
 }
 
-export function parseStrictPositiveWeight(value: string) {
-  const normalized = value
-    .replace(/\u00a0/g, "")
-    .replace(/\s+/g, "")
-    .trim();
+export function parseStrictPositiveWeight(value: string | number) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
 
-  if (!STRICT_POSITIVE_WEIGHT.test(normalized)) {
+  const normalized = value.replace(/\u00a0/g, " ");
+  const match = normalized.match(STRICT_POSITIVE_WEIGHT);
+  if (!match) {
     return null;
   }
 
-  const weight = Number(normalized.replace(",", "."));
+  const weight = Number(match[1].replace(",", "."));
   return Number.isFinite(weight) && weight > 0 ? weight : null;
 }
 
