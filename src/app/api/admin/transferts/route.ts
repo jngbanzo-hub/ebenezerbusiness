@@ -1,8 +1,15 @@
 import { NextResponse } from "next/server";
 
-import type { TransferSummary, TransfersPageResponse } from "@/features/transferts/types";
+import type { TransfersPageResponse } from "@/features/transferts/types";
 import { authorizeAdminRequest } from "@/server/admin-authorization";
 import { callTransfertsReadApi, TransfertsConfigurationError } from "@/server/transferts-apps-script";
+import {
+  AdminTransferFilterError,
+  calculateAdminTransferStatistics,
+  filterAdminTransfers,
+  parseAdminTransferFilters,
+  parseAdminTransfers
+} from "@/server/transferts-admin-statistics";
 import { assertTransfertsReadOnlyMode, getTransfertsFeatureFlags } from "@/server/transferts-feature-flags";
 
 export const dynamic = "force-dynamic";
@@ -16,27 +23,24 @@ export async function GET(request: Request) {
       return privateJson({ state: "FORBIDDEN", message: authorization.status === 401 ? "Session invalide ou expirée." : "Accès interdit." }, authorization.status);
     }
     const flags = getTransfertsFeatureFlags();
-    if (!flags.adminEnabled) return privateJson(preparation(authorization.agency));
     if (!authorization.agency) {
-      return privateJson({ ...preparation(null), message: "Agence de traçabilité Admin non configurée." }, 503);
+      return privateJson({
+        ...preparation(null),
+        state: "NOT_CONFIGURED",
+        message: "Le profil administrateur ne possède pas encore une agence de traçabilité valide."
+      }, 503);
     }
     const url = new URL(request.url);
-    const payload = {
-      agencyFrom: clean(url.searchParams.get("agencyFrom")),
-      agencyTo: clean(url.searchParams.get("agencyTo")),
-      agency: clean(url.searchParams.get("agency")),
-      dateFrom: clean(url.searchParams.get("from")),
-      dateTo: clean(url.searchParams.get("to")),
-      status: clean(url.searchParams.get("status")),
-      currency: clean(url.searchParams.get("currency")),
-      transferId: clean(url.searchParams.get("transferId"))
-    };
+    const filters = parseAdminTransferFilters(url.searchParams);
+    if (!flags.adminEnabled) return privateJson({ ...preparation(authorization.agency), filters });
     const data = await callTransfertsReadApi(
       "LIST_ADMIN_TRANSFERS",
       { userId: authorization.userId, email: authorization.email, role: "ADMIN", agency: authorization.agency },
-      payload
+      {}
     );
-    const transfers = Array.isArray(data) ? (data as TransferSummary[]) : [];
+    const allTransfers = parseAdminTransfers(data);
+    const transfers = filterAdminTransfers(allTransfers, filters);
+    const statistics = calculateAdminTransferStatistics(allTransfers);
     return privateJson({
       state: transfers.length ? "READY" : "EMPTY",
       moduleStatus: "PREPARATION",
@@ -44,11 +48,16 @@ export async function GET(request: Request) {
       agency: authorization.agency,
       apiAvailable: true,
       writesEnabled: false,
-      adminEnabled: false,
+      adminEnabled: true,
       transfers,
+      statistics,
+      filters,
       message: transfers.length ? "Consultation administrative." : "Aucun transfert ne correspond aux filtres."
     } satisfies TransfersPageResponse);
   } catch (error) {
+    if (error instanceof AdminTransferFilterError) {
+      return privateJson({ state: "FORBIDDEN", message: "Filtre Transferts invalide." }, 400);
+    }
     return error instanceof TransfertsConfigurationError
       ? privateJson({ state: "NOT_CONFIGURED", message: "Le module Transferts n’est pas configuré." }, 503)
       : privateJson({ state: "SERVICE_UNAVAILABLE", message: "Le service Transferts est temporairement indisponible." }, 503);
@@ -56,9 +65,8 @@ export async function GET(request: Request) {
 }
 
 function preparation(agency: TransfersPageResponse["agency"]): TransfersPageResponse {
-  return { state: "PREPARATION", moduleStatus: "PREPARATION", role: "ADMIN", agency, apiAvailable: false, writesEnabled: false, adminEnabled: false, transfers: [], message: "La consultation administrative Transferts n’est pas encore autorisée." };
+  return { state: "PREPARATION", moduleStatus: "PREPARATION", role: "ADMIN", agency, apiAvailable: false, writesEnabled: false, adminEnabled: false, transfers: [], statistics: null, message: "La consultation administrative des transferts n’est pas encore activée." };
 }
-function clean(value: string | null) { return (value ?? "").trim().slice(0, 100); }
 function privateJson(value: unknown, status = 200) {
   return NextResponse.json(value, { status, headers: { "Cache-Control": "private, no-store, max-age=0" } });
 }

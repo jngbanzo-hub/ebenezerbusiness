@@ -14,10 +14,10 @@ export async function GET(request: Request, { params }: { params: { transferId: 
     if (!authorization.authorized) {
       return privateJson({ state: "FORBIDDEN", message: authorization.status === 401 ? "Session invalide ou expirée." : "Accès interdit." }, authorization.status);
     }
+    if (!authorization.agency) return privateJson({ state: "NOT_CONFIGURED", message: "Le profil administrateur ne possède pas encore une agence de traçabilité valide." }, 503);
     if (!getTransfertsFeatureFlags().adminEnabled) {
-      return privateJson({ state: "PREPARATION", message: "La consultation administrative Transferts n’est pas encore autorisée." });
+      return privateJson({ state: "PREPARATION", message: "La consultation administrative des transferts n’est pas encore activée." });
     }
-    if (!authorization.agency) return privateJson({ state: "NOT_CONFIGURED", message: "Agence de traçabilité Admin non configurée." }, 503);
     const transferId = decodeURIComponent(params.transferId || "").trim();
     if (!transferId || transferId.length > 100) return privateJson({ state: "FORBIDDEN", message: "Transfer ID invalide." }, 400);
     const transfer = await callTransfertsReadApi(

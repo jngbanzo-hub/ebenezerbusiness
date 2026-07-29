@@ -24,13 +24,17 @@ export type TransferSummary = {
   transferId: string;
   sentAt: string;
   agencyFrom: TransferAgency;
+  agentFrom: string;
   agencyTo: TransferAgency;
+  agentTo: string;
   amount: number;
   currency: TransferCurrency;
   fees: number;
   netExpected: number;
   service: string;
   maskedCode: string;
+  senderName: string;
+  beneficiaryName: string;
   status: TransferStatus;
   codeReceivedBy: string;
   codeReceivedAt: string | null;
@@ -39,8 +43,62 @@ export type TransferSummary = {
   confirmedBy: string;
   confirmedAt: string | null;
   observation: string;
+  createdAt: string;
+  updatedAt: string;
   cancelled: boolean;
   cancelReason: string;
+};
+
+export const TRANSFER_CIRCUITS = [
+  "FIH>COO",
+  "LSHI>COO",
+  "KLZ>COO",
+  "COO>FIH",
+  "COO>LSHI",
+  "COO>KLZ"
+] as const;
+export type TransferCircuit = (typeof TRANSFER_CIRCUITS)[number];
+export type TransferPeriod = "TODAY" | "THIS_WEEK" | "THIS_MONTH" | "CUSTOM";
+export type CurrencyTotals = Record<TransferCurrency, number>;
+export type StatusCounts = Record<TransferStatus, number>;
+
+export type TransferCircuitStatistics = {
+  circuit: TransferCircuit;
+  count: number;
+  amountsByCurrency: CurrencyTotals;
+  statuses: StatusCounts;
+};
+
+export type TransferPeriodStatistics = {
+  count: number;
+  amountsByCurrency: CurrencyTotals;
+  statuses: StatusCounts;
+};
+
+export type AdminTransferStatistics = {
+  timezone: "Africa/Porto-Novo";
+  todayKey: string;
+  monthKey: string;
+  invalidDateCount: number;
+  today: TransferPeriodStatistics;
+  currentMonth: TransferPeriodStatistics & {
+    byAgencyFrom: Record<TransferAgency, number>;
+    byAgencyTo: Record<TransferAgency, number>;
+    byCircuit: Record<TransferCircuit, TransferCircuitStatistics>;
+    byCurrency: Record<TransferCurrency, number>;
+  };
+};
+
+export type AdminTransferFilters = {
+  period: TransferPeriod;
+  from: string;
+  to: string;
+  agencyFrom: TransferAgency | "";
+  agencyTo: TransferAgency | "";
+  circuit: TransferCircuit | "";
+  status: TransferStatus | "";
+  currency: TransferCurrency | "";
+  transferId: string;
 };
 
 export type TransferAuditEntry = {
@@ -64,8 +122,10 @@ export type TransfersPageResponse = {
   agency: TransferAgency | null;
   apiAvailable: boolean;
   writesEnabled: false;
-  adminEnabled: false;
+  adminEnabled: boolean;
   transfers: TransferSummary[];
+  statistics?: AdminTransferStatistics | null;
+  filters?: AdminTransferFilters;
   message: string;
 };
 

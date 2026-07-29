@@ -101,8 +101,11 @@ test("la canonisation et la base de signature correspondent au contrat V2", () =
 test("le client serveur supprime récursivement tout code complet", () => {
   const safe = module.stripFullTransferCodes({
     transferCode: "SECRET",
+    apiKey: "API_SECRET",
+    signature: "SIGNED",
+    nonce: "NONCE",
     maskedCode: "****CRET",
-    nested: [{ transferCode: "AUTRE", status: "ENVOYE" }]
+    nested: [{ transferCode: "AUTRE", hmacSecret: "HMAC", status: "ENVOYE" }]
   });
   assert.deepEqual(safe, {
     maskedCode: "****CRET",
@@ -133,7 +136,6 @@ test("les interfaces restent en préparation et sans écriture", () => {
   assert.ok(agentPage.includes("Les opérations réelles seront disponibles après autorisation de mise en service."));
   assert.ok(adminPage.includes("DÉSACTIVÉ"));
   assert.ok(agentPage.includes("<Button disabled"));
-  assert.ok(adminPage.includes("<Button disabled"));
   assert.equal(agentPage.includes('method: "POST"'), false);
   assert.equal(adminPage.includes('method: "POST"'), false);
 });

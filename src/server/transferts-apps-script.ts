@@ -154,11 +154,25 @@ export function stripFullTransferCodes(value: unknown): unknown {
   if (value && typeof value === "object") {
     const safe: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value)) {
-      if (key !== "transferCode") safe[key] = stripFullTransferCodes(child);
+      if (!isSensitiveResponseKey(key)) {
+        safe[key] = stripFullTransferCodes(child);
+      }
     }
     return safe;
   }
   return value;
+}
+
+function isSensitiveResponseKey(key: string) {
+  return [
+    "transfercode",
+    "apikey",
+    "signature",
+    "nonce",
+    "hmacsecret",
+    "password",
+    "secret"
+  ].includes(key.replace(/[_-]/g, "").toLowerCase());
 }
 
 function readTransfertsConfiguration() {
