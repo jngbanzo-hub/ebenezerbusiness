@@ -8,7 +8,6 @@ import {
   Boxes,
   LoaderCircle,
   LogOut,
-  PackageCheck,
   ReceiptText,
   ShieldX
 } from "lucide-react";
@@ -36,13 +35,6 @@ const AGENCY_LABELS: Record<Agency, string> = {
 
 const OPERATIONS = [
   {
-    key: "arrivage",
-    title: "Arrivage",
-    description: "Réception et contrôle des colis arrivés",
-    icon: PackageCheck,
-    available: false
-  },
-  {
     key: "encaissement",
     title: "Encaissement",
     description: "Livraison et paiement des colis",
@@ -61,10 +53,12 @@ const OPERATIONS = [
   },
   {
     key: "stockage",
-    title: "Stockage",
-    description: "Colis et kilogrammes restant en stock",
+    title: "Stockages",
+    description: "État préparatoire du système de gestion des stockages",
     icon: Boxes,
-    available: false
+    available: true,
+    href: "/agent/stockages",
+    actionLabel: "Consulter le statut"
   }
 ] as const;
 
@@ -210,7 +204,7 @@ export function AgentDashboard() {
             </p>
           </div>
 
-          <div className="mt-6 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-6 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
             {OPERATIONS.map((operation) => {
               const Icon = operation.icon;
 

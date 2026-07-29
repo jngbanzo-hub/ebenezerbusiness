@@ -1,9 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Banknote,
+  Boxes,
   Building2,
   CalendarDays,
   CircleAlert,
@@ -269,10 +271,18 @@ export function AdminWorkspace() {
               Consultation en lecture seule — {profile.nom}
             </p>
           </div>
-          <Button type="button" variant="outline" onClick={handleSignOut}>
-            <LogOut className="h-4 w-4" />
-            Se déconnecter
-          </Button>
+          <div className="flex flex-wrap gap-3">
+            <Button asChild type="button" variant="outline">
+              <Link href="/admin/stockages">
+                <Boxes className="h-4 w-4" />
+                Stockages
+              </Link>
+            </Button>
+            <Button type="button" variant="outline" onClick={handleSignOut}>
+              <LogOut className="h-4 w-4" />
+              Se déconnecter
+            </Button>
+          </div>
         </header>
 
         <GlassPanel className="mt-8 p-5 sm:p-6">

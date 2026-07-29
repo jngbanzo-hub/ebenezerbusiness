@@ -125,7 +125,7 @@ test("la route profil ignore toute agence envoyée par le navigateur", async () 
   assert.equal(/export async function (POST|PUT|PATCH|DELETE)/.test(route), false);
 });
 
-test("/agent affiche quatre cartes et seule Encaissement est active", async () => {
+test("/agent affiche uniquement Encaissement, Dépenses et Stockages", async () => {
   const dashboard = await readFile(
     new URL("../src/features/agent/agent-dashboard.tsx", import.meta.url),
     "utf8"
@@ -135,18 +135,26 @@ test("/agent affiche quatre cartes et seule Encaissement est active", async () =
     "utf8"
   );
 
-  for (const title of ["Arrivage", "Encaissement", "Dépenses", "Stockage"]) {
+  for (const title of ["Encaissement", "Dépenses", "Stockages"]) {
     assert.ok(dashboard.includes(`title: "${title}"`));
   }
+  assert.equal(dashboard.includes('title: "Arrivage"'), false);
   assert.equal(
     (dashboard.match(/available: true/g) ?? []).length,
-    1
+    3
   );
   assert.equal(
     dashboard.split('href: "/agent/encaissement"').length - 1,
     1
   );
-  assert.ok(dashboard.includes("Bientôt disponible"));
+  assert.equal(
+    dashboard.split('href: "/agent/depenses"').length - 1,
+    1
+  );
+  assert.equal(
+    dashboard.split('href: "/agent/stockages"').length - 1,
+    1
+  );
   assert.ok(page.includes("<AgentDashboard />"));
 });
 
