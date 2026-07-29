@@ -1,18 +1,28 @@
+import "server-only";
+
 import { createClient } from "@supabase/supabase-js";
 
 type RawAdminProfile = {
   id?: unknown;
   actif?: unknown;
   role?: unknown;
+  agence?: unknown;
 };
 
 type ResolvedAdminIdentity = {
   userId: string;
+  email?: string;
   profile: RawAdminProfile | null;
 };
 
 export type AdminAuthorizationResult =
-  | { authorized: true; userId: string }
+  | {
+      authorized: true;
+      userId: string;
+      email: string;
+      role: "ADMIN";
+      agency: "COO" | "FIH" | "LSHI" | "KLZ" | null;
+    }
   | { authorized: false; status: 401 | 403 };
 
 type IdentityResolver = (token: string) => Promise<ResolvedAdminIdentity | null>;
@@ -32,11 +42,20 @@ export async function authorizeAdminRequest(
     return { authorized: false, status: 401 };
   }
 
-  if (!isActiveAdminProfile(identity.profile, identity.userId)) {
+  if (
+    !identity.email?.trim() ||
+    !isActiveAdminProfile(identity.profile, identity.userId)
+  ) {
     return { authorized: false, status: 403 };
   }
 
-  return { authorized: true, userId: identity.userId };
+  return {
+    authorized: true,
+    userId: identity.userId,
+    email: identity.email,
+    role: "ADMIN",
+    agency: normalizeAdminAgency(identity.profile?.agence)
+  };
 }
 
 export function isActiveAdminProfile(
@@ -84,7 +103,7 @@ async function resolveSupabaseIdentity(token: string): Promise<ResolvedAdminIden
   const { data: profile, error: profileError } = await supabase
     .schema("public")
     .from("agents")
-    .select("id, actif, role")
+    .select("id, actif, role, agence")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -94,8 +113,26 @@ async function resolveSupabaseIdentity(token: string): Promise<ResolvedAdminIden
 
   return {
     userId: user.id,
+    email: user.email ?? "",
     profile
   };
+}
+
+function normalizeAdminAgency(
+  value: unknown
+): "COO" | "FIH" | "LSHI" | "KLZ" | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "COTONOU" || normalized === "COO") {
+    return "COO";
+  }
+
+  return ["FIH", "LSHI", "KLZ"].includes(normalized)
+    ? (normalized as "FIH" | "LSHI" | "KLZ")
+    : null;
 }
 
 function readBearerToken(value: string | null) {

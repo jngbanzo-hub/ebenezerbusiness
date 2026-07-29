@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Banknote,
+  ArrowRightLeft,
   Boxes,
   Building2,
   CalendarDays,
@@ -272,6 +273,12 @@ export function AdminWorkspace() {
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
+            <Button asChild type="button" variant="outline">
+              <Link href="/admin/transferts">
+                <ArrowRightLeft className="h-4 w-4" />
+                Transferts
+              </Link>
+            </Button>
             <Button asChild type="button" variant="outline">
               <Link href="/admin/stockages">
                 <Boxes className="h-4 w-4" />

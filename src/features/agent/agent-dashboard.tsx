@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Banknote,
+  ArrowRightLeft,
   Boxes,
   LoaderCircle,
   LogOut,
@@ -59,6 +60,15 @@ const OPERATIONS = [
     available: true,
     href: "/agent/stockages",
     actionLabel: "Consulter le statut"
+  },
+  {
+    key: "transferts",
+    title: "Transferts",
+    description: "Consultation préparatoire des transferts de votre agence",
+    icon: ArrowRightLeft,
+    available: true,
+    href: "/agent/transferts",
+    actionLabel: "Consulter les transferts"
   }
 ] as const;
 
@@ -204,7 +214,7 @@ export function AgentDashboard() {
             </p>
           </div>
 
-          <div className="mt-6 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="mt-6 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
             {OPERATIONS.map((operation) => {
               const Icon = operation.icon;
 

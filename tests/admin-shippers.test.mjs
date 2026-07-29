@@ -32,7 +32,7 @@ const authorizationSource = await readFile(
   "utf8"
 );
 const compiledAuthorization = ts
-  .transpileModule(authorizationSource, {
+  .transpileModule(authorizationSource.replace('import "server-only";', ""), {
     compilerOptions: {
       module: ts.ModuleKind.ESNext,
       target: ts.ScriptTarget.ES2022
@@ -397,9 +397,16 @@ test("l’autorisation serveur accepte uniquement l’ADMIN actif lié au JWT", 
     }),
     async () => ({
       userId: "user-1",
+      email: "admin@example.com",
       profile: { id: "user-1", actif: true, role: " admin " }
     })
   );
 
-  assert.deepEqual(result, { authorized: true, userId: "user-1" });
+  assert.deepEqual(result, {
+    authorized: true,
+    userId: "user-1",
+    email: "admin@example.com",
+    role: "ADMIN",
+    agency: null
+  });
 });

@@ -43,6 +43,7 @@ function requestWithToken(token = "valide") {
 function resolvedIdentity(overrides = {}) {
   return {
     userId: "user-1",
+    email: "agent@example.com",
     profile: {
       id: "user-1",
       nom: "Agent Test",
@@ -88,6 +89,7 @@ test("autorise un AGENT actif et normalise son agence côté serveur", async () 
     authorized: true,
     identity: {
       userId: "user-1",
+      email: "agent@example.com",
       nom: "Agent Test",
       role: "AGENT",
       agence: "COTONOU",
@@ -125,7 +127,7 @@ test("la route profil ignore toute agence envoyée par le navigateur", async () 
   assert.equal(/export async function (POST|PUT|PATCH|DELETE)/.test(route), false);
 });
 
-test("/agent affiche uniquement Encaissement, Dépenses et Stockages", async () => {
+test("/agent affiche exactement Encaissement, Dépenses, Stockages et Transferts", async () => {
   const dashboard = await readFile(
     new URL("../src/features/agent/agent-dashboard.tsx", import.meta.url),
     "utf8"
@@ -135,13 +137,13 @@ test("/agent affiche uniquement Encaissement, Dépenses et Stockages", async () 
     "utf8"
   );
 
-  for (const title of ["Encaissement", "Dépenses", "Stockages"]) {
+  for (const title of ["Encaissement", "Dépenses", "Stockages", "Transferts"]) {
     assert.ok(dashboard.includes(`title: "${title}"`));
   }
   assert.equal(dashboard.includes('title: "Arrivage"'), false);
   assert.equal(
     (dashboard.match(/available: true/g) ?? []).length,
-    3
+    4
   );
   assert.equal(
     dashboard.split('href: "/agent/encaissement"').length - 1,
@@ -153,6 +155,10 @@ test("/agent affiche uniquement Encaissement, Dépenses et Stockages", async () 
   );
   assert.equal(
     dashboard.split('href: "/agent/stockages"').length - 1,
+    1
+  );
+  assert.equal(
+    dashboard.split('href: "/agent/transferts"').length - 1,
     1
   );
   assert.ok(page.includes("<AgentDashboard />"));

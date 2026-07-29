@@ -147,8 +147,8 @@ test("l’interface reste en préparation sans action métier", () => {
   assert.equal(statusPage.includes("creerPhotographieInitialeStockages"), false);
 });
 
-test("le tableau de bord Agent contient exactement les trois modules autorisés", () => {
-  for (const title of ["Encaissement", "Dépenses", "Stockages"]) {
+test("le tableau de bord Agent contient exactement les quatre modules autorisés", () => {
+  for (const title of ["Encaissement", "Dépenses", "Stockages", "Transferts"]) {
     assert.ok(dashboard.includes(`title: "${title}"`));
   }
   assert.equal(dashboard.includes('title: "Arrivage"'), false);
