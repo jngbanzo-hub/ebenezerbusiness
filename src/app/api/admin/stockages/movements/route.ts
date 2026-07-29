@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { authorizeAdminRequest } from "@/server/admin-authorization";
-import { readAdminStockagesStatus } from "@/server/stockages-sheets";
+import { readAdminStockagesMovements } from "@/server/stockages-sheets";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -18,13 +18,19 @@ export async function GET(request: Request) {
       );
     }
 
-    const status = await readAdminStockagesStatus();
-    return NextResponse.json(status, {
-      headers: privateNoStoreHeaders()
+    const url = new URL(request.url);
+    const result = await readAdminStockagesMovements({
+      site: url.searchParams.get("agency") ?? "",
+      date: url.searchParams.get("date") ?? "",
+      parcelCode: url.searchParams.get("parcelCode") ?? "",
+      movementType: url.searchParams.get("movementType") ?? "",
+      triggerStatus: url.searchParams.get("triggerStatus") ?? "",
+      state: url.searchParams.get("state") ?? "ALL"
     });
+    return NextResponse.json(result, { headers: privateNoStoreHeaders() });
   } catch {
     return jsonError(
-      "Le statut Stockages est temporairement indisponible.",
+      "L’historique Stockages est temporairement indisponible.",
       503
     );
   }

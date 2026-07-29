@@ -6,20 +6,46 @@ import { readFileSync } from "fs";
 import { z } from "zod";
 
 import {
+  STOCKAGES_SHEET_NAMES,
+  type AdminAgencyStock,
+  type AdminInitialBalance,
+  type AdminStockMovement,
+  type AdminStockagesAnomaly,
+  type AdminStockagesAuditEntry,
+  type AdminStockagesAuditResponse,
+  type AdminStockagesMovementsResponse,
+  type AdminStockagesStatusResponse,
+  type StockagesAnomalyCategory,
+  type StockagesSheetAvailability,
+  type StockagesSheetName
+} from "@/features/stockages/admin-stockages-types";
+import {
   STOCKAGES_SITES,
   type StockagesInitialBalanceStatus,
   type StockagesPreparationStatus,
   type StockagesSite
 } from "@/features/stockages/types";
-import { assertStockagesPreparationMode } from "@/server/stockages-feature-flags";
+import {
+  assertStockagesPreparationMode,
+  getStockagesServerFeatureFlags
+} from "@/server/stockages-feature-flags";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
-const READ_ONLY_RANGES = [
-  "PARAMETRES!A:E",
-  "SOLDE INITIAL!A:I",
-  "AUDIT!A:J"
-] as const;
+const READ_ONLY_RANGES: Record<StockagesSheetName, string> = {
+  PARAMETRES: "PARAMETRES!A:E",
+  "SOLDE INITIAL": "SOLDE INITIAL!A:I",
+  "HISTORIQUE STATUTS": "HISTORIQUE STATUTS!A:Z",
+  "MOUVEMENTS STOCK": "MOUVEMENTS STOCK!A:Z",
+  "STOCK JOURNALIER": "STOCK JOURNALIER!A:Z",
+  AUDIT: "AUDIT!A:J",
+  "ANOMALIES MANIFESTE": "ANOMALIES MANIFESTE!A:Z",
+  "PHOTOGRAPHIE STATUTS": "PHOTOGRAPHIE STATUTS!A:Z",
+  "SIMULATION SYNCHRONISATION": "SIMULATION SYNCHRONISATION!A:Z",
+  "EXCLUSIONS PHOTOGRAPHIE": "EXCLUSIONS PHOTOGRAPHIE!A:Z"
+};
+
+const UNAVAILABLE_MESSAGE = "Non disponible avant l’activation" as const;
 
 const stockagesSheetsEnvSchema = z.object({
   GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
@@ -84,10 +110,8 @@ export async function readStockagesPreparationStatus(
 
   const config = getStockagesGoogleSheetsConfig();
   const accessToken = await getGoogleAccessToken(config);
-  const [valueRanges, sheetTitles] = await Promise.all([
-    readStockagesRanges(config, accessToken),
-    readStockagesSheetTitles(config, accessToken)
-  ]);
+  const sheetTitles = await readStockagesSheetTitles(config, accessToken);
+  const valueRanges = await readStockagesRanges(config, accessToken, sheetTitles);
   const parameters = parseParameters(getRows(valueRanges, "PARAMETRES"));
   const auditRows = getRows(valueRanges, "AUDIT");
   const balances = parseInitialBalances(
@@ -126,6 +150,174 @@ export async function readStockagesPreparationStatus(
     },
     lastUpdatedAt: findLastUpdateDate(auditRows)
   };
+}
+
+export async function readAdminStockagesStatus(): Promise<AdminStockagesStatusResponse> {
+  const source = await readAdminStockagesSource();
+  const parameters = parseParameters(source.rows("PARAMETRES"));
+  const systemStatus = parameters.get("SYSTEM_STATUS") ?? "BROUILLON";
+  const activated = normalizeText(systemStatus) !== "BROUILLON";
+  const auditRows = source.rows("AUDIT");
+  const anomalies = parseAdminAnomalies(source);
+  const lastSimulation =
+    lastNonEmptyDate(source.rows("SIMULATION SYNCHRONISATION")) ??
+    findLastAuditEvent(auditRows, "SIMULATION_SYNCHRONISATION_STATUTS")?.date ??
+    null;
+  const lastSynchronization =
+    findLastAuditEvent(auditRows, "SYNCHRONISATION_STATUTS")?.date ?? null;
+
+  return {
+    mode: "PREPARATION",
+    unavailableMessage: UNAVAILABLE_MESSAGE,
+    overview: {
+      systemStatus,
+      activationDate:
+        parameters.get("DATE_ACTIVATION") ?? "03/08/2026 07:00 Africa/Porto-Novo",
+      initialSnapshot: source.available("PHOTOGRAPHIE STATUTS")
+        ? parameters.get("INITIAL_SNAPSHOT_STATUS") ?? "Disponible"
+        : null,
+      lastSimulation,
+      lastSynchronization,
+      lastUpdatedAt: findLastUpdateDate(auditRows),
+      blockingAnomalies: countAnomalies(anomalies, "ANOMALIE_BLOQUANTE"),
+      negativeStockAlerts: countAnomalies(anomalies, "STOCK_NEGATIF")
+    },
+    initialBalances: parseAdminInitialBalances(
+      source.rows("SOLDE INITIAL"),
+      activated
+    ),
+    agencyStocks: parseAdminAgencyStocks(
+      source.rows("STOCK JOURNALIER"),
+      activated && source.available("STOCK JOURNALIER")
+    ),
+    anomalies,
+    sheetAvailability: source.availability,
+    actionsEnabled: false,
+    adjustmentsEnabled: false,
+    exportsEnabled: false
+  };
+}
+
+export async function readAdminStockagesMovements(filters: {
+  site: string;
+  date: string;
+  parcelCode: string;
+  movementType: string;
+  triggerStatus: string;
+  state: string;
+}): Promise<AdminStockagesMovementsResponse> {
+  const source = await readAdminStockagesSource();
+  if (!source.available("MOUVEMENTS STOCK")) {
+    return {
+      available: false,
+      unavailableMessage: UNAVAILABLE_MESSAGE,
+      movements: []
+    };
+  }
+
+  const movements = parseTable(source.rows("MOUVEMENTS STOCK"), (row, index) => {
+    const site = normalizeSite(readNamedCell(row, ["AGENCE", "SITE"]));
+    const cancelled = normalizeText(
+      readNamedCell(row, ["ANNULE", "ANNULÉ", "STATUT"])
+    );
+    return {
+      id: `movement-${index + 2}`,
+      date: readNamedCell(row, ["DATE", "HORODATAGE"]),
+      site,
+      parcelCode: readNamedCell(row, ["CODE COLIS", "CODE_COLIS"]),
+      movementType: readNamedCell(row, ["TYPE MOUVEMENT", "TYPE_MOUVEMENT", "TYPE"]),
+      triggerStatus: readNamedCell(row, [
+        "STATUT DECLENCHEUR",
+        "STATUT DÉCLENCHEUR",
+        "STATUT_DECLENCHEUR"
+      ]),
+      state:
+        cancelled === "OUI" || cancelled === "ANNULE" || cancelled === "CANCELLED"
+          ? ("CANCELLED" as const)
+          : ("ACTIVE" as const),
+      parcels: parseOptionalNumber(readNamedCell(row, ["COLIS", "NOMBRE COLIS"])),
+      kilograms: parseOptionalNumber(readNamedCell(row, ["KG", "KILOGRAMMES"])),
+      details: readNamedCell(row, ["DETAILS", "DÉTAILS", "OBSERVATION"])
+    };
+  }).filter((movement) => {
+    return (
+      matchesFilter(movement.site ?? "", filters.site) &&
+      matchesFilter(movement.date, filters.date, true) &&
+      matchesFilter(movement.parcelCode, filters.parcelCode, true) &&
+      matchesFilter(movement.movementType, filters.movementType) &&
+      matchesFilter(movement.triggerStatus, filters.triggerStatus) &&
+      matchesFilter(movement.state, filters.state)
+    );
+  });
+
+  return {
+    available: true,
+    unavailableMessage: UNAVAILABLE_MESSAGE,
+    movements
+  };
+}
+
+export async function readAdminStockagesAudit(filters: {
+  site: string;
+  date: string;
+  user: string;
+  action: string;
+  reference: string;
+  result: string;
+}): Promise<AdminStockagesAuditResponse> {
+  const source = await readAdminStockagesSource();
+  if (!source.available("AUDIT")) {
+    return {
+      available: false,
+      unavailableMessage: UNAVAILABLE_MESSAGE,
+      entries: []
+    };
+  }
+
+  const entries = parseAuditEntries(source.rows("AUDIT")).filter((entry) => {
+    return (
+      matchesFilter(entry.site ?? "", filters.site) &&
+      matchesFilter(entry.date, filters.date, true) &&
+      matchesFilter(entry.user, filters.user, true) &&
+      matchesFilter(entry.action, filters.action) &&
+      matchesFilter(entry.reference, filters.reference, true) &&
+      matchesFilter(entry.result, filters.result)
+    );
+  });
+
+  return {
+    available: true,
+    unavailableMessage: UNAVAILABLE_MESSAGE,
+    entries
+  };
+}
+
+async function readAdminStockagesSource() {
+  assertStockagesPreparationMode();
+  const disabledFlags = getStockagesServerFeatureFlags();
+  if (
+    disabledFlags.realSyncEnabled ||
+    disabledFlags.adminActionsEnabled ||
+    disabledFlags.adjustmentsEnabled ||
+    disabledFlags.exportsEnabled
+  ) {
+    throw new Error("Les actions Stockages doivent rester désactivées.");
+  }
+
+  const configured = Boolean(
+    process.env.GOOGLE_SHEETS_STOCKAGES_SPREADSHEET_ID?.trim()
+  );
+  if (!configured) {
+    const availability = createSheetAvailability(new Set());
+    return createAdminSource([], availability);
+  }
+
+  const config = getStockagesGoogleSheetsConfig();
+  const accessToken = await getGoogleAccessToken(config);
+  const titles = await readStockagesSheetTitles(config, accessToken);
+  const availability = createSheetAvailability(titles);
+  const ranges = await readStockagesRanges(config, accessToken, titles);
+  return createAdminSource(ranges, availability);
 }
 
 function createUnavailablePreparationStatus(
@@ -195,15 +387,23 @@ function getStockagesGoogleSheetsConfig(): StockagesGoogleSheetsConfig {
 
 async function readStockagesRanges(
   config: StockagesGoogleSheetsConfig,
-  accessToken: string
+  accessToken: string,
+  sheetTitles: ReadonlySet<string>
 ) {
+  const selectedRanges = STOCKAGES_SHEET_NAMES.filter((sheetName) =>
+    sheetTitles.has(sheetName)
+  ).map((sheetName) => READ_ONLY_RANGES[sheetName]);
+  if (selectedRanges.length === 0) {
+    return [];
+  }
+
   const searchParams = new URLSearchParams({
     majorDimension: "ROWS",
     valueRenderOption: "FORMATTED_VALUE",
     dateTimeRenderOption: "FORMATTED_STRING"
   });
 
-  READ_ONLY_RANGES.forEach((range) => searchParams.append("ranges", range));
+  selectedRanges.forEach((range) => searchParams.append("ranges", range));
 
   const response = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
@@ -413,6 +613,278 @@ function findLastUpdateDate(rows: unknown[][]) {
   }
 
   return null;
+}
+
+function createSheetAvailability(
+  titles: ReadonlySet<string>
+): StockagesSheetAvailability {
+  return Object.fromEntries(
+    STOCKAGES_SHEET_NAMES.map((name) => [name, titles.has(name)])
+  ) as StockagesSheetAvailability;
+}
+
+function createAdminSource(
+  valueRanges: GoogleValueRange[],
+  availability: StockagesSheetAvailability
+) {
+  return {
+    availability,
+    available: (name: StockagesSheetName) => availability[name],
+    rows: (name: StockagesSheetName) =>
+      availability[name] ? getRows(valueRanges, name) : []
+  };
+}
+
+function parseAdminInitialBalances(
+  rows: unknown[][],
+  activated: boolean
+): AdminInitialBalance[] {
+  const bySite = new Map<StockagesSite, AdminInitialBalance>();
+
+  rows.slice(1).forEach((row) => {
+    const site = normalizeSite(getCell(row, 1));
+    if (!site) {
+      return;
+    }
+    const normalizedStatus = normalizeText(getCell(row, 6));
+    bySite.set(site, {
+      site,
+      status:
+        normalizedStatus === "VALIDE"
+          ? "VALIDÉ"
+          : normalizedStatus === "BROUILLON"
+            ? "BROUILLON"
+            : null,
+      activationDate: getCell(row, 2) || null,
+      initialParcels: activated ? parseOptionalNumber(getCell(row, 3)) : null,
+      initialKilograms: activated ? parseOptionalNumber(getCell(row, 4)) : null,
+      validatedBy: getCell(row, 7) || null,
+      validatedAt: getCell(row, 8) || null
+    });
+  });
+
+  return STOCKAGES_SITES.map(
+    (site): AdminInitialBalance =>
+      bySite.get(site) ?? {
+        site,
+        status: null,
+        activationDate: null,
+        initialParcels: null,
+        initialKilograms: null,
+        validatedBy: null,
+        validatedAt: null
+      }
+  );
+}
+
+function parseAdminAgencyStocks(
+  rows: unknown[][],
+  available: boolean
+): AdminAgencyStock[] {
+  if (!available) {
+    return STOCKAGES_SITES.map((site) => emptyAgencyStock(site));
+  }
+
+  const parsed = parseTable<AdminAgencyStock[]>(rows, (row) => {
+    const site = normalizeSite(readNamedCell(row, ["AGENCE", "SITE"]));
+    if (!site) {
+      return [];
+    }
+    const finalParcels = parseOptionalNumber(
+      readNamedCell(row, ["STOCK FINAL COLIS", "STOCK_FINAL_COLIS"])
+    );
+    const finalKilograms = parseOptionalNumber(
+      readNamedCell(row, ["STOCK FINAL KG", "STOCK_FINAL_KG"])
+    );
+    return [{
+      site,
+      available: true,
+      initialParcels: namedNumber(row, ["STOCK INITIAL COLIS", "STOCK_INITIAL_COLIS"]),
+      initialKilograms: namedNumber(row, ["STOCK INITIAL KG", "STOCK_INITIAL_KG"]),
+      inboundParcels: namedNumber(row, ["ENTREES COLIS", "ENTRÉES COLIS"]),
+      inboundKilograms: namedNumber(row, ["ENTREES KG", "ENTRÉES KG"]),
+      outboundParcels: namedNumber(row, ["SORTIES COLIS"]),
+      outboundKilograms: namedNumber(row, ["SORTIES KG"]),
+      adjustmentParcels: namedNumber(row, ["AJUSTEMENTS COLIS"]),
+      adjustmentKilograms: namedNumber(row, ["AJUSTEMENTS KG"]),
+      finalParcels,
+      finalKilograms,
+      status:
+        finalParcels !== null &&
+        finalKilograms !== null &&
+        (finalParcels < 0 || finalKilograms < 0)
+          ? ("ALERTE_STOCK_NEGATIF" as const)
+          : ("OK" as const)
+    } satisfies AdminAgencyStock];
+  }).flat();
+  const bySite = new Map(parsed.map((stock) => [stock.site, stock]));
+  return STOCKAGES_SITES.map((site) => bySite.get(site) ?? emptyAgencyStock(site));
+}
+
+function emptyAgencyStock(site: StockagesSite): AdminAgencyStock {
+  return {
+    site,
+    available: false,
+    initialParcels: null,
+    initialKilograms: null,
+    inboundParcels: null,
+    inboundKilograms: null,
+    outboundParcels: null,
+    outboundKilograms: null,
+    adjustmentParcels: null,
+    adjustmentKilograms: null,
+    finalParcels: null,
+    finalKilograms: null,
+    status: null
+  };
+}
+
+function parseAdminAnomalies(source: Awaited<ReturnType<typeof readAdminStockagesSource>>) {
+  const anomalies: AdminStockagesAnomaly[] = [];
+  const append = (
+    sheet: StockagesSheetName,
+    fallbackCategory: StockagesAnomalyCategory
+  ) => {
+    parseTable(source.rows(sheet), (row, index) => {
+      const category = classifyAnomaly(
+        readNamedCell(row, ["TYPE", "CATEGORIE", "CATÉGORIE", "STATUT"]),
+        fallbackCategory
+      );
+      anomalies.push({
+        id: `${sheet}-${index + 2}`,
+        date: readNamedCell(row, ["DATE", "HORODATAGE"]),
+        category,
+        site: normalizeSite(readNamedCell(row, ["AGENCE", "SITE"])),
+        reference: readNamedCell(row, ["REFERENCE", "RÉFÉRENCE", "CODE COLIS"]),
+        details: readNamedCell(row, [
+          "DETAILS",
+          "DÉTAILS",
+          "MESSAGE",
+          "OBSERVATION"
+        ])
+      });
+      return null;
+    });
+  };
+
+  append("ANOMALIES MANIFESTE", "ANOMALIE_BLOQUANTE");
+  append("EXCLUSIONS PHOTOGRAPHIE", "EXCLUSION_INVALIDE");
+  parseAuditEntries(source.rows("AUDIT"))
+    .filter((entry) => normalizeText(entry.result).includes("ERREUR"))
+    .forEach((entry) => {
+      anomalies.push({
+        id: `sync-${entry.id}`,
+        date: entry.date,
+        category: "ERREUR_SYNCHRONISATION",
+        site: entry.site,
+        reference: entry.reference,
+        details: entry.details
+      });
+    });
+  return anomalies;
+}
+
+function classifyAnomaly(
+  value: string,
+  fallback: StockagesAnomalyCategory
+): StockagesAnomalyCategory {
+  const normalized = normalizeText(value);
+  if (normalized.includes("DOUBLON")) {
+    return "DOUBLON";
+  }
+  if (normalized.includes("NON RETROUV")) {
+    return "EXCLUSION_NON_RETROUVEE";
+  }
+  if (normalized.includes("EXCLUSION") && normalized.includes("INVALID")) {
+    return "EXCLUSION_INVALIDE";
+  }
+  if (normalized.includes("STOCK") && normalized.includes("NEGAT")) {
+    return "STOCK_NEGATIF";
+  }
+  return fallback;
+}
+
+function parseAuditEntries(rows: unknown[][]): AdminStockagesAuditEntry[] {
+  if (rows.length < 2) {
+    return [];
+  }
+  return rows.slice(1).map((row, index) => ({
+    id: `audit-${index + 2}`,
+    date: getCell(row, 0),
+    user: getCell(row, 1),
+    action: getCell(row, 2),
+    site: normalizeSite(getCell(row, 3)),
+    reference: getCell(row, 4),
+    result: getCell(row, 7),
+    details: getCell(row, 8)
+  }));
+}
+
+type NamedRow = Map<string, string>;
+
+function parseTable<T>(
+  rows: unknown[][],
+  parse: (row: NamedRow, index: number) => T
+): T[] {
+  if (rows.length < 2) {
+    return [];
+  }
+  const headers = rows[0].map((cell) => normalizeText(String(cell ?? "")));
+  return rows.slice(1).map((row, index) => {
+    const named = new Map<string, string>();
+    headers.forEach((header, column) => named.set(header, getCell(row, column)));
+    return parse(named, index);
+  });
+}
+
+function readNamedCell(row: NamedRow, names: string[]) {
+  for (const name of names) {
+    const value = row.get(normalizeText(name));
+    if (value) {
+      return value;
+    }
+  }
+  return "";
+}
+
+function namedNumber(row: NamedRow, names: string[]) {
+  return parseOptionalNumber(readNamedCell(row, names));
+}
+
+function parseOptionalNumber(value: string) {
+  if (!value.trim()) {
+    return null;
+  }
+  const parsed = Number(value.replace(/\s/g, "").replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function matchesFilter(value: string, filter: string, partial = false) {
+  if (!filter || normalizeText(filter) === "ALL") {
+    return true;
+  }
+  const normalizedValue = normalizeText(value);
+  const normalizedFilter = normalizeText(filter);
+  return partial
+    ? normalizedValue.includes(normalizedFilter)
+    : normalizedValue === normalizedFilter;
+}
+
+function lastNonEmptyDate(rows: unknown[][]) {
+  for (let index = rows.length - 1; index >= 1; index -= 1) {
+    const date = getCell(rows[index], 0);
+    if (date) {
+      return date;
+    }
+  }
+  return null;
+}
+
+function countAnomalies(
+  anomalies: AdminStockagesAnomaly[],
+  category: StockagesAnomalyCategory
+) {
+  return anomalies.filter((anomaly) => anomaly.category === category).length;
 }
 
 function getRows(valueRanges: GoogleValueRange[], sheetName: string) {
