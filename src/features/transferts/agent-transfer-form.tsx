@@ -1,5 +1,6 @@
 "use client";
 
+import { Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,7 @@ export function AgentTransferForm({
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [transferRequestId, setTransferRequestId] = useState(() => crypto.randomUUID());
+  const [showTransferCode, setShowTransferCode] = useState(false);
 
   if (!enabled) {
     return <p className="text-sm text-amber-100">Les opérations de transfert ne sont pas encore activées.</p>;
@@ -31,7 +33,8 @@ export function AgentTransferForm({
       className="grid gap-3 sm:grid-cols-2"
       onSubmit={async (event) => {
         event.preventDefault();
-        const form = new FormData(event.currentTarget);
+        const formElement = event.currentTarget;
+        const form = new FormData(formElement);
         setPending(true);
         setMessage("");
         try {
@@ -48,9 +51,10 @@ export function AgentTransferForm({
             transferRequestId,
             observation: String(form.get("observation") ?? "")
           });
-          event.currentTarget.reset();
+          formElement.reset();
+          setShowTransferCode(false);
           setTransferRequestId(crypto.randomUUID());
-          setMessage("Transfert créé.");
+          setMessage("Transfert créé avec succès.");
           onSuccess();
         } catch (caught) {
           setMessage(caught instanceof Error ? caught.message : "Opération impossible.");
@@ -64,7 +68,14 @@ export function AgentTransferForm({
       <Field label="Montant"><input name="amount" type="number" min="0.01" step="any" required className="field" /></Field>
       <Field label="Frais"><input name="fees" type="number" min="0" step="any" defaultValue="0" required className="field" /></Field>
       <Field label="Service"><input name="service" maxLength={80} required className="field" /></Field>
-      <Field label="Code de transfert"><input name="transferCode" type="password" autoComplete="off" maxLength={128} required className="field" /></Field>
+      <Field label="Code de transfert">
+        <span className="flex items-center gap-2">
+          <input name="transferCode" type={showTransferCode ? "text" : "password"} autoComplete="off" maxLength={128} required className="field min-w-0 flex-1" />
+          <Button type="button" size="sm" variant="outline" onClick={() => setShowTransferCode((value) => !value)} aria-label={showTransferCode ? "Masquer le code" : "Afficher le code"}>
+            {showTransferCode ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </Button>
+        </span>
+      </Field>
       <Field label="Expéditeur"><input name="senderName" maxLength={120} required className="field" /></Field>
       <Field label="Bénéficiaire"><input name="beneficiaryName" maxLength={120} required className="field" /></Field>
       <Field label="Téléphone bénéficiaire"><input name="beneficiaryPhone" maxLength={40} required className="field" /></Field>

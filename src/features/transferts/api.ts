@@ -1,5 +1,7 @@
 import type {
   CreateTransferInput,
+  CorrectTransferCodeInput,
+  TransferDetailResponse,
   TransferWriteResponse,
   TransfersAuditResponse,
   TransfersPageResponse
@@ -21,6 +23,42 @@ export function loadAgentTransfers(token: string, signal?: AbortSignal) {
 
 export function createAgentTransfer(token: string, input: CreateTransferInput) {
   return writeTransfer("/api/agent/transferts", token, input);
+}
+
+export function loadAgentTransferDetail(
+  token: string,
+  transferId: string,
+  signal?: AbortSignal
+) {
+  return loadTransfers<TransferDetailResponse>(
+    `/api/agent/transferts/${encodeURIComponent(transferId)}`,
+    token,
+    signal
+  );
+}
+
+export function loadAdminTransferDetail(
+  token: string,
+  transferId: string,
+  signal?: AbortSignal
+) {
+  return loadTransfers<TransferDetailResponse>(
+    `/api/admin/transferts/${encodeURIComponent(transferId)}`,
+    token,
+    signal
+  );
+}
+
+export function correctAdminTransferCode(
+  token: string,
+  transferId: string,
+  input: CorrectTransferCodeInput
+) {
+  return writeTransfer(
+    `/api/admin/transferts/${encodeURIComponent(transferId)}/correct-code`,
+    token,
+    input
+  );
 }
 
 export function performAgentTransferAction(

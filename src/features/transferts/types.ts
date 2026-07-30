@@ -35,6 +35,7 @@ export type TransferSummary = {
   maskedCode: string;
   senderName: string;
   beneficiaryName: string;
+  beneficiaryPhone?: string;
   status: TransferStatus;
   codeReceivedBy: string;
   codeReceivedAt: string | null;
@@ -48,6 +49,21 @@ export type TransferSummary = {
   cancelled: boolean;
   cancelReason: string;
   transferRequestId?: string;
+  transferCode?: string;
+};
+
+export type TransferDetailResponse = {
+  state: TransfersModuleState;
+  transfer: TransferSummary;
+  writesEnabled?: boolean;
+  message?: string;
+};
+
+export type CorrectTransferCodeInput = {
+  newTransferCode: string;
+  confirmTransferCode: string;
+  motif: string;
+  correctionRequestId: string;
 };
 
 export type CreateTransferInput = {

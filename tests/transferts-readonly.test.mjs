@@ -107,6 +107,8 @@ test("la canonisation et la base de signature correspondent au contrat V2", () =
 test("le client serveur supprime récursivement tout code complet", () => {
   const safe = module.stripFullTransferCodes({
     transferCode: "SECRET",
+    newTransferCode: "NOUVEAU_SECRET",
+    oldTransferCode: "ANCIEN_SECRET",
     apiKey: "API_SECRET",
     signature: "SIGNED",
     nonce: "NONCE",
@@ -118,6 +120,24 @@ test("le client serveur supprime récursivement tout code complet", () => {
     nested: [{ status: "ENVOYE" }]
   });
   assert.equal(JSON.stringify(safe).includes("SECRET"), false);
+});
+
+test("seul le détail Agent explicitement autorisé peut conserver transferCode", () => {
+  const source = {
+    transferCode: "CODE-AUTORISE",
+    maskedCode: "********RISE",
+    apiKey: "INTERDIT",
+    nested: { nonce: "INTERDIT" }
+  };
+  assert.deepEqual(
+    module.sanitizeTransfertsResponse(source, { allowTransferCode: true }),
+    { transferCode: "CODE-AUTORISE", maskedCode: "********RISE", nested: {} }
+  );
+  assert.equal(
+    JSON.stringify(module.sanitizeTransfertsResponse(source, { allowTransferCode: false }))
+      .includes("CODE-AUTORISE"),
+    false
+  );
 });
 
 test("les flags restent strictement serveur et désactivés par défaut", () => {

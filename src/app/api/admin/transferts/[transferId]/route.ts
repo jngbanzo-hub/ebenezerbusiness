@@ -25,7 +25,11 @@ export async function GET(request: Request, { params }: { params: { transferId: 
       { userId: authorization.userId, email: authorization.email, role: "ADMIN", agency: authorization.agency },
       { transferId }
     );
-    return privateJson({ state: "READY", transfer });
+    return privateJson({
+      state: "READY",
+      transfer,
+      writesEnabled: getTransfertsFeatureFlags().writesEnabled
+    });
   } catch (error) {
     return error instanceof TransfertsConfigurationError
       ? privateJson({ state: "NOT_CONFIGURED", message: "Le module Transferts n’est pas configuré." }, 503)

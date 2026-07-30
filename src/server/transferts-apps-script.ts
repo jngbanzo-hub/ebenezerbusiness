@@ -25,6 +25,7 @@ export const TRANSFERTS_WRITE_ACTIONS = [
   "CANCEL_TRANSFER"
 ] as const;
 export type TransfertsWriteAction = (typeof TRANSFERTS_WRITE_ACTIONS)[number];
+export type TransfertsAdminWriteAction = "ADMIN_CORRECT_TRANSFER_CODE";
 
 export type TransfertsActor = {
   userId: string;
@@ -52,25 +53,25 @@ export async function callTransfertsReadApi(
   action: TransfertsReadAction,
   actor: TransfertsActor,
   payload: Record<string, unknown>,
-  options: { fetcher?: typeof fetch; now?: number } = {}
+  options: { fetcher?: typeof fetch; now?: number; allowAgentDetailCode?: boolean } = {}
 ): Promise<unknown> {
   return callTransfertsApi(action, actor, payload, options);
 }
 
 export async function callTransfertsWriteApi(
-  action: TransfertsWriteAction,
+  action: TransfertsWriteAction | TransfertsAdminWriteAction,
   actor: TransfertsActor,
   payload: Record<string, unknown>,
-  options: { fetcher?: typeof fetch; now?: number } = {}
+  options: { fetcher?: typeof fetch; now?: number; allowAgentDetailCode?: boolean } = {}
 ): Promise<unknown> {
   return callTransfertsApi(action, actor, payload, options);
 }
 
 async function callTransfertsApi(
-  action: TransfertsReadAction | TransfertsWriteAction,
+  action: TransfertsReadAction | TransfertsWriteAction | TransfertsAdminWriteAction,
   actor: TransfertsActor,
   payload: Record<string, unknown>,
-  options: { fetcher?: typeof fetch; now?: number } = {}
+  options: { fetcher?: typeof fetch; now?: number; allowAgentDetailCode?: boolean } = {}
 ): Promise<unknown> {
   const config = readTransfertsConfiguration();
   const timestamp = String(options.now ?? Date.now());
@@ -124,7 +125,9 @@ async function callTransfertsApi(
     if (!validated.ok) {
       throw new TransfertsServiceError(validated.error?.code ?? "TRANSFERTS_SERVICE_ERROR");
     }
-    return stripFullTransferCodes(validated.data);
+    return sanitizeTransfertsResponse(validated.data, {
+      allowTransferCode: action === "GET_TRANSFER" && options.allowAgentDetailCode === true
+    });
   } finally {
     clearTimeout(timeout);
   }
@@ -179,14 +182,21 @@ export function signTransfertsRequest(secret: string, signatureBase: string) {
 }
 
 export function stripFullTransferCodes(value: unknown): unknown {
+  return sanitizeTransfertsResponse(value, { allowTransferCode: false });
+}
+
+export function sanitizeTransfertsResponse(
+  value: unknown,
+  options: { allowTransferCode: boolean }
+): unknown {
   if (Array.isArray(value)) {
-    return value.map(stripFullTransferCodes);
+    return value.map((item) => sanitizeTransfertsResponse(item, options));
   }
   if (value && typeof value === "object") {
     const safe: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value)) {
-      if (!isSensitiveResponseKey(key)) {
-        safe[key] = stripFullTransferCodes(child);
+      if (!isSensitiveResponseKey(key, options.allowTransferCode)) {
+        safe[key] = sanitizeTransfertsResponse(child, options);
       }
     }
     return safe;
@@ -194,16 +204,19 @@ export function stripFullTransferCodes(value: unknown): unknown {
   return value;
 }
 
-function isSensitiveResponseKey(key: string) {
+function isSensitiveResponseKey(key: string, allowTransferCode: boolean) {
+  const normalized = key.replace(/[_-]/g, "").toLowerCase();
+  if (normalized.includes("transfercode")) {
+    return normalized !== "transfercode" || !allowTransferCode;
+  }
   return [
-    "transfercode",
     "apikey",
     "signature",
     "nonce",
     "hmacsecret",
     "password",
     "secret"
-  ].includes(key.replace(/[_-]/g, "").toLowerCase());
+  ].includes(normalized);
 }
 
 function readTransfertsConfiguration() {
@@ -227,7 +240,7 @@ function readTransfertsConfiguration() {
 function validateAppsScriptResponse(
   value: unknown,
   requestId: string,
-  action: TransfertsReadAction | TransfertsWriteAction
+  action: TransfertsReadAction | TransfertsWriteAction | TransfertsAdminWriteAction
 ): AppsScriptResponse {
   if (!isRecord(value)) throw new TransfertsServiceError("TRANSFERTS_INVALID_RESPONSE");
   if (
@@ -261,10 +274,14 @@ function validateAppsScriptResponse(
 }
 
 function readResponseHasInvalidData(
-  action: TransfertsReadAction | TransfertsWriteAction,
+  action: TransfertsReadAction | TransfertsWriteAction | TransfertsAdminWriteAction,
   data: unknown
 ) {
-  if (action === "GET_TRANSFER" || TRANSFERTS_WRITE_ACTIONS.includes(action as TransfertsWriteAction)) {
+  if (
+    action === "GET_TRANSFER" ||
+    action === "ADMIN_CORRECT_TRANSFER_CODE" ||
+    TRANSFERTS_WRITE_ACTIONS.includes(action as TransfertsWriteAction)
+  ) {
     return !isRecord(data);
   }
   return !Array.isArray(data);

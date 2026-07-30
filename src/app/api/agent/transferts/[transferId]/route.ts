@@ -3,8 +3,10 @@ import { NextResponse } from "next/server";
 import { authorizeAgentRequest } from "@/server/agent-authorization";
 import {
   callTransfertsReadApi,
-  TransfertsConfigurationError
+  TransfertsConfigurationError,
+  TransfertsServiceError
 } from "@/server/transferts-apps-script";
+import type { TransferSummary } from "@/features/transferts/types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -29,10 +31,20 @@ export async function GET(
     const transfer = await callTransfertsReadApi(
       "GET_TRANSFER",
       { userId: identity.userId, email: identity.email, role: "AGENT", agency: identity.site },
-      { transferId }
-    );
+      { transferId },
+      { allowAgentDetailCode: true }
+    ) as TransferSummary;
+    if (
+      transfer.agencyFrom !== identity.site &&
+      transfer.agencyTo !== identity.site
+    ) {
+      return privateJson({ state: "FORBIDDEN", message: "Accès interdit." }, 403);
+    }
     return privateJson({ state: "READY", transfer });
   } catch (error) {
+    if (error instanceof TransfertsServiceError && /ACCESS_DENIED|FORBIDDEN/.test(error.code)) {
+      return privateJson({ state: "FORBIDDEN", message: "Accès interdit." }, 403);
+    }
     return error instanceof TransfertsConfigurationError
       ? privateJson({ state: "NOT_CONFIGURED", message: "Le module Transferts n’est pas configuré." }, 503)
       : privateJson({ state: "SERVICE_UNAVAILABLE", message: "Le service Transferts est temporairement indisponible." }, 503);

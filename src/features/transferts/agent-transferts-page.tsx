@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { signOutAgent } from "@/features/agent/auth";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { AgentTransferActions } from "@/features/transferts/agent-transfer-actions";
+import { AgentTransferDetails } from "@/features/transferts/agent-transfer-details";
 import { AgentTransferForm } from "@/features/transferts/agent-transfer-form";
 import { loadAgentTransfers, TransfertsApiError } from "@/features/transferts/api";
 import type { TransferStatus, TransfersPageResponse } from "@/features/transferts/types";
@@ -24,6 +25,7 @@ export function AgentTransfertsPage() {
   const [status, setStatus] = useState<TransferStatus | "">("");
   const [search, setSearch] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
+  const [selectedTransferId, setSelectedTransferId] = useState("");
   const reload = useCallback(() => setReloadKey((value) => value + 1), []);
 
   useEffect(() => {
@@ -114,7 +116,12 @@ export function AgentTransfertsPage() {
                     <span>{transfer.amount.toFixed(2)} {transfer.currency}</span>
                     <span>{transfer.maskedCode} · {transfer.status}</span>
                   </div>
-                  <p className="mt-2 text-xs text-muted-foreground">Transfer ID : {transfer.transferId}</p>
+                  <div className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+                    <p>Transfer ID : {transfer.transferId}</p>
+                    <p>Expéditeur : {transfer.senderName || "—"}</p>
+                    <p>Bénéficiaire : {transfer.beneficiaryName || "—"}</p>
+                  </div>
+                  <Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => setSelectedTransferId(transfer.transferId)}>Voir les détails</Button>
                   {token && result.agency && <AgentTransferActions token={token} transfer={transfer} agency={result.agency} enabled={result.writesEnabled} onSuccess={reload} />}
                 </div>
               ))}
@@ -135,6 +142,13 @@ export function AgentTransfertsPage() {
               : <p className="text-sm text-amber-100">Les opérations de transfert ne sont pas encore activées.</p>}
           </div>
         </GlassPanel>
+        {selectedTransferId && token ? (
+          <AgentTransferDetails
+            token={token}
+            transferId={selectedTransferId}
+            onClose={() => setSelectedTransferId("")}
+          />
+        ) : null}
       </Container>
     </main>
   );

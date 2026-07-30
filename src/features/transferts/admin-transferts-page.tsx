@@ -25,6 +25,7 @@ import {
   type TransfersAuditResponse,
   type TransfersPageResponse
 } from "@/features/transferts/types";
+import { AdminTransferDetails } from "@/features/transferts/admin-transfer-details";
 
 const fieldClassName =
   "mt-2 h-11 w-full rounded-md border border-white/15 bg-white/[0.05] px-3 text-white outline-none";
@@ -46,6 +47,8 @@ export function AdminTransfertsPage() {
   const [transferId, setTransferId] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [selectedTransferId, setSelectedTransferId] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
   const filters = useMemo(
     () => ({
       period,
@@ -131,7 +134,7 @@ export function AdminTransfertsPage() {
     }
     void load();
     return () => { active = false; controller.abort(); };
-  }, [agencyFrom, agencyTo, authorized, circuit, currency, dateFrom, dateTo, filters, period, router, status, transferId]);
+  }, [agencyFrom, agencyTo, authorized, circuit, currency, dateFrom, dateTo, filters, period, reloadKey, router, status, transferId]);
 
   if (!authorized) {
     return (
@@ -190,7 +193,7 @@ export function AdminTransfertsPage() {
 
         {result?.adminEnabled ? (
           <>
-            <TransferTable result={result} />
+            <TransferTable result={result} onSelect={setSelectedTransferId} />
             <AuditTable audit={audit} />
           </>
         ) : null}
@@ -201,6 +204,14 @@ export function AdminTransfertsPage() {
             Aucun code complet ni action de création, confirmation, annulation ou modification n’est disponible.
           </p>
         </GlassPanel>
+        {selectedTransferId && token.current ? (
+          <AdminTransferDetails
+            token={token.current}
+            transferId={selectedTransferId}
+            onClose={() => setSelectedTransferId("")}
+            onSuccess={() => setReloadKey((value) => value + 1)}
+          />
+        ) : null}
       </Container>
     </main>
   );
@@ -247,14 +258,20 @@ function Amounts({ values }: { values: CurrencyTotals }) {
   return <div className="space-y-1">{TRANSFER_CURRENCIES.map((currency) => <p key={currency}>{new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(values[currency])} {currency}</p>)}</div>;
 }
 
-function TransferTable({ result }: { result: TransfersPageResponse }) {
+function TransferTable({
+  result,
+  onSelect
+}: {
+  result: TransfersPageResponse;
+  onSelect: (transferId: string) => void;
+}) {
   return (
     <GlassPanel className="mt-6 overflow-x-auto p-5 sm:p-6">
       <h2 className="text-xl font-semibold">Transferts ({result.transfers.length})</h2>
       {result.transfers.length === 0 ? <p className="mt-4 text-sm text-muted-foreground">Aucun transfert ne correspond aux filtres.</p> : (
         <table className="mt-5 min-w-full text-left text-sm">
-          <thead className="text-muted-foreground"><tr><th className="p-2">Transfer ID</th><th>Circuit</th><th>Expéditeur / bénéficiaire</th><th>Montant</th><th>Code</th><th>Statut</th><th>Agent</th><th>Envoi</th><th>Mise à jour</th></tr></thead>
-          <tbody>{result.transfers.map((item) => <tr key={item.transferId} className="border-t border-white/10"><td className="p-2">{item.transferId}</td><td>{item.agencyFrom} → {item.agencyTo}</td><td>{item.senderName || "—"} / {item.beneficiaryName || "—"}</td><td>{item.amount} {item.currency}</td><td>{item.maskedCode || "—"}</td><td>{item.status}</td><td>{item.agentFrom || "—"}</td><td>{item.sentAt}</td><td>{item.updatedAt || "—"}</td></tr>)}</tbody>
+          <thead className="text-muted-foreground"><tr><th className="p-2">Transfer ID</th><th>Circuit</th><th>Expéditeur / bénéficiaire</th><th>Montant</th><th>Code</th><th>Statut</th><th>Agent</th><th>Envoi</th><th>Mise à jour</th><th>Détail</th></tr></thead>
+          <tbody>{result.transfers.map((item) => <tr key={item.transferId} className="border-t border-white/10"><td className="p-2">{item.transferId}</td><td>{item.agencyFrom} → {item.agencyTo}</td><td>{item.senderName || "—"} / {item.beneficiaryName || "—"}</td><td>{item.amount} {item.currency}</td><td>{item.maskedCode || "—"}</td><td>{item.status}</td><td>{item.agentFrom || "—"}</td><td>{item.sentAt}</td><td>{item.updatedAt || "—"}</td><td><Button type="button" size="sm" variant="outline" onClick={() => onSelect(item.transferId)}>Voir</Button></td></tr>)}</tbody>
         </table>
       )}
     </GlassPanel>
