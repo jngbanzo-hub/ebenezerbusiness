@@ -32,6 +32,8 @@ Le moteur conserve `parcelId`, `trackingCode`, `destinationInitiale`,
 - `ENTREE_COO` : `UNKNOWN → AT_AGENCY COO`.
 - `SORTIE_COO` : `AT_AGENCY COO → IN_TRANSIT` vers `destinationCourante`.
 - `ENTREE_DESTINATION` : arrivée uniquement à `transitTo`.
+- `ARRIVAL_MISMATCH_CONFIRMED` : arrivée physique dans une agence différente,
+  sans modification des destinations.
 - `SORTIE_REACHEMINEMENT` : départ de l'agence physique et mise à jour de
   `destinationCourante`.
 - `ENTREE_REACHEMINEMENT` : entrée uniquement à `transitTo`.
@@ -48,17 +50,26 @@ n'empêche pas une remise physique valide.
 `metadata.afterPosition`. L'état avant doit correspondre à la projection
 courante. L'événement d'origine reste dans l'historique.
 
-## Arrivée dans la mauvaise agence
+## Arrivée dans une agence inattendue
 
-Le moteur refuse `ENTREE_DESTINATION` lorsque l'agence réelle diffère de
-`transitTo`. Le catalogue n'est pas élargi pendant cette phase.
+`ENTREE_DESTINATION` reste refusé lorsque l'agence réelle diffère de
+`transitTo`. `ARRIVAL_MISMATCH_CONFIRMED` représente ce constat séparément :
+`expectedAgency` doit égaler `transitTo`, `actualAgency` doit être différente,
+et l'agence déclarée du confirmateur doit égaler l'agence réelle. Une présence
+physique, un motif, une identité et une référence de preuve sont obligatoires.
 
-La recommandation pour une phase dédiée est `ARRIVAL_MISMATCH_CONFIRMED`, avec
-autorisation Agent de l'agence constatante et validation serveur renforcée,
-agences attendue/réelle, motif, preuve physique, puis réacheminement explicite.
-Ce choix décrit correctement la réalité, rend l'anomalie visible dans l'audit
-et les statistiques, et évite d'utiliser une correction Admin pour masquer une
-entrée physique légitime. `AJUSTEMENT_ADMIN` reste réservé aux corrections.
+La position devient `AT_AGENCY` à `actualAgency`, sans modification de
+`destinationInitiale` ou `destinationCourante`. Aucun réacheminement n'est créé
+automatiquement.
+
+`projectArrivalAnomalies(events)` produit une projection séparée destinée aux
+futurs audit et statistiques. L'anomalie reste `ACTIVE` jusqu'à une
+`SORTIE_REACHEMINEMENT` explicite depuis l'agence réelle, puis devient
+`CLOSED_BY_REROUTING`. L'événement original demeure dans l'historique.
+
+Cette projection séparée évite de surcharger `ParcelPosition`, qui reste une
+description stricte de la position physique. `AJUSTEMENT_ADMIN` demeure réservé
+aux corrections et ne remplace pas un constat physique légitime.
 
 ## Limites
 
@@ -66,3 +77,7 @@ Le moteur ne persiste rien, ne calcule aucun paiement ou frais, n'autorise aucun
 acteur et ne remplace pas les contrôles serveur futurs. Il ne dépend ni de
 Paiements, Transferts, Dépenses, Caisse, Supabase, Apps Script, Next.js,
 Google Sheets, Vercel, navigateur ou mobile.
+
+Une future API pourra employer un `arrivalMismatchRequestId` distinct pour
+l'idempotence de commande. Cette Phase B.1 n'en ajoute pas : l'unicité de
+`eventId` suffit au moteur local.

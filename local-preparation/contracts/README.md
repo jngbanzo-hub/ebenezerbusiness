@@ -59,7 +59,8 @@ ces statuts.
 
 Les événements futurs documentent les mouvements `ENTREE_COO`, `SORTIE_COO`,
 `ENTREE_DESTINATION`, `SORTIE_REACHEMINEMENT`, `ENTREE_REACHEMINEMENT`,
-`SORTIE_LIVRAISON`, `AJUSTEMENT_ADMIN` et `STOCK_REVERSAL`.
+`ARRIVAL_MISMATCH_CONFIRMED`, `SORTIE_LIVRAISON`, `AJUSTEMENT_ADMIN` et
+`STOCK_REVERSAL`.
 `SORTIE_DESTINATION` reste accepté uniquement pour relire l'historique ; toute
 nouvelle livraison doit utiliser `SORTIE_LIVRAISON`.
 
@@ -75,6 +76,20 @@ Les règles de domaine futures sont :
 
 MANIFESTE PUBLIC reste strictement en lecture seule. Ces contrats ne contiennent
 aucune synchronisation ni aucun accès à Google Sheets.
+
+### Arrivée physique inattendue
+
+`ARRIVAL_MISMATCH_CONFIRMED` constate qu'un colis en transit est reçu dans une
+agence différente de `transitTo`. `expectedAgency` conserve l'agence attendue,
+`actualAgency` l'agence physique réelle. La source est strictement `AGENT` ou
+`ADMIN`. L'identité, l'agence du confirmateur, un motif, la confirmation
+physique et une référence de preuve textuelle sont obligatoires.
+
+L'événement ne change ni `destinationInitiale` ni `destinationCourante` et ne
+crée automatiquement ni réacheminement, frais ou paiement. Un Agent pourra
+ultérieurement être autorisé côté serveur seulement si son profil authentifié
+correspond à `actualAgency`. Le contrat local représente les données nécessaires
+mais n'effectue aucune authentification.
 
 ## Sources et identité
 

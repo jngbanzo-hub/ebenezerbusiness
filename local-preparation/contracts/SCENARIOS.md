@@ -14,3 +14,7 @@
    événement historique n'est supprimé.
 10. La même requête et la même empreinte rejouent le résultat ; le même
     identifiant avec un contenu différent produit un conflit.
+11. Un transit prévu vers FIH arrive physiquement à LSHI :
+    `ARRIVAL_MISMATCH_CONFIRMED` conserve FIH comme destination courante,
+    positionne le colis à LSHI, puis un réacheminement explicite permet son
+    départ vers FIH.

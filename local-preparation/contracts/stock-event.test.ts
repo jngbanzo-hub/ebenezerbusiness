@@ -126,3 +126,86 @@ test("20c. SORTIE_DESTINATION reste legacy avec confirmation physique", () => {
     "SORTIE_DESTINATION",
   );
 });
+
+const validMismatch = {
+  eventType: "ARRIVAL_MISMATCH_CONFIRMED" as const,
+  agency: "LSHI",
+  fromAgency: "COO",
+  toAgency: "LSHI",
+  sourceType: "AGENT" as const,
+  reason: "Arrivée physique constatée à LSHI",
+  recordedBy: "agent-lshi-001",
+  arrivalMismatch: {
+    expectedAgency: "FIH",
+    actualAgency: "LSHI",
+    confirmedByAgentId: "agent-lshi-001",
+    confirmedByAgentAgency: "LSHI",
+    physicalReceiptConfirmed: true,
+    evidenceReference: "observation-lshi-001",
+  },
+};
+
+test("ARRIVAL_MISMATCH_CONFIRMED conserve le constat physique auditable", () => {
+  const mismatch = valid(validMismatch);
+  assert.equal(mismatch.arrivalMismatch?.expectedAgency, "FIH");
+  assert.equal(mismatch.arrivalMismatch?.actualAgency, "LSHI");
+  assert.equal(mismatch.sourceType, "AGENT");
+});
+
+test("ARRIVAL_MISMATCH_CONFIRMED accepte une confirmation Admin explicite", () => {
+  const mismatch = valid({
+    ...validMismatch,
+    sourceType: "ADMIN",
+    recordedBy: "admin-001",
+    arrivalMismatch: {
+      ...validMismatch.arrivalMismatch,
+      confirmedByAgentId: "admin-001",
+    },
+  });
+  assert.equal(mismatch.sourceType, "ADMIN");
+  assert.equal(mismatch.recordedBy, "admin-001");
+});
+
+test("ARRIVAL_MISMATCH_CONFIRMED refuse une source non autorisée", () => {
+  rejected({ ...validMismatch, sourceType: "SYSTEM" });
+});
+
+test("ARRIVAL_MISMATCH_CONFIRMED refuse agence réelle égale à attendue", () => {
+  rejected({
+    ...validMismatch,
+    agency: "FIH",
+    toAgency: "FIH",
+    arrivalMismatch: {
+      ...validMismatch.arrivalMismatch,
+      actualAgency: "FIH",
+      confirmedByAgentAgency: "FIH",
+    },
+  });
+});
+
+test("ARRIVAL_MISMATCH_CONFIRMED refuse agence du confirmateur différente", () => {
+  rejected({
+    ...validMismatch,
+    arrivalMismatch: {
+      ...validMismatch.arrivalMismatch,
+      confirmedByAgentAgency: "KLZ",
+    },
+  });
+});
+
+test("ARRIVAL_MISMATCH_CONFIRMED refuse preuve ou présence physique absente", () => {
+  rejected({
+    ...validMismatch,
+    arrivalMismatch: {
+      ...validMismatch.arrivalMismatch,
+      evidenceReference: "",
+    },
+  });
+  rejected({
+    ...validMismatch,
+    arrivalMismatch: {
+      ...validMismatch.arrivalMismatch,
+      physicalReceiptConfirmed: false,
+    },
+  });
+});

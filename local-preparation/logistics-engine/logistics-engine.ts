@@ -23,6 +23,12 @@ export const LOGISTICS_ENGINE_ERROR_CODES = [
   "COMPENSATED_EVENT_REQUIRED",
   "ALREADY_DELIVERED",
   "INVALID_HISTORY",
+  "ARRIVAL_MISMATCH_EXPECTED_AGENCY_INVALID",
+  "ARRIVAL_MISMATCH_ACTUAL_AGENCY_INVALID",
+  "ARRIVAL_MISMATCH_AGENT_AGENCY_INVALID",
+  "PHYSICAL_RECEIPT_REQUIRED",
+  "ARRIVAL_MISMATCH_REASON_REQUIRED",
+  "ARRIVAL_MISMATCH_EVIDENCE_REQUIRED",
 ] as const;
 
 export type LogisticsEngineErrorCode =
@@ -132,6 +138,71 @@ export function applyLogisticsEvent(
         transitTo: null,
       });
 
+    case "ARRIVAL_MISMATCH_CONFIRMED": {
+      requireState(currentPosition, "IN_TRANSIT");
+      const mismatch = event.arrivalMismatch;
+      if (mismatch === null) {
+        throw engineError(
+          "ARRIVAL_MISMATCH_EVIDENCE_REQUIRED",
+          "Détails d’arrivée inattendue obligatoires.",
+        );
+      }
+      if (
+        mismatch.expectedAgency !== currentPosition.transitTo ||
+        event.fromAgency !== currentPosition.transitFrom
+      ) {
+        throw engineError(
+          "ARRIVAL_MISMATCH_EXPECTED_AGENCY_INVALID",
+          "Agence attendue incohérente.",
+        );
+      }
+      if (
+        mismatch.actualAgency === mismatch.expectedAgency ||
+        event.agency !== mismatch.actualAgency ||
+        event.toAgency !== mismatch.actualAgency
+      ) {
+        throw engineError(
+          "ARRIVAL_MISMATCH_ACTUAL_AGENCY_INVALID",
+          "Agence réelle incohérente.",
+        );
+      }
+      if (
+        mismatch.confirmedByAgentAgency !== mismatch.actualAgency ||
+        mismatch.confirmedByAgentId !== event.recordedBy
+      ) {
+        throw engineError(
+          "ARRIVAL_MISMATCH_AGENT_AGENCY_INVALID",
+          "Agence du confirmateur incohérente.",
+        );
+      }
+      if (mismatch.physicalReceiptConfirmed !== true) {
+        throw engineError(
+          "PHYSICAL_RECEIPT_REQUIRED",
+          "Confirmation physique obligatoire.",
+        );
+      }
+      if (event.reason === null) {
+        throw engineError(
+          "ARRIVAL_MISMATCH_REASON_REQUIRED",
+          "Motif d’arrivée inattendue obligatoire.",
+        );
+      }
+      if (mismatch.evidenceReference.length < 3) {
+        throw engineError(
+          "ARRIVAL_MISMATCH_EVIDENCE_REQUIRED",
+          "Référence de preuve obligatoire.",
+        );
+      }
+      return createParcelPosition({
+        ...invariant,
+        destinationCourante: currentPosition.destinationCourante,
+        locationState: "AT_AGENCY",
+        currentAgency: mismatch.actualAgency,
+        transitFrom: null,
+        transitTo: null,
+      });
+    }
+
     case "SORTIE_LIVRAISON":
     case "SORTIE_DESTINATION":
       if (currentPosition.locationState === "DELIVERED") {
@@ -203,6 +274,59 @@ export function rebuildParcelPosition(
   }
 
   return position;
+}
+
+export type ArrivalAnomalyProjection = Readonly<{
+  mismatchEventId: string;
+  parcelId: string;
+  expectedAgency: CanonicalAgency;
+  actualAgency: CanonicalAgency;
+  confirmedByActorId: string;
+  confirmedByActorAgency: CanonicalAgency;
+  occurredAt: string;
+  reason: string;
+  evidenceReference: string;
+  status: "ACTIVE" | "CLOSED_BY_REROUTING";
+  closedByEventId: string | null;
+}>;
+
+export function projectArrivalAnomalies(
+  orderedEvents: readonly StockEvent[],
+): readonly ArrivalAnomalyProjection[] {
+  const anomalies = orderedEvents.flatMap((event, index) => {
+    if (
+      event.eventType !== "ARRIVAL_MISMATCH_CONFIRMED" ||
+      event.arrivalMismatch === null ||
+      event.reason === null
+    ) {
+      return [];
+    }
+    const closure = orderedEvents
+      .slice(index + 1)
+      .find(
+        (candidate) =>
+          candidate.eventType === "SORTIE_REACHEMINEMENT" &&
+          candidate.parcelId === event.parcelId &&
+          candidate.fromAgency === event.arrivalMismatch?.actualAgency,
+      );
+    return [
+      {
+        mismatchEventId: event.eventId,
+        parcelId: event.parcelId,
+        expectedAgency: event.arrivalMismatch.expectedAgency,
+        actualAgency: event.arrivalMismatch.actualAgency,
+        confirmedByActorId: event.arrivalMismatch.confirmedByAgentId,
+        confirmedByActorAgency:
+          event.arrivalMismatch.confirmedByAgentAgency,
+        occurredAt: event.occurredAt,
+        reason: event.reason,
+        evidenceReference: event.arrivalMismatch.evidenceReference,
+        status: closure === undefined ? "ACTIVE" : "CLOSED_BY_REROUTING",
+        closedByEventId: closure?.eventId ?? null,
+      } satisfies ArrivalAnomalyProjection,
+    ];
+  });
+  return deepFreeze(anomalies);
 }
 
 function validateCanonicalHistoryOrder(events: readonly StockEvent[]): void {

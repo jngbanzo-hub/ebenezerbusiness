@@ -74,6 +74,21 @@ function event(
       toAgency: "LSHI",
       sourceType: "REROUTING",
     },
+    ARRIVAL_MISMATCH_CONFIRMED: {
+      agency: "LSHI",
+      fromAgency: "COO",
+      toAgency: "LSHI",
+      sourceType: "AGENT",
+      reason: "Arrivée physique inattendue",
+      arrivalMismatch: {
+        expectedAgency: "FIH",
+        actualAgency: "LSHI",
+        confirmedByAgentId: "user-001",
+        confirmedByAgentAgency: "LSHI",
+        physicalReceiptConfirmed: true,
+        evidenceReference: "observation-locale-001",
+      },
+    },
     SORTIE_LIVRAISON: {
       agency: "FIH",
       fromAgency: "FIH",

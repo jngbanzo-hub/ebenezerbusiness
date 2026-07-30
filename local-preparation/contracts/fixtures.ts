@@ -44,6 +44,7 @@ export function validStockEventInput(
     recordedBy: "user-001",
     reason: null,
     compensatesEventId: null,
+    arrivalMismatch: null,
     versionBefore: 0,
     versionAfter: 1,
     metadata: { channel: "LOCAL_TEST" },
