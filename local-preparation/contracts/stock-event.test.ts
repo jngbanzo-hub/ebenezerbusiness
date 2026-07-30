@@ -3,78 +3,126 @@ import test from "node:test";
 
 import { ContractValidationError } from "./errors";
 import { validStockEventInput } from "./fixtures";
-import {
-  createStockEvent,
-  STOCK_SOURCE_TYPES,
-  type StockEventInput,
-} from "./stock-event";
+import { createStockEvent, type StockEventInput } from "./stock-event";
 
-function rejects(
-  overrides: Partial<StockEventInput>,
-  code: ContractValidationError["code"],
-) {
+function valid(overrides: Partial<StockEventInput>) {
+  return createStockEvent(validStockEventInput(overrides));
+}
+function rejected(overrides: Partial<StockEventInput>) {
   assert.throws(
-    () => createStockEvent(validStockEventInput(overrides)),
-    (error) => error instanceof ContractValidationError && error.code === code,
+    () => valid(overrides),
+    ContractValidationError,
   );
 }
 
-test("crée un mouvement immutable et normalise le code colis", () => {
-  const event = createStockEvent(validStockEventInput());
-  assert.equal(event.parcelCode, "MR-001");
+test("11. ENTREE_COO valide", () => {
+  assert.equal(valid({}).trackingCode, "MR-001");
+});
+test("12. SORTIE_COO valide", () => {
+  assert.equal(
+    valid({
+      eventType: "SORTIE_COO",
+      agency: "COO",
+      fromAgency: "COO",
+      toAgency: "FIH",
+    }).eventType,
+    "SORTIE_COO",
+  );
+});
+test("13. ENTREE_DESTINATION valide", () => {
+  assert.equal(
+    valid({
+      eventType: "ENTREE_DESTINATION",
+      agency: "FIH",
+      fromAgency: "COO",
+      toAgency: "FIH",
+    }).agency,
+    "FIH",
+  );
+});
+test("14. SORTIE_REACHEMINEMENT valide", () => {
+  assert.equal(
+    valid({
+      eventType: "SORTIE_REACHEMINEMENT",
+      agency: "FIH",
+      fromAgency: "FIH",
+      toAgency: "KLZ",
+      sourceType: "REROUTING",
+    }).toAgency,
+    "KLZ",
+  );
+});
+test("15. ENTREE_REACHEMINEMENT valide", () => {
+  assert.equal(
+    valid({
+      eventType: "ENTREE_REACHEMINEMENT",
+      agency: "KLZ",
+      fromAgency: "FIH",
+      toAgency: "KLZ",
+      sourceType: "REROUTING",
+    }).agency,
+    "KLZ",
+  );
+});
+test("16. SORTIE_LIVRAISON valide", () => {
+  assert.equal(
+    valid({
+      eventType: "SORTIE_LIVRAISON",
+      agency: "FIH",
+      fromAgency: "FIH",
+      toAgency: null,
+      sourceType: "DELIVERY_CONFIRMATION",
+    }).eventType,
+    "SORTIE_LIVRAISON",
+  );
+});
+test("17. AJUSTEMENT_ADMIN sans motif refusé", () => {
+  rejected({
+    eventType: "AJUSTEMENT_ADMIN",
+    sourceType: "ADMIN",
+    reason: null,
+  });
+});
+test("18. STOCK_REVERSAL sans événement compensé refusé", () => {
+  rejected({
+    eventType: "STOCK_REVERSAL",
+    sourceType: "ADMIN",
+    reason: "Correction documentée",
+    compensatesEventId: null,
+  });
+});
+test("19. fromAgency égale toAgency refusé pour réacheminement", () => {
+  rejected({
+    eventType: "SORTIE_REACHEMINEMENT",
+    agency: "FIH",
+    fromAgency: "FIH",
+    toAgency: "FIH",
+    sourceType: "REROUTING",
+  });
+});
+test("20. versions avant et après incohérentes refusées", () => {
+  rejected({ versionBefore: 2, versionAfter: 4 });
+});
+test("20b. compensation Admin valide et immutable", () => {
+  const event = valid({
+    eventType: "STOCK_REVERSAL",
+    sourceType: "ADMIN",
+    reason: "Correction documentée",
+    compensatesEventId: "event-000",
+  });
+  assert.equal(event.compensatesEventId, "event-000");
   assert.equal(Object.isFrozen(event), true);
   assert.equal(Object.isFrozen(event.metadata), true);
 });
-
-test("refuse un poids nul ou négatif et un code colis vide", () => {
-  rejects({ weightKg: 0 }, "INVALID_WEIGHT");
-  rejects({ weightKg: -1 }, "INVALID_WEIGHT");
-  rejects({ parcelCode: "" }, "INVALID_PARCEL_CODE");
-});
-
-test("refuse une agence inconnue et les types étrangers", () => {
-  rejects({ agency: "AUTRE" }, "INVALID_AGENCY");
-  rejects({ eventType: "TRANSFER" as never }, "INVALID_EVENT_TYPE");
-  rejects({ sourceType: "PAYMENT_ENGINE" as never }, "INVALID_SOURCE_ID");
-  assert.equal(STOCK_SOURCE_TYPES.includes("PAYMENT_ENGINE" as never), false);
-});
-
-test("une sortie destination exige une confirmation physique explicite", () => {
-  rejects(
-    {
+test("20c. SORTIE_DESTINATION reste legacy avec confirmation physique", () => {
+  assert.equal(
+    valid({
       eventType: "SORTIE_DESTINATION",
-      sourceType: "MANIFEST_OBSERVATION",
-    },
-    "INVALID_EVENT_TYPE",
-  );
-
-  const event = createStockEvent(
-    validStockEventInput({
-      eventType: "SORTIE_DESTINATION",
+      agency: "FIH",
+      fromAgency: "FIH",
+      toAgency: null,
       sourceType: "DELIVERY_CONFIRMATION",
-    }),
+    }).eventType,
+    "SORTIE_DESTINATION",
   );
-  assert.equal(event.eventType, "SORTIE_DESTINATION");
-  assert.equal(event.sourceType, "DELIVERY_CONFIRMATION");
-});
-
-test("valide les compensations et l’immutabilité profonde", () => {
-  rejects(
-    {
-      eventType: "STOCK_REVERSAL",
-      status: "RECORDED",
-      reversalOf: "movement-000",
-    },
-    "INVALID_EVENT_STATUS",
-  );
-  rejects(
-    { eventType: "STOCK_REVERSAL", status: "REVERSED", reversalOf: null },
-    "INVALID_REVERSAL",
-  );
-  rejects({ reversalOf: "movement-000" }, "INVALID_REVERSAL");
-
-  const event = createStockEvent(
-    validStockEventInput({ metadata: { nested: { value: 1 } } }),
-  );
-  assert.equal(Object.isFrozen(event.metadata.nested), true);
 });

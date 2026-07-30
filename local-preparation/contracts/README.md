@@ -33,25 +33,42 @@ Les relevés historiques USD, FCFA et CDF utilisent `LegacyFinancialRecord`.
 Le montant et la devise d'origine sont conservés sans conversion automatique.
 Un relevé historique ne peut pas être transmis à `createFinancialEvent`.
 
+## Vocabulaire, destination et position
+
+`destinationInitiale` est l'agence prévue à la création et reste immutable.
+`destinationCourante` est le lieu de retrait prévu après d'éventuels
+réacheminements. `currentAgency` décrit uniquement l'agence où le colis est
+physiquement présent. Ces trois notions ne sont jamais interchangeables.
+
+`ParcelPosition` est une projection versionnée (`version` commence à zéro ou
+plus) : `AT_AGENCY` exige `currentAgency`, `IN_TRANSIT` exige `transitFrom` et
+`transitTo`, tandis que `DELIVERED` et `UNKNOWN` n'exposent aucune agence
+physique. Une commande fournit `expectedPositionVersion` pour détecter une
+écriture concurrente.
+
 ## Séparation paiement et livraison
 
-**PAIEMENT ≠ LIVRAISON.** Un événement financier ne contient aucun statut
+**PAYÉ ≠ LIVRÉ.** Un événement financier ne contient aucun statut
 logistique et ne produit aucun mouvement de stock. Une opération de paiement ne
-peut jamais constituer une confirmation physique de livraison.
+peut jamais constituer une confirmation physique de livraison. Les statuts
+`NON_PAYE`, `PARTIELLEMENT_PAYE` et `PAYE` restent financiers. Une livraison
+physique valide n'est donc pas conditionnée par `PAYE` et ne modifie aucun de
+ces statuts.
 
 ## Événements de stock
 
 Les événements futurs documentent les mouvements `ENTREE_COO`, `SORTIE_COO`,
-`ENTREE_DESTINATION`, `SORTIE_DESTINATION`, `AJUSTEMENT_ADMIN` et
-`STOCK_REVERSAL`.
+`ENTREE_DESTINATION`, `SORTIE_REACHEMINEMENT`, `ENTREE_REACHEMINEMENT`,
+`SORTIE_LIVRAISON`, `AJUSTEMENT_ADMIN` et `STOCK_REVERSAL`.
+`SORTIE_DESTINATION` reste accepté uniquement pour relire l'historique ; toute
+nouvelle livraison doit utiliser `SORTIE_LIVRAISON`.
 
 Les règles de domaine futures sont :
 
 - `ENREGISTRÉ` pourra produire `ENTREE_COO` ;
 - `EN_VOL` pourra produire `SORTIE_COO` ;
 - `ARRIVÉ` pourra produire `ENTREE_DESTINATION` ;
-- seule une confirmation physique explicite pourra produire
-  `SORTIE_DESTINATION` ;
+- seule une remise physique explicite pourra produire `SORTIE_LIVRAISON` ;
 - la valeur `LIVRÉ` d'un manifeste ne constitue pas, seule, une preuve suffisante ;
 - aucune arrivée implicite propre à KLZ n'est prévue ;
 - un paiement ne produit jamais de `StockEvent`.
@@ -66,10 +83,45 @@ Les sources financières autorisées sont `PAYMENT_ENGINE`, `EXPENSE_ENGINE`,
 `MANIFEST_OBSERVATION`, `DELIVERY_CONFIRMATION`, `ADMIN`, `SYSTEM` et
 `LEGACY_IMPORT`.
 
-`movementId` identifie uniquement un mouvement de stock. `actorUserId` est
-obligatoire, sauf pour une source explicitement système ou un import historique.
-`requestId` suit la même exception. Les dates d'occurrence sont ISO 8601 et les
-dates métier suivent `YYYY-MM-DD`.
+`deliveryRequestId`, `reroutingRequestId`, `stockMovementRequestId` et
+`financialRequestId` sont distincts et ne réutilisent jamais
+`paymentRequestId`. L'agence déclarée par un navigateur n'est pas une autorité :
+une future couche serveur devra la comparer au profil authentifié.
+
+Même identifiant et même empreinte rejouent le résultat initial (`REPLAYED`) ;
+le même identifiant avec une empreinte différente produit `CONFLICT`. Une
+nouvelle empreinte produit `CREATED`.
+
+## Livraison, réacheminement et frais
+
+Une livraison exige une position `AT_AGENCY`, la même agence physique que
+l'agence serveur de l'acteur et une remise physique confirmée. Elle produit
+`SORTIE_LIVRAISON`, puis une position `DELIVERED`. Le résultat conserve les
+positions avant/après et l'état d'idempotence.
+
+Un réacheminement suit `PROPOSED`, `APPROVED`, `DEPARTED`, `ARRIVED` ou
+`CANCELLED`. Le départ crée une sortie puis une position `IN_TRANSIT`; l'arrivée
+exige une entrée physique et produit `AT_AGENCY`. La destination initiale reste
+inchangée. Toute annulation après engagement exige une compensation documentée.
+
+Les frais utilisent `REROUTING_FEE_ASSESSED` et
+`REROUTING_FEE_REVERSED`. Ce sont des créances, jamais des paiements. Le tarif
+USD est identifié et versionné ; un Agent sélectionne un tarif mais ne fixe pas
+librement un montant exécutoire. `montantInitial` est immutable, tandis que
+`totalDu` et `nouveauSolde` sont des projections. Une future dérogation exigera
+une identité Admin et un motif.
+
+## Transitions et compensations
+
+Les transitions ordinaires sont `UNKNOWN → AT_AGENCY`,
+`AT_AGENCY → IN_TRANSIT`, `IN_TRANSIT → AT_AGENCY` et
+`AT_AGENCY → DELIVERED`. Sont refusés : livraison en transit, livraison par une
+autre agence, déplacement direct d'agence à agence et retour depuis `DELIVERED`
+sans correction Admin compensatoire.
+
+Les événements sont immutables et ne sont jamais supprimés. Une correction
+utilise `AJUSTEMENT_ADMIN` ou `STOCK_REVERSAL`, référence l'événement compensé,
+conserve état/version avant et après, identité Admin, date et motif.
 
 ## Métadonnées et immutabilité
 
@@ -103,7 +155,9 @@ secrets dans Git.
 
 Le module Transferts reste totalement indépendant de ces contrats et n'est une
 source d'aucun événement financier ou de stock. Aucun type ou moteur de ce
-dossier n'établit de lien avec la Caisse.
+dossier n'établit de lien avec la Caisse ou Dépenses. MANIFESTE PUBLIC reste une
+observation en lecture seule. Aucun contrat ne dépend du navigateur, du mobile,
+d'Apps Script, de Supabase ou de Vercel.
 
 ## Tests locaux
 
