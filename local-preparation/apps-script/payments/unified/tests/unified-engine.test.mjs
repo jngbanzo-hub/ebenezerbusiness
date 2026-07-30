@@ -219,6 +219,73 @@ function errorCode(response) {
   return response.error?.code;
 }
 
+function parseWithCurrentSearchEdge(response) {
+  if (
+    response.found === false ||
+    (
+      response.success === false &&
+      [response.erreur, response.message, response.code]
+        .filter((value) => typeof value === "string")
+        .join(" ")
+        .toLowerCase()
+        .match(/introuvable|non trouv|not found|aucun colis/)
+    )
+  ) {
+    return { error: "COLIS_INTROUVABLE" };
+  }
+
+  const candidate = response.data ?? response.result ?? response.colis ?? response;
+  return candidate && typeof candidate === "object" ? candidate : null;
+}
+
+function parseWithCurrentPaymentEdge(response) {
+  if (
+    response === null ||
+    typeof response !== "object" ||
+    response.success !== true ||
+    response.simulation !== false
+  ) {
+    return null;
+  }
+
+  const payment = response.paiement;
+  if (
+    payment === null ||
+    typeof payment !== "object" ||
+    typeof payment.nouveauSolde !== "number" ||
+    !["SOLDE", "PARTIELLEMENT PAYE"].includes(payment.statutPaiement)
+  ) {
+    return null;
+  }
+
+  return payment;
+}
+
+function parseErrorWithCurrentPaymentEdge(response) {
+  const supportedCodes = new Set([
+    "PAIEMENT_DEJA_ENREGISTRE",
+    "MONTANT_INVALIDE",
+    "MODE_PAIEMENT_INVALIDE",
+    "PAYMENT_REQUEST_ID_INVALIDE",
+    "COLIS_DEJA_SOLDE",
+    "MONTANT_SUPERIEUR_SOLDE",
+    "PAIEMENT_PARTIEL_INTERDIT",
+    "AGENCE_INVALIDE",
+    "DESTINATION_INVALIDE",
+    "COLIS_INTROUVABLE",
+    "PAIEMENT_REFUSE",
+  ]);
+  if (
+    response?.success !== false ||
+    typeof response.code !== "string" ||
+    typeof response.message !== "string" ||
+    !supportedCodes.has(response.code)
+  ) {
+    return null;
+  }
+  return { code: response.code, message: response.message };
+}
+
 test("une seule déclaration doPost existe", () => {
   assert.equal((source.match(/function\s+doPost\s*\(/g) ?? []).length, 1);
 });
@@ -353,6 +420,30 @@ test("un mode inconnu est refusé", () => {
   assert.equal(errorCode(response), "MODE_PAIEMENT_INVALIDE");
 });
 
+for (const [inputMode, expectedSheetMode] of [
+  ["ESPECES", "ESPÈCES"],
+  ["ESPÈCES", "ESPÈCES"],
+  ["especes", "ESPÈCES"],
+  ["espèces", "ESPÈCES"],
+  ["MOBILE MONEY", "MOBILE MONEY"],
+  ["MOBILE_MONEY", "MOBILE MONEY"],
+  ["mobile_money", "MOBILE MONEY"],
+  ["VIREMENT", "VIREMENT"],
+  ["AUTRE", "AUTRE"],
+]) {
+  test(`le mode ${inputMode} est accepté et écrit ${expectedSheetMode}`, () => {
+    const harness = createHarness();
+    const response = harness.request(
+      harness.basePayment({ modePaiement: inputMode })
+    );
+    assert.equal(response.ok, true);
+    assert.equal(
+      harness.payments.getSheetByName("COO").rows[1][10],
+      expectedSheetMode
+    );
+  });
+}
+
 test("paymentRequestId absent est refusé", () => {
   const harness = createHarness();
   const body = harness.basePayment();
@@ -459,7 +550,8 @@ test("les champs de compatibilité dérivent de l'enveloppe V2", () => {
   assert.equal(search.succes, search.ok);
 
   const payment = harness.request(harness.basePayment());
-  assert.deepEqual(payment.paiement, payment.data.paiement);
+  assert.equal(payment.paiement.codeColis, payment.data.paiement.codeColis);
+  assert.equal(payment.paiement.montantPaye, payment.data.paiement.montantPaye);
   assert.equal(payment.paymentRequestId, payment.data.paymentRequestId);
 });
 
@@ -479,4 +571,142 @@ test("l'écriture contient exactement 16 colonnes et libère le verrou", () => {
   assert.equal(row[15], PAYMENT_ID);
   assert.equal(harness.flushCount, 1);
   assert.equal(harness.lockReleased, true);
+});
+
+test("une recherche réussie est interprétable par le parseur Edge actuel", () => {
+  const harness = createHarness();
+  const response = harness.request({
+    action: "rechercherColis",
+    apiKey: API_KEY,
+    destinationCode: "FIH",
+    codeColis: "PKG-FIH",
+  });
+  assert.deepEqual(parseWithCurrentSearchEdge(response), response.data);
+});
+
+test("un colis introuvable conserve V2 et les alias Edge au premier niveau", () => {
+  const harness = createHarness();
+  const response = harness.request({
+    action: "rechercherColis",
+    apiKey: API_KEY,
+    destinationCode: "FIH",
+    codeColis: "ABSENT",
+  });
+  assert.equal(response.ok, false);
+  assert.equal(response.error.code, "COLIS_INTROUVABLE");
+  assert.equal(response.code, response.error.code);
+  assert.equal(response.message, response.error.message);
+  assert.equal(response.erreur, response.error.message);
+  assert.equal(response.found, false);
+  assert.deepEqual(parseWithCurrentSearchEdge(response), {
+    error: "COLIS_INTROUVABLE",
+  });
+});
+
+test("un paiement réel expose simulation false au premier niveau", () => {
+  const harness = createHarness();
+  const response = harness.request(harness.basePayment());
+  assert.equal(response.simulation, false);
+  assert.equal(response.data.simulation, false);
+});
+
+test("les deux soldes de compatibilité sont présents et identiques", () => {
+  const harness = createHarness();
+  const response = harness.request(harness.basePayment());
+  assert.equal(typeof response.paiement.nouveauSolde, "number");
+  assert.equal(typeof response.paiement.soldeRestant, "number");
+  assert.equal(
+    response.paiement.nouveauSolde,
+    response.paiement.soldeRestant
+  );
+});
+
+test("le statut partiel interne est adapté à la forme Edge historique", () => {
+  const harness = createHarness();
+  const response = harness.request(harness.basePayment());
+  assert.equal(response.data.paiement.statutPaiement, "PARTIELLEMENT_PAYE");
+  assert.equal(response.paiement.statutPaiement, "PARTIELLEMENT PAYE");
+});
+
+test("un succès de paiement est interprétable par le parseur Edge actuel", () => {
+  const harness = createHarness();
+  const response = harness.request(harness.basePayment());
+  const parsed = parseWithCurrentPaymentEdge(response);
+  assert.notEqual(parsed, null);
+  assert.equal(parsed.nouveauSolde, 60);
+});
+
+test("une erreur de paiement est interprétable par le parseur Edge actuel", () => {
+  const harness = createHarness();
+  const response = harness.request(
+    harness.basePayment({ modePaiement: "CARTE" })
+  );
+  assert.deepEqual(parseErrorWithCurrentPaymentEdge(response), {
+    code: "MODE_PAIEMENT_INVALIDE",
+    message: "Mode de paiement invalide.",
+  });
+  assert.equal(response.error.code, response.code);
+});
+
+test("les codes V2 de solde et paiement partiel ont leurs alias Edge", () => {
+  const harness = createHarness();
+  const overBalance = harness.request(
+    harness.basePayment({ montantPaye: 101 })
+  );
+  assert.equal(overBalance.error.code, "MONTANT_SUPERIEUR_AU_SOLDE");
+  assert.equal(overBalance.code, "MONTANT_SUPERIEUR_SOLDE");
+  assert.equal(
+    parseErrorWithCurrentPaymentEdge(overBalance).code,
+    "MONTANT_SUPERIEUR_SOLDE"
+  );
+
+  const partial = harness.request(
+    harness.basePayment({
+      agenceEncaissement: "FIH",
+      montantPaye: 40,
+      paymentRequestId: "223e4567-e89b-42d3-a456-426614174000",
+    })
+  );
+  assert.equal(partial.error.code, "PAIEMENT_PARTIEL_NON_AUTORISE");
+  assert.equal(partial.code, "PAIEMENT_PARTIEL_INTERDIT");
+  assert.equal(
+    parseErrorWithCurrentPaymentEdge(partial).code,
+    "PAIEMENT_PARTIEL_INTERDIT"
+  );
+});
+
+test("un montant attendu nul produit COLIS_DEJA_SOLDE sans écriture", () => {
+  const harness = createHarness();
+  harness.manifest.getSheetByName("FIH").rows[1][5] = 0;
+  const response = harness.request(harness.basePayment());
+  assert.equal(errorCode(response), "COLIS_DEJA_SOLDE");
+  assert.notEqual(errorCode(response), "SERVICE_INDISPONIBLE");
+  assert.equal(harness.payments.getSheetByName("COO").rows.length, 1);
+  assert.equal(harness.lockReleased, true);
+});
+
+test("un solde nul est refusé sans nouvelle écriture", () => {
+  const harness = createHarness();
+  harness.payments.getSheetByName("COO").rows.push([
+    "", "PKG-FIH", "", "", 100, 0, "COO", "FIH / Kinshasa",
+    "SOLDÉ", "", "", "", "", "", "",
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  ]);
+  const rowCount = harness.payments.getSheetByName("COO").rows.length;
+  const response = harness.request(harness.basePayment());
+  assert.equal(errorCode(response), "COLIS_DEJA_SOLDE");
+  assert.equal(harness.payments.getSheetByName("COO").rows.length, rowCount);
+});
+
+test("le statut LIVRÉ ne transforme pas un colis soldé en paiement autorisé", () => {
+  const harness = createHarness();
+  harness.manifest.getSheetByName("FIH").rows[1][8] = "LIVRÉ";
+  harness.payments.getSheetByName("FIH").rows.push([
+    "", "PKG-FIH", "", "", 100, 0, "FIH", "FIH / Kinshasa",
+    "SOLDÉ", "", "", "", "", "", "",
+    "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  ]);
+  const response = harness.request(harness.basePayment());
+  assert.equal(errorCode(response), "COLIS_DEJA_SOLDE");
+  assert.equal(harness.sourceSheets.every((sheet) => sheet.writeCount === 0), true);
 });

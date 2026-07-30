@@ -21,11 +21,21 @@ technique 200 ; les clients doivent donc lire `ok`.
 
 Pendant une transition contrôlée, les champs dépréciés `success` et `succes`
 sont dérivés de `ok`. Une recherche ajoute `found` et `colis`, et un paiement
-ajoute `paiement`. Il n'existe aucune seconde logique métier.
+ajoute `simulation` et `paiement`. Les erreurs ajoutent temporairement `code`,
+`message` et `erreur` au premier niveau ; un colis introuvable ajoute aussi
+`found: false`. Tous ces alias sont dérivés de l'unique enveloppe V2. Il
+n'existe aucune seconde logique métier.
 
 `requestId` trace une requête et sa réponse. `paymentRequestId` est un UUID v4
 obligatoire, normalisé en minuscules, qui garantit l'idempotence d'un paiement.
 Ces identifiants sont distincts.
+
+Le site Web génère déjà cet UUID automatiquement et le conserve pour une
+nouvelle tentative identique. L'application mobile actuelle ne transmet pas
+encore `paymentRequestId`. Le moteur unifié ne peut donc pas être déployé tant
+que le mobile n'a pas été corrigé dans une phase séparée pour générer et
+conserver le même UUID lors d'une nouvelle tentative. L'Edge Function devra
+ensuite rendre ce champ obligatoire.
 
 ## Feuilles et colonne 16
 
@@ -52,9 +62,19 @@ réalisée séparément avant tout futur déploiement.
 - les seuls modes conservés de la source canonique sont `ESPÈCES`,
   `MOBILE MONEY`, `VIREMENT` et `AUTRE`.
 
+Les entrées `ESPECES` et `ESPÈCES` sont normalisées vers `ESPECES`.
+`MOBILE_MONEY` et `MOBILE MONEY` sont normalisés vers `MOBILE MONEY`, ce qui
+préserve à la fois le site Web et les clients historiques. Google Sheets reçoit
+toujours `ESPÈCES`, `MOBILE MONEY`, `VIREMENT` ou `AUTRE`.
+
 Le verrou Apps Script couvre validation de structure, contrôle d'idempotence sur
 les quatre feuilles, relecture du colis et du solde, validation, écriture et
 confirmation.
+
+Un montant attendu nul ou un solde nul est une erreur métier
+`COLIS_DEJA_SOLDE`, jamais une indisponibilité technique. Aucune ligne n'est
+écrite. Le statut du colis, y compris `LIVRÉ`, n'intervient pas dans cette
+décision.
 
 ## Frontières
 

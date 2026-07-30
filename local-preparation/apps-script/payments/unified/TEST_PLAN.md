@@ -28,10 +28,15 @@ Ce plan n'autorise aucune exécution distante pendant la préparation locale.
 - vérifier le verrou, les 16 colonnes et le solde ;
 - confirmer que le statut du colis et MANIFESTE PUBLIC n'ont pas changé ;
 - confirmer qu'aucun événement Stockages, Transferts ou Caisse n'a été créé.
+- confirmer qu'un montant attendu nul ou un solde nul renvoie
+  `COLIS_DEJA_SOLDE` sans écriture ;
+- vérifier `ESPECES`, `ESPÈCES`, `MOBILE MONEY`, `MOBILE_MONEY`, `VIREMENT` et
+  `AUTRE`.
 
 ## Réponses et rollback
 
 - vérifier les enveloppes V2 et les champs dépréciés ;
+- exécuter les parseurs Edge actuels sur les réponses de compatibilité ;
 - vérifier l'absence de stack, clé API et configuration ;
 - valider les clients Web et mobiles recensés ;
 - en cas d'écart, arrêter les écritures et restaurer le déploiement précédent.

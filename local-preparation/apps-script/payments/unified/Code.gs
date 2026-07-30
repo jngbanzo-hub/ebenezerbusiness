@@ -53,13 +53,14 @@ const PAYMENT_HEADERS = [
  */
 function doPost(e) {
   var requestId = creerRequestId_();
+  var action = "";
 
   try {
     var body = lireCorpsJson_(e);
     verifierCleApi_(body.apiKey);
     delete body.apiKey;
 
-    var action = normaliserAction_(body.action);
+    action = normaliserAction_(body.action);
 
     switch (action) {
       case "ping":
@@ -121,7 +122,8 @@ function doPost(e) {
     return reponseErreur_(
       codeErreurPublic_(error),
       messageErreurPublic_(error),
-      requestId
+      requestId,
+      action
     );
   }
 }
@@ -437,8 +439,8 @@ function enregistrerPaiementUnifie_(paiement) {
     );
     if (montantAttendu <= 0) {
       throw erreurPublique_(
-        "SERVICE_INDISPONIBLE",
-        "Service indisponible."
+        "COLIS_DEJA_SOLDE",
+        "Ce colis est déjà soldé."
       );
     }
 
@@ -450,6 +452,13 @@ function enregistrerPaiementUnifie_(paiement) {
     var soldeAvant = arrondirMontant_(
       montantAttendu - totalDejaPaye
     );
+
+    if (soldeAvant <= 0) {
+      throw erreurPublique_(
+        "COLIS_DEJA_SOLDE",
+        "Ce colis est déjà soldé."
+      );
+    }
 
     if (paiement.montantPaye > soldeAvant) {
       throw erreurPublique_(
@@ -482,6 +491,7 @@ function enregistrerPaiementUnifie_(paiement) {
         destinationCode: paiement.destinationCode,
         destinationNom:
           DESTINATION_NOMS[paiement.destinationCode],
+        montantAttendu: montantAttendu,
         montantPaye: paiement.montantPaye,
         nouveauTotalPaye: nouveauTotal,
         soldeRestant: nouveauSolde,
@@ -489,7 +499,8 @@ function enregistrerPaiementUnifie_(paiement) {
           nouveauSolde === 0
             ? "SOLDE"
             : "PARTIELLEMENT_PAYE",
-        datePaiement: new Date().toISOString()
+        datePaiement: new Date().toISOString(),
+        paymentRequestId: paiement.paymentRequestId
       }
     };
 
@@ -689,7 +700,9 @@ function normaliserModePaiement_(value) {
     .trim()
     .toUpperCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ");
 }
 
 function normaliserPaymentRequestId_(value) {
@@ -780,15 +793,17 @@ function reponseSucces_(data, requestId, action) {
   }
 
   if (action === "enregistrerPaiement") {
-    payload.paiement = data.paiement;
+    payload.simulation = data.simulation;
+    payload.paiement = construirePaiementCompatibilite_(data);
     payload.paymentRequestId = data.paymentRequestId;
   }
 
   return sortieJson_(payload);
 }
 
-function reponseErreur_(code, message, requestId) {
-  return sortieJson_({
+function reponseErreur_(code, message, requestId, action) {
+  var codeCompatibilite = codeCompatibiliteEdge_(code);
+  var payload = {
     ok: false,
     error: {
       code: code,
@@ -796,8 +811,51 @@ function reponseErreur_(code, message, requestId) {
       requestId: requestId
     },
     success: false,
-    succes: false
-  });
+    succes: false,
+    code: codeCompatibilite,
+    message: message,
+    erreur: message
+  };
+
+  if (
+    action === "rechercherColis" &&
+    code === "COLIS_INTROUVABLE"
+  ) {
+    payload.found = false;
+  }
+
+  return sortieJson_(payload);
+}
+
+function codeCompatibiliteEdge_(code) {
+  var correspondances = {
+    MONTANT_SUPERIEUR_AU_SOLDE: "MONTANT_SUPERIEUR_SOLDE",
+    PAIEMENT_PARTIEL_NON_AUTORISE: "PAIEMENT_PARTIEL_INTERDIT"
+  };
+
+  return correspondances[code] || code;
+}
+
+function construirePaiementCompatibilite_(data) {
+  var paiement = data.paiement;
+  var solde = paiement.soldeRestant;
+
+  return {
+    codeColis: paiement.codeColis,
+    destinationCode: paiement.destinationCode,
+    destinationNom: paiement.destinationNom,
+    montantAttendu: paiement.montantAttendu,
+    montantPaye: paiement.montantPaye,
+    nouveauTotalPaye: paiement.nouveauTotalPaye,
+    nouveauSolde: solde,
+    soldeRestant: solde,
+    statutPaiement:
+      paiement.statutPaiement === "PARTIELLEMENT_PAYE"
+        ? "PARTIELLEMENT PAYE"
+        : paiement.statutPaiement,
+    datePaiement: paiement.datePaiement,
+    paymentRequestId: data.paymentRequestId
+  };
 }
 
 function sortieJson_(payload) {

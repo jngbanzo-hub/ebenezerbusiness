@@ -53,10 +53,22 @@ Requête : `action`, `apiKey`, `destinationCode`, `codeColis`,
 ## Compatibilité dépréciée
 
 Les succès ajoutent temporairement `success` et `succes`. Une recherche ajoute
-`found` et `colis`; un paiement ajoute `paiement` et `paymentRequestId`. Ces
-champs sont dérivés de `data`, ne représentent pas un second contrat et seront
-retirés après migration des clients. Les erreurs ajoutent temporairement
-`success: false` et `succes: false`.
+`found` et `colis`; un paiement ajoute `simulation`, `paiement` et
+`paymentRequestId`. Le paiement historique expose `nouveauSolde` et
+`soldeRestant` avec la même valeur. La valeur interne V2
+`PARTIELLEMENT_PAYE` devient temporairement `PARTIELLEMENT PAYE` dans cet alias,
+conformément au parseur Edge actuel. `SOLDE` reste `SOLDE`.
+
+Les erreurs ajoutent temporairement `success: false`, `succes: false`, `code`,
+`message` et `erreur`. `COLIS_INTROUVABLE` ajoute `found: false`. Tous ces
+champs sont dérivés de l'enveloppe principale, ne représentent pas un second
+contrat et seront retirés après migration des clients.
+
+Deux codes V2 nécessitent un nom historique différent dans l'alias de premier
+niveau : `MONTANT_SUPERIEUR_AU_SOLDE` devient
+`MONTANT_SUPERIEUR_SOLDE`, et `PAIEMENT_PARTIEL_NON_AUTORISE` devient
+`PAIEMENT_PARTIEL_INTERDIT`. L'objet `error` conserve toujours le code V2 ;
+la table d'adaptation est unique, explicite et limitée au parseur Edge actuel.
 
 ## Erreurs stables
 
@@ -67,6 +79,7 @@ retirés après migration des clients. Les erreurs ajoutent temporairement
 - `DESTINATION_INVALIDE`
 - `CODE_COLIS_INVALIDE`
 - `COLIS_INTROUVABLE`
+- `COLIS_DEJA_SOLDE`
 - `AGENCE_INVALIDE`
 - `AGENT_INVALIDE`
 - `MODE_PAIEMENT_INVALIDE`
