@@ -1,19 +1,35 @@
-export type CanonicalAgency =
-  | "COO"
-  | "FIH"
-  | "LSHI"
-  | "KLZ";
+import { contractError } from "./errors";
 
-export function normalizeCanonicalAgency(
-  agency: string,
-): CanonicalAgency | null {
-  const normalized = agency.trim().toUpperCase();
+export const CANONICAL_AGENCIES = ["COO", "FIH", "LSHI", "KLZ"] as const;
+
+export type CanonicalAgency = (typeof CANONICAL_AGENCIES)[number];
+
+export function normalizeCanonicalAgency(value: unknown): CanonicalAgency {
+  if (typeof value !== "string") {
+    throw contractError("INVALID_AGENCY", "Agence invalide.");
+  }
+
+  const normalized = value.trim().toUpperCase();
   const canonical = normalized === "COTONOU" ? "COO" : normalized;
 
-  return canonical === "COO" ||
-    canonical === "FIH" ||
-    canonical === "LSHI" ||
-    canonical === "KLZ"
-    ? canonical
-    : null;
+  if (!isCanonicalAgency(canonical)) {
+    throw contractError("INVALID_AGENCY", "Agence invalide.");
+  }
+
+  return canonical;
+}
+
+export function isCanonicalAgency(value: unknown): value is CanonicalAgency {
+  return (
+    typeof value === "string" &&
+    CANONICAL_AGENCIES.includes(value as CanonicalAgency)
+  );
+}
+
+export function assertCanonicalAgency(
+  value: unknown,
+): asserts value is CanonicalAgency {
+  if (!isCanonicalAgency(value)) {
+    throw contractError("INVALID_AGENCY", "Agence invalide.");
+  }
 }

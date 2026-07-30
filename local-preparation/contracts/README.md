@@ -1,41 +1,92 @@
 # Contrats métier préparatoires
 
-Copie documentaire créée le 2026-07-30. Statut : **CANONIQUE_PROVISOIRE**.
+Ces contrats sont une préparation locale, sans connexion à la production. Ils
+ne sont importés par aucun moteur Apps Script, aucune Edge Function, aucune
+route et aucun composant du site. Ils ne doivent pas être déployés ou connectés
+à un moteur réel sans une phase dédiée.
 
-Ces types sont isolés dans `local-preparation` et ne sont importés par aucune
-logique métier existante. Ils ne doivent pas être déployés ni connectés aux
-moteurs réels sans une phase dédiée. Aucun secret réel n'est versionné ici.
+## Agences
 
-## Agences et devise
+Les agences canoniques uniques sont `COO`, `FIH`, `LSHI` et `KLZ`.
+La normalisation supprime les espaces extérieurs, normalise la casse et convertit
+`COTONOU` en `COO`. Toute valeur vide, non textuelle ou inconnue est refusée avec
+`INVALID_AGENCY`. La variante `COT` n'est pas acceptée, car elle n'a pas été
+trouvée dans les sources historiques auditées.
 
-Les seules agences canoniques sont `COO`, `FIH`, `LSHI` et `KLZ`. La fonction
-pure préparatoire normalise `COTONOU` en `COO` et rejette toute autre valeur.
-La seule devise comptable du contrat financier est `USD`.
+## Événements financiers
 
-## Contraintes financières
+Un nouvel événement financier canonique utilise exclusivement `USD`, un montant
+strictement positif avec au maximum deux décimales et des identifiants distincts :
 
-- `amount` doit être strictement positif.
-- `occurredAt` est un instant UTC.
-- `businessDate` est calculée selon `Africa/Porto-Novo`.
-- `eventId` est unique et `requestId` reste stable.
-- Aucun événement existant n'est modifié : correction et annulation passent
-  par un événement compensatoire.
-- Aucune donnée du module Transferts n'est autorisée dans ces événements.
+- `eventId` identifie l'événement immutable ;
+- `sourceId` identifie l'objet métier qui a produit l'événement ;
+- `requestId` identifie la requête idempotente et n'est pas interchangeable avec
+  les deux identifiants précédents.
 
-## Contraintes de stock
+`EXPENSE_RECORDED` représente la saisie initiale. `EXPENSE_APPROVED` et
+`EXPENSE_REJECTED` représentent respectivement une validation et un refus
+ultérieurs : ils restent donc trois événements distincts. Une correction ou une
+annulation ne modifie pas un événement existant ; `FINANCIAL_REVERSAL` crée un
+événement compensatoire et référence l'événement compensé dans `reversalOf`.
 
-- Une transition vers `ARRIVÉ` produit `ENTREE_DESTINATION`.
-- Une transition vers `LIVRÉ` produit `SORTIE_DESTINATION`.
-- Un paiement ne déclenche jamais directement une sortie de stock.
-- MANIFESTE PUBLIC reste strictement en lecture seule.
-- Aucun mouvement existant n'est modifié ; une correction crée une compensation.
-- Le moteur futur devra refuser le stock négatif avant écriture.
-- Un ajustement Admin exige un motif et une trace Audit.
+Les relevés historiques USD, FCFA et CDF utilisent `LegacyFinancialRecord`.
+Le montant et la devise d'origine sont conservés sans conversion automatique.
+Un relevé historique ne peut pas être transmis à `createFinancialEvent`.
 
-## Fichiers
+## Séparation paiement et livraison
 
-| Fichier | SHA-256 | Octets | Lignes | Statut |
-|---|---:|---:|---:|---|
-| `agencies.ts` | `2589831021fb2bb0a2e4b20cf6ab611383f0e75daed79635e396f6306153767c` | 420 | 19 | CANONIQUE_PROVISOIRE |
-| `financial-event.ts` | `61c5475512cb9e883d70ef5e633703f421df16db9afb0c48b3cfcbb6a69d1f02` | 619 | 28 | CANONIQUE_PROVISOIRE |
-| `stock-event.ts` | `a4a950f223eb3b63fee0711fb09cd8fd90da5a7c0126e26ae5bdf386ffbb4654` | 605 | 26 | CANONIQUE_PROVISOIRE |
+**PAIEMENT ≠ LIVRAISON.** Un événement financier ne contient aucun statut
+logistique et ne produit aucun mouvement de stock. Une opération de paiement ne
+peut jamais constituer une confirmation physique de livraison.
+
+## Événements de stock
+
+Les événements futurs documentent les mouvements `ENTREE_COO`, `SORTIE_COO`,
+`ENTREE_DESTINATION`, `SORTIE_DESTINATION`, `AJUSTEMENT_ADMIN` et
+`STOCK_REVERSAL`.
+
+Les règles de domaine futures sont :
+
+- `ENREGISTRÉ` pourra produire `ENTREE_COO` ;
+- `EN_VOL` pourra produire `SORTIE_COO` ;
+- `ARRIVÉ` pourra produire `ENTREE_DESTINATION` ;
+- seule une confirmation physique explicite pourra produire
+  `SORTIE_DESTINATION` ;
+- la valeur `LIVRÉ` d'un manifeste ne constitue pas, seule, une preuve suffisante ;
+- aucune arrivée implicite propre à KLZ n'est prévue ;
+- un paiement ne produit jamais de `StockEvent`.
+
+MANIFESTE PUBLIC reste strictement en lecture seule. Ces contrats ne contiennent
+aucune synchronisation ni aucun accès à Google Sheets.
+
+## Sources et identité
+
+Les sources financières autorisées sont `PAYMENT_ENGINE`, `EXPENSE_ENGINE`,
+`ADMIN`, `SYSTEM` et `LEGACY_IMPORT`. Les sources de stock sont
+`MANIFEST_OBSERVATION`, `DELIVERY_CONFIRMATION`, `ADMIN`, `SYSTEM` et
+`LEGACY_IMPORT`.
+
+`movementId` identifie uniquement un mouvement de stock. `actorUserId` est
+obligatoire, sauf pour une source explicitement système ou un import historique.
+`requestId` suit la même exception. Les dates d'occurrence sont ISO 8601 et les
+dates métier suivent `YYYY-MM-DD`.
+
+## Métadonnées et immutabilité
+
+Les objets retournés et leurs métadonnées sont profondément gelés. Les
+métadonnées doivent être sérialisables en JSON : aucune fonction, `Date` native,
+valeur `undefined`, valeur non finie, référence cyclique ou prototype spécialisé
+n'est accepté. Les clés évoquant un secret, un token, une API key, un mot de
+passe ou une clé privée sont refusées.
+
+## Frontières
+
+Le module Transferts reste totalement indépendant de ces contrats et n'est une
+source d'aucun événement financier ou de stock. Aucun type ou moteur de ce
+dossier n'établit de lien avec la Caisse.
+
+## Tests locaux
+
+Les tests ciblés couvrent les agences, les validations communes, les événements
+financiers, les relevés historiques, les mouvements de stock, l'immutabilité et
+les frontières de domaine. Ils utilisent uniquement des fixtures locales.
