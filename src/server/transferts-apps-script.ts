@@ -16,6 +16,15 @@ export const TRANSFERTS_READ_ACTIONS = [
 ] as const;
 
 export type TransfertsReadAction = (typeof TRANSFERTS_READ_ACTIONS)[number];
+export const TRANSFERTS_WRITE_ACTIONS = [
+  "CREATE_TRANSFER",
+  "CONFIRM_CODE_RECEIVED",
+  "CONFIRM_FUNDS_WITHDRAWN",
+  "CONFIRM_TRANSFER",
+  "FLAG_FOR_REVIEW",
+  "CANCEL_TRANSFER"
+] as const;
+export type TransfertsWriteAction = (typeof TRANSFERTS_WRITE_ACTIONS)[number];
 
 export type TransfertsActor = {
   userId: string;
@@ -33,10 +42,32 @@ type AppsScriptResponse = {
 };
 
 export class TransfertsConfigurationError extends Error {}
-export class TransfertsServiceError extends Error {}
+export class TransfertsServiceError extends Error {
+  constructor(readonly code: string) {
+    super(code);
+  }
+}
 
 export async function callTransfertsReadApi(
   action: TransfertsReadAction,
+  actor: TransfertsActor,
+  payload: Record<string, unknown>,
+  options: { fetcher?: typeof fetch; now?: number } = {}
+): Promise<unknown> {
+  return callTransfertsApi(action, actor, payload, options);
+}
+
+export async function callTransfertsWriteApi(
+  action: TransfertsWriteAction,
+  actor: TransfertsActor,
+  payload: Record<string, unknown>,
+  options: { fetcher?: typeof fetch; now?: number } = {}
+): Promise<unknown> {
+  return callTransfertsApi(action, actor, payload, options);
+}
+
+async function callTransfertsApi(
+  action: TransfertsReadAction | TransfertsWriteAction,
   actor: TransfertsActor,
   payload: Record<string, unknown>,
   options: { fetcher?: typeof fetch; now?: number } = {}
@@ -196,7 +227,7 @@ function readTransfertsConfiguration() {
 function validateAppsScriptResponse(
   value: unknown,
   requestId: string,
-  action: string
+  action: TransfertsReadAction | TransfertsWriteAction
 ): AppsScriptResponse {
   if (!isRecord(value)) throw new TransfertsServiceError("TRANSFERTS_INVALID_RESPONSE");
   if (
@@ -223,15 +254,20 @@ function validateAppsScriptResponse(
   ) {
     throw new TransfertsServiceError("TRANSFERTS_INVALID_RESPONSE");
   }
-  if (
-    value.ok === true &&
-    (action === "GET_TRANSFER"
-      ? !isRecord(value.data)
-      : !Array.isArray(value.data))
-  ) {
+  if (value.ok === true && readResponseHasInvalidData(action, value.data)) {
     throw new TransfertsServiceError("TRANSFERTS_INVALID_RESPONSE");
   }
   return value as AppsScriptResponse;
+}
+
+function readResponseHasInvalidData(
+  action: TransfertsReadAction | TransfertsWriteAction,
+  data: unknown
+) {
+  if (action === "GET_TRANSFER" || TRANSFERTS_WRITE_ACTIONS.includes(action as TransfertsWriteAction)) {
+    return !isRecord(data);
+  }
+  return !Array.isArray(data);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

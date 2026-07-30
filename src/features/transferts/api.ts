@@ -1,4 +1,6 @@
 import type {
+  CreateTransferInput,
+  TransferWriteResponse,
   TransfersAuditResponse,
   TransfersPageResponse
 } from "@/features/transferts/types";
@@ -14,6 +16,23 @@ export function loadAgentTransfers(token: string, signal?: AbortSignal) {
     "/api/agent/transferts",
     token,
     signal
+  );
+}
+
+export function createAgentTransfer(token: string, input: CreateTransferInput) {
+  return writeTransfer("/api/agent/transferts", token, input);
+}
+
+export function performAgentTransferAction(
+  token: string,
+  transferId: string,
+  action: "confirm-code" | "confirm-withdrawal" | "confirm-transfer" | "flag-review" | "cancel",
+  body: Record<string, unknown> = {}
+) {
+  return writeTransfer(
+    `/api/agent/transferts/${encodeURIComponent(transferId)}/${action}`,
+    token,
+    body
   );
 }
 
@@ -61,6 +80,31 @@ async function loadTransfers<T>(
     throw new TransfertsApiError(message, response.status);
   }
   return payload as T;
+}
+
+async function writeTransfer(
+  url: string,
+  token: string,
+  body: unknown
+): Promise<TransferWriteResponse> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body),
+    cache: "no-store"
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message =
+      isRecord(payload) && typeof payload.message === "string"
+        ? payload.message
+        : "Le service Transferts est temporairement indisponible.";
+    throw new TransfertsApiError(message, response.status);
+  }
+  return payload as TransferWriteResponse;
 }
 
 function withFilters(path: string, filters: Record<string, string>) {

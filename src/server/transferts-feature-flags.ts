@@ -12,8 +12,14 @@ export function getTransfertsFeatureFlags(): TransfertsFeatureFlags {
   };
 }
 
+export function areTransfertsWritesEnabled() {
+  return getTransfertsFeatureFlags().writesEnabled;
+}
+
+/**
+ * Kept for compatibility with read routes. Reads are intentionally available
+ * regardless of the write flag.
+ */
 export function assertTransfertsReadOnlyMode() {
-  if (getTransfertsFeatureFlags().writesEnabled) {
-    throw new Error("TRANSFERTS_WRITES_NOT_AUTHORIZED");
-  }
+  return;
 }

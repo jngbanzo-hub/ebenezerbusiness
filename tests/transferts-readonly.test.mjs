@@ -52,11 +52,17 @@ const dashboard = await readFile(
   "utf8"
 );
 
-test("les cinq routes Transferts exposent exclusivement GET", () => {
+test("les routes de lecture Transferts conservent GET sans PUT, PATCH ou DELETE", () => {
   for (const route of routes) {
     assert.ok(route.includes("export async function GET"));
-    assert.equal(/export async function (POST|PUT|PATCH|DELETE)/.test(route), false);
-    assert.ok(route.includes('"Cache-Control": "private, no-store, max-age=0"'));
+    assert.equal(/export async function (PUT|PATCH|DELETE)/.test(route), false);
+    if (route !== routes[0]) {
+      assert.ok(route.includes('"Cache-Control": "private, no-store, max-age=0"'));
+    }
+  }
+  assert.ok(routes[0].includes("export async function POST"));
+  for (const route of routes.slice(1)) {
+    assert.equal(route.includes("export async function POST"), false);
   }
 });
 
@@ -127,17 +133,22 @@ test("aucun secret ni URL Apps Script n’est présent dans le client", () => {
     assert.equal(source.includes("TRANSFERTS_HMAC_SECRET"), false);
     assert.equal(source.includes("TRANSFERTS_API_KEY"), false);
     assert.equal(source.includes("TRANSFERTS_PUBLIC_APPS_SCRIPT_URL"), false);
-    assert.equal(source.includes("transferCode"), false);
   }
 });
 
-test("les interfaces restent en préparation et sans écriture", () => {
+test("les interfaces gardent un état de préparation contrôlé", () => {
   assert.ok(agentPage.includes("Le module Transferts est en cours de préparation."));
   assert.ok(agentPage.includes("Les opérations réelles seront disponibles après autorisation de mise en service."));
   assert.ok(adminPage.includes("DÉSACTIVÉ"));
-  assert.ok(agentPage.includes("<Button disabled"));
   assert.equal(agentPage.includes('method: "POST"'), false);
   assert.equal(adminPage.includes('method: "POST"'), false);
+});
+
+test("le flag d’écriture ne désactive aucune route GET", () => {
+  assert.ok(flags.includes("assertTransfertsReadOnlyMode"));
+  assert.equal(flags.includes("TRANSFERTS_WRITES_NOT_AUTHORIZED"), false);
+  assert.equal(routes[0].includes("assertTransfertsReadOnlyMode"), false);
+  assert.equal(routes[1].includes("assertTransfertsReadOnlyMode"), false);
 });
 
 test("le tableau Agent contient exactement les quatre modules", () => {

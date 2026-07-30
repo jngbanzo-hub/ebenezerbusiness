@@ -5,7 +5,6 @@ import {
   callTransfertsReadApi,
   TransfertsConfigurationError
 } from "@/server/transferts-apps-script";
-import { assertTransfertsReadOnlyMode } from "@/server/transferts-feature-flags";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -15,7 +14,6 @@ export async function GET(
   { params }: { params: { transferId: string } }
 ) {
   try {
-    assertTransfertsReadOnlyMode();
     const authorization = await authorizeAgentRequest(request);
     if (!authorization.authorized) {
       return privateJson(

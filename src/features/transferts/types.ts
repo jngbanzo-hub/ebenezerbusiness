@@ -47,6 +47,38 @@ export type TransferSummary = {
   updatedAt: string;
   cancelled: boolean;
   cancelReason: string;
+  transferRequestId?: string;
+};
+
+export type CreateTransferInput = {
+  agencyTo: TransferAgency;
+  amount: number;
+  currency: TransferCurrency;
+  fees: number;
+  service: string;
+  transferCode: string;
+  senderName: string;
+  beneficiaryName: string;
+  beneficiaryPhone: string;
+  transferRequestId: string;
+  observation?: string;
+};
+
+export type TransferWriteState =
+  | "SUCCESS"
+  | "INVALID_REQUEST"
+  | "FORBIDDEN"
+  | "NOT_FOUND"
+  | "CONFLICT"
+  | "INVALID_TRANSITION"
+  | "WRITES_DISABLED"
+  | "RESULT_REQUIRES_VERIFICATION"
+  | "SERVICE_UNAVAILABLE";
+
+export type TransferWriteResponse = {
+  state: TransferWriteState;
+  message: string;
+  transfer?: TransferSummary;
 };
 
 export const TRANSFER_CIRCUITS = [
@@ -121,7 +153,7 @@ export type TransfersPageResponse = {
   role: "AGENT" | "ADMIN";
   agency: TransferAgency | null;
   apiAvailable: boolean;
-  writesEnabled: false;
+  writesEnabled: boolean;
   adminEnabled: boolean;
   transfers: TransferSummary[];
   statistics?: AdminTransferStatistics | null;
