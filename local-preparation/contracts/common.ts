@@ -7,8 +7,25 @@ export type JsonValue =
   | { readonly [key: string]: JsonValue };
 export type JsonObject = { readonly [key: string]: JsonValue };
 
-const SENSITIVE_METADATA_KEY =
-  /(^|[_-])(api[_-]?key|authorization|bearer|password|private[_-]?key|secret|token)($|[_-])/i;
+export const MAX_METADATA_DEPTH = 8;
+export const MAX_METADATA_ENTRIES = 200;
+export const MAX_METADATA_STRING_LENGTH = 4_000;
+export const MAX_METADATA_KEY_LENGTH = 100;
+
+const SENSITIVE_METADATA_KEYS = new Set([
+  "password",
+  "passwd",
+  "secret",
+  "token",
+  "accesstoken",
+  "refreshtoken",
+  "authorization",
+  "bearer",
+  "apikey",
+  "privatekey",
+  "hmacsecret",
+  "servicerolekey",
+]);
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const ISO_INSTANT_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -113,7 +130,7 @@ export function validateMetadata(value: unknown): JsonObject {
     throw contractError("INVALID_METADATA", "Métadonnées invalides.");
   }
 
-  validateJsonValue(value, new Set<object>());
+  validateJsonValue(value, new Set<object>(), 0, { entries: 0 });
   return deepFreeze(value as JsonObject);
 }
 
@@ -128,12 +145,20 @@ export function deepFreeze<T>(value: T): T {
   return value;
 }
 
-function validateJsonValue(value: unknown, ancestors: Set<object>): void {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "boolean"
-  ) {
+function validateJsonValue(
+  value: unknown,
+  ancestors: Set<object>,
+  depth: number,
+  state: { entries: number },
+): void {
+  if (value === null || typeof value === "boolean") {
+    return;
+  }
+
+  if (typeof value === "string") {
+    if (value.length > MAX_METADATA_STRING_LENGTH) {
+      throw contractError("INVALID_METADATA", "Métadonnées invalides.");
+    }
     return;
   }
 
@@ -148,6 +173,10 @@ function validateJsonValue(value: unknown, ancestors: Set<object>): void {
     throw contractError("INVALID_METADATA", "Métadonnées invalides.");
   }
 
+  if (depth > MAX_METADATA_DEPTH) {
+    throw contractError("INVALID_METADATA", "Métadonnées invalides.");
+  }
+
   if (ancestors.has(value)) {
     throw contractError("INVALID_METADATA", "Métadonnées invalides.");
   }
@@ -158,16 +187,38 @@ function validateJsonValue(value: unknown, ancestors: Set<object>): void {
 
   ancestors.add(value);
   if (Array.isArray(value)) {
-    value.forEach((item) => validateJsonValue(item, ancestors));
+    countMetadataEntries(value.length, state);
+    value.forEach((item) =>
+      validateJsonValue(item, ancestors, depth + 1, state),
+    );
   } else {
+    countMetadataEntries(Object.keys(value).length, state);
     Object.entries(value).forEach(([key, item]) => {
-      if (SENSITIVE_METADATA_KEY.test(key)) {
+      if (
+        key.length > MAX_METADATA_KEY_LENGTH ||
+        isSensitiveMetadataKey(key)
+      ) {
         throw contractError("INVALID_METADATA", "Métadonnées invalides.");
       }
-      validateJsonValue(item, ancestors);
+      validateJsonValue(item, ancestors, depth + 1, state);
     });
   }
   ancestors.delete(value);
+}
+
+function countMetadataEntries(
+  count: number,
+  state: { entries: number },
+): void {
+  state.entries += count;
+  if (state.entries > MAX_METADATA_ENTRIES) {
+    throw contractError("INVALID_METADATA", "Métadonnées invalides.");
+  }
+}
+
+function isSensitiveMetadataKey(key: string): boolean {
+  const normalized = key.toLocaleLowerCase("en-US").replace(/[\s_-]+/g, "");
+  return SENSITIVE_METADATA_KEYS.has(normalized);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

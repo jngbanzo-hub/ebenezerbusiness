@@ -76,8 +76,28 @@ dates métier suivent `YYYY-MM-DD`.
 Les objets retournés et leurs métadonnées sont profondément gelés. Les
 métadonnées doivent être sérialisables en JSON : aucune fonction, `Date` native,
 valeur `undefined`, valeur non finie, référence cyclique ou prototype spécialisé
-n'est accepté. Les clés évoquant un secret, un token, une API key, un mot de
-passe ou une clé privée sont refusées.
+n'est accepté. Leur profondeur maximale est de 8 niveaux, leur nombre total de
+propriétés et d'éléments est limité à 200, chaque chaîne à 4 000 caractères et
+chaque clé à 100 caractères.
+
+La validation technique interdit une liste explicite de clés sensibles :
+`password`, `passwd`, `secret`, `token`, `access_token`, `refresh_token`,
+`authorization`, `bearer`, `api_key`, `api-key`, `private_key`, `private-key`,
+`hmac_secret` et `service_role_key`. La comparaison est insensible à la casse et
+aux séparateurs espace, tiret et underscore. Elle porte sur la clé entière après
+normalisation : une clé métier comme `secretariat` reste donc autorisée. Toute
+liste fermée peut néanmoins produire des faux positifs si un producteur utilise
+exactement un nom réservé dans un autre sens.
+
+Cette validation garantit la structure JSON-safe, les limites indiquées et le
+refus de ces clés. Elle n'analyse pas sémantiquement les textes libres et ne peut
+pas reconnaître de façon fiable un véritable token, mot de passe ou secret
+dissimulé sous une clé neutre. Le contrat métier interdit malgré tout de placer
+dans les métadonnées une API key, un token, un mot de passe, un JWT, une clé
+privée, un secret HMAC, un contenu d'authentification ou une variable
+d'environnement sensible. Les producteurs d'événements sont responsables du
+respect de cette interdiction, complétée par la revue de code et la détection de
+secrets dans Git.
 
 ## Frontières
 
