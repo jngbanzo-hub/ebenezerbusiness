@@ -1,6 +1,10 @@
 import "server-only";
 
 import type { AuthorizedAgentIdentity } from "@/server/agent-authorization";
+import {
+  attachConfirmedExpenseDebit,
+  CashExpenseDebitError
+} from "@/server/cash-expense-debit";
 
 const AGENT_EXPENSE_ACTIONS = [
   "ENREGISTRER_DEPENSE",
@@ -43,7 +47,12 @@ const ALLOWED_CORRECTION_VALUE_KEYS = new Set([
   "observation"
 ]);
 
-export class AgentExpenseRequestError extends Error {}
+export class AgentExpenseRequestError extends Error {
+  constructor(message: string, readonly status = 400) {
+    super(message);
+    this.name = "AgentExpenseRequestError";
+  }
+}
 
 export async function forwardAgentExpenseRequest(
   identity: AuthorizedAgentIdentity,
@@ -86,7 +95,20 @@ export async function forwardAgentExpenseRequest(
       throw new Error("Réponse invalide du service Dépenses.");
     }
 
-    return await response.json();
+    const result: unknown = await response.json();
+    try {
+      return await attachConfirmedExpenseDebit(identity, request, result);
+    } catch (error) {
+      if (error instanceof CashExpenseDebitError) {
+        throw new AgentExpenseRequestError(
+          error.code === "IDEMPOTENCY_CONFLICT"
+            ? "Identifiant de dépense déjà utilisé avec un contenu différent."
+            : "Le service Caisse est temporairement indisponible.",
+          error.status
+        );
+      }
+      throw error;
+    }
   } finally {
     clearTimeout(timeout);
   }

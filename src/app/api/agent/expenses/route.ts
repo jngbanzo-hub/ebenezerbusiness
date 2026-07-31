@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     if (error instanceof AgentExpenseRequestError) {
-      return jsonError(error.message, 400);
+      return jsonError(error.message, error.status);
     }
 
     return jsonError(
