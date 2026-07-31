@@ -8,6 +8,10 @@ import { Container, GlassPanel } from "@/components/design-system";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import {
+  getOrCreateRequestIdAttempt,
+  type RequestIdAttempt
+} from "@/features/agent/request-id-attempt";
 
 const CATEGORIES = [
   "Aéroport",
@@ -73,11 +77,6 @@ type ExpenseResult = {
   message?: unknown;
 };
 
-type ExpenseAttempt = {
-  fingerprint: string;
-  expenseRequestId: string;
-};
-
 const INITIAL_VALUES: ExpenseFormValues = {
   categorie: "Autres",
   description: "",
@@ -95,14 +94,13 @@ const textareaClassName =
 
 export function AgentExpenseForm() {
   const router = useRouter();
-  const attemptRef = useRef<ExpenseAttempt | null>(null);
+  const attemptRef = useRef<RequestIdAttempt | null>(null);
   const requestLockRef = useRef(false);
   const [values, setValues] = useState<ExpenseFormValues>(INITIAL_VALUES);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [result, setResult] = useState<{
     type: "success" | "error";
     text: string;
-    expenseRequestId?: string;
   } | null>(null);
 
   function updateValue<Key extends keyof ExpenseFormValues>(
@@ -145,13 +143,7 @@ export function AgentExpenseForm() {
       }
 
       const fingerprint = fingerprintExpense(values, amount);
-      const attempt =
-        attemptRef.current?.fingerprint === fingerprint
-          ? attemptRef.current
-          : {
-              fingerprint,
-              expenseRequestId: crypto.randomUUID().toLowerCase()
-            };
+      const attempt = getOrCreateRequestIdAttempt(attemptRef.current, fingerprint);
       attemptRef.current = attempt;
 
       const response = await fetch("/api/agent/expenses", {
@@ -163,7 +155,7 @@ export function AgentExpenseForm() {
         body: JSON.stringify({
           action: "ENREGISTRER_DEPENSE",
           donnees: {
-            expenseRequestId: attempt.expenseRequestId,
+            expenseRequestId: attempt.requestId,
             categorie: values.categorie,
             description: values.description.trim(),
             montant: amount,
@@ -190,7 +182,6 @@ export function AgentExpenseForm() {
           text: alreadyRecorded
             ? "Cette dépense avait déjà été enregistrée."
             : "Dépense enregistrée avec succès.",
-          expenseRequestId: attempt.expenseRequestId
         });
         attemptRef.current = null;
         setValues(INITIAL_VALUES);
@@ -393,11 +384,6 @@ export function AgentExpenseForm() {
                 }`}
               >
                 <p>{result.text}</p>
-                {result.expenseRequestId ? (
-                  <p className="mt-2 break-all text-xs">
-                    Expense Request ID : {result.expenseRequestId}
-                  </p>
-                ) : null}
               </div>
             ) : null}
           </GlassPanel>

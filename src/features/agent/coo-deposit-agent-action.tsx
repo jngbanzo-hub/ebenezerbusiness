@@ -10,6 +10,10 @@ import {
   submitCooDeposit
 } from "@/features/agent/coo-deposit-client";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import {
+  getOrCreateRequestIdAttempt,
+  type RequestIdAttempt
+} from "@/features/agent/request-id-attempt";
 
 type Feedback = Readonly<{
   type: "success" | "replay" | "error" | "conflict";
@@ -18,22 +22,21 @@ type Feedback = Readonly<{
 
 export function CooDepositAgentAction() {
   const [trackingCode, setTrackingCode] = useState("");
-  const [requestId, setRequestId] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const requestLock = useRef(false);
+  const attemptRef = useRef<RequestIdAttempt | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (requestLock.current) return;
 
     const normalizedTrackingCode = trackingCode.trim().toUpperCase();
-    const normalizedRequestId = requestId.trim();
-    if (!normalizedTrackingCode || !normalizedRequestId || !confirmed) {
+    if (!normalizedTrackingCode || !confirmed) {
       setFeedback({
         type: "error",
-        message: "Renseignez le colis, le requestId et confirmez le dépôt physique."
+        message: "Renseignez le colis et confirmez le dépôt physique."
       });
       return;
     }
@@ -51,6 +54,11 @@ export function CooDepositAgentAction() {
     setFeedback(null);
 
     try {
+      const attempt = getOrCreateRequestIdAttempt(
+        attemptRef.current,
+        normalizedTrackingCode
+      );
+      attemptRef.current = attempt;
       const supabase = getSupabaseBrowserClient();
       const {
         data: { session }
@@ -65,7 +73,7 @@ export function CooDepositAgentAction() {
 
       const result = await submitCooDeposit(session.access_token, {
         trackingCode: normalizedTrackingCode,
-        requestId: normalizedRequestId,
+        requestId: attempt.requestId,
         confirmationPhysicalDeposit: true
       });
       setFeedback(
@@ -79,6 +87,9 @@ export function CooDepositAgentAction() {
               message: `Dépôt enregistré pour ${result.trackingCode}, version ${result.version}.`
             }
       );
+      attemptRef.current = null;
+      setTrackingCode("");
+      setConfirmed(false);
     } catch (error) {
       const conflict =
         error instanceof CooDepositRequestError && error.status === 409;
@@ -115,17 +126,11 @@ export function CooDepositAgentAction() {
           <input
             className="h-11 rounded-lg border border-white/15 bg-white/[0.05] px-3 text-white outline-none focus:border-accent"
             value={trackingCode}
-            onChange={(event) => setTrackingCode(event.target.value)}
-            autoComplete="off"
-            required
-          />
-        </label>
-        <label className="grid gap-2 text-sm font-medium">
-          Request ID
-          <input
-            className="h-11 rounded-lg border border-white/15 bg-white/[0.05] px-3 text-white outline-none focus:border-accent"
-            value={requestId}
-            onChange={(event) => setRequestId(event.target.value)}
+            onChange={(event) => {
+              attemptRef.current = null;
+              setTrackingCode(event.target.value);
+              setFeedback(null);
+            }}
             autoComplete="off"
             required
           />
