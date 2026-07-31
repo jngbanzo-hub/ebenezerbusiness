@@ -36,6 +36,7 @@ import {
   type AdminDateRange
 } from "@/features/admin/period";
 import { ShipperStatisticsSection } from "@/features/admin/shipper-statistics";
+import { CashOpeningBalanceSection } from "@/features/admin/cash-opening-balance";
 import {
   ADMIN_DESTINATIONS,
   ADMIN_SITES,
@@ -450,6 +451,7 @@ export function AdminWorkspace() {
           />
         ) : (
           <>
+            <CashOpeningBalanceSection accessToken={accessTokenRef.current} />
             <section className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               {ADMIN_SITES.map((site) => (
                 <StatsCard
