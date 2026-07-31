@@ -41,6 +41,7 @@ import { ShipperStatisticsSection } from "@/features/admin/shipper-statistics";
 import { CashOpeningBalanceSection } from "@/features/admin/cash-opening-balance";
 import { AdminCashDashboardView } from "@/features/cash/cash-dashboard-view";
 import { CashAdminControls } from "@/features/admin/cash-admin-controls";
+import { AdminExpensesModule } from "@/features/admin/admin-expenses-module";
 import {
   ADMIN_DESTINATIONS,
   ADMIN_SITES,
@@ -69,7 +70,7 @@ const PERIOD_OPTIONS: Array<{ value: AdminPeriodPreset; label: string }> = [
 ];
 
 const fieldClassName =
-  "mt-2 h-11 w-full rounded-md border border-white/15 bg-white/[0.05] px-3 text-white outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/25";
+  "mt-2 h-11 w-full rounded-md border border-white/15 bg-white/[0.05] px-3 text-white outline-none transition placeholder:text-muted-foreground focus:border-accent focus:ring-2 focus:ring-accent/25";
 
 export type AdminWorkspaceModule = "home" | "payments" | "cash" | "expenses" | "shippers";
 
@@ -266,7 +267,7 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
               <p role="alert" className="mt-3 text-sm text-red-200">
                 {authError}
               </p>
-              <Button className="mt-6" onClick={() => router.replace("/auth/sign-in")}>
+              <Button variant="growth" className="mt-6" onClick={() => router.replace("/auth/sign-in")}>
                 Retour à la connexion
               </Button>
             </>
@@ -301,11 +302,11 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
         {module === "home" ? <AdminModuleGrid /> : null}
         {module === "cash" ? <><CashOpeningBalanceSection accessToken={accessTokenRef.current} /><AdminCashDashboardView accessToken={accessTokenRef.current} /><CashAdminControls accessToken={accessTokenRef.current} /></> : null}
         {module === "shippers" ? <ShipperStatisticsSection accessToken={accessTokenRef.current} /> : null}
-        {module === "expenses" ? <AdminExpensesModule /> : null}
+        {module === "expenses" ? <AdminExpensesModule accessToken={accessTokenRef.current} /> : null}
         {module === "payments" ? <>
         <GlassPanel className="mt-8 p-5 sm:p-6">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-lg border border-primary/25 bg-primary/15 text-[#AFC7FF]">
+            <div className="grid h-10 w-10 place-items-center rounded-lg border border-accent/25 bg-accent/15 text-accent">
               <CalendarDays className="h-5 w-5" />
             </div>
             <div>
@@ -524,7 +525,7 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
               {isLoading && payments.length === 0 ? (
                 <div className="grid min-h-64 place-items-center p-8 text-center">
                   <div>
-                    <LoaderCircle className="mx-auto h-7 w-7 animate-spin text-primary" />
+                    <LoaderCircle className="mx-auto h-7 w-7 animate-spin text-accent" />
                     <p className="mt-3 text-sm text-muted-foreground">
                       Lecture sécurisée des encaissements…
                     </p>
@@ -562,11 +563,7 @@ const ADMIN_MODULES = [
 ] as const;
 
 function AdminModuleGrid() {
-  return <section className="mt-8"><div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{ADMIN_MODULES.map(({title,description,href,icon:Icon}) => <GlassPanel key={href} className="flex min-h-56 flex-col p-6"><div className="grid h-12 w-12 place-items-center rounded-xl border border-primary/25 bg-primary/15 text-[#AFC7FF]"><Icon className="h-6 w-6" /></div><h2 className="mt-5 text-xl font-semibold">{title}</h2><p className="mt-2 flex-1 text-sm text-muted-foreground">{description}</p><Button asChild className="mt-6 w-full sm:w-auto"><Link href={href}>Accéder au module</Link></Button></GlassPanel>)}</div></section>;
-}
-
-function AdminExpensesModule() {
-  return <GlassPanel className="mt-8 p-6"><div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-lg border border-primary/25 bg-primary/15 text-[#AFC7FF]"><ClipboardList className="h-5 w-5" /></div><div><h2 className="text-xl font-semibold">Module Dépenses</h2><p className="text-sm text-muted-foreground">Périmètre distinct de la Caisse.</p></div></div><p className="mt-5 text-sm text-muted-foreground">Les dépenses restent enregistrées et validées dans le module Dépenses existant. La Caisse consulte uniquement les débits USD confirmés, sans formulaire Dépenses sur sa page.</p></GlassPanel>;
+  return <section className="mt-8"><div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{ADMIN_MODULES.map(({title,description,href,icon:Icon}) => <GlassPanel key={href} className="flex min-h-56 flex-col p-6"><div className="grid h-12 w-12 place-items-center rounded-xl border border-accent/25 bg-accent/15 text-accent"><Icon className="h-6 w-6" /></div><h2 className="mt-5 text-xl font-semibold">{title}</h2><p className="mt-2 flex-1 text-sm text-muted-foreground">{description}</p><Button asChild variant="growth" className="mt-6 w-full sm:w-auto"><Link href={href}>Accéder au module</Link></Button></GlassPanel>)}</div></section>;
 }
 
 function summarizePaymentsByAgent(payments: AdminPayment[]) {
@@ -593,7 +590,7 @@ function StatsCard({
     <GlassPanel className="p-5">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-semibold text-white">{title}</p>
-        <Banknote className="h-5 w-5 text-primary" />
+        <Banknote className="h-5 w-5 text-accent" />
       </div>
       <p className="mt-4 text-2xl font-semibold">{formatAdminAmount(stats.montantTotal)}</p>
       <div className="mt-4 space-y-2 text-sm text-muted-foreground">
@@ -615,7 +612,7 @@ function Metric({
 }) {
   return (
     <div className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-4">
-      <Icon className="h-5 w-5 text-[#AFC7FF]" />
+      <Icon className="h-5 w-5 text-accent" />
       <div>
         <p className="text-xs text-muted-foreground">{label}</p>
         <p className="mt-1 font-semibold">{value}</p>

@@ -52,7 +52,7 @@ const ADMIN_ACTIONS = [
   "Exporter un rapport"
 ] as const;
 const fieldClassName =
-  "h-10 w-full rounded-md border border-white/15 bg-white/[0.05] px-3 text-sm text-white outline-none placeholder:text-muted-foreground focus:border-primary";
+  "h-10 w-full rounded-md border border-white/15 bg-white/[0.05] px-3 text-sm text-white outline-none placeholder:text-muted-foreground focus:border-accent";
 type MovementFilters = {
   agency: string;
   date: string;

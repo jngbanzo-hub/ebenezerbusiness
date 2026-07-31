@@ -96,7 +96,7 @@ export function AdminTransferDetails({
               <Item label="Observation" value={transfer.observation || "—"} />
             </div>
             {canCorrect && !showForm ? (
-              <Button type="button" onClick={() => setShowForm(true)}>Corriger le code</Button>
+              <Button variant="growth" type="button" onClick={() => setShowForm(true)}>Corriger le code</Button>
             ) : null}
             {canCorrect && showForm ? (
               <form
@@ -135,7 +135,7 @@ export function AdminTransferDetails({
                 </Button>
                 <label className="grid gap-1">Motif<input name="motif" required maxLength={500} className="field" /></label>
                 <div className="flex gap-2">
-                  <Button type="submit" disabled={pending}>{pending ? "Correction…" : "Confirmer la correction"}</Button>
+                  <Button variant="growth" type="submit" disabled={pending}>{pending ? "Correction…" : "Confirmer la correction"}</Button>
                   <Button type="button" variant="outline" onClick={() => { setShowForm(false); setShowCode(false); }}>Annuler</Button>
                 </div>
               </form>
