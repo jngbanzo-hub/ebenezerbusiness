@@ -17,9 +17,19 @@ const siteClientSource = await readFile(
   new URL("../../../../src/features/agent/functions.ts", import.meta.url),
   "utf8"
 );
+const agentWorkspaceSource = await readFile(
+  new URL("../../../../src/features/agent/agent-workspace.tsx", import.meta.url),
+  "utf8"
+);
+const agentExpenseFormSource = await readFile(
+  new URL("../../../../src/features/agent/agent-expense-form.tsx", import.meta.url),
+  "utf8"
+);
 
 const runtime = {
   authInvalid: false,
+  cashAccountActive: true,
+  cashRpcError: null,
   cashRows: [],
   fetchCalls: [],
   profiles: {},
@@ -50,6 +60,12 @@ globalThis.__edgeRuntime = {
         },
         async rpc(name, params) {
           runtime.rpcCalls.push({ name, params });
+          if (!runtime.cashAccountActive) {
+            return { data: null, error: { message: "CASH_ACCOUNT_NOT_ACTIVE" } };
+          }
+          if (runtime.cashRpcError) {
+            return { data: null, error: { message: runtime.cashRpcError } };
+          }
           const byRequest = runtime.cashRows.find((row) =>
             row.source_request_id === params.p_payment_request_id
           );
@@ -165,6 +181,8 @@ const paymentHandler = await loadHandler(paymentSource, "payment");
 
 function reset(profile = agentProfile("COTONOU")) {
   runtime.authInvalid = false;
+  runtime.cashAccountActive = true;
+  runtime.cashRpcError = null;
   runtime.cashRows = [];
   runtime.fetchCalls = [];
   runtime.profiles = {};
@@ -715,4 +733,48 @@ test("55 COO reste hors caisse et conserve sa réponse paiement", async () => {
   assert.equal(result.body.replayed, false);
   assert.equal(runtime.cashRows.length, 0);
   assert.equal(runtime.rpcCalls.length, 0);
+});
+
+test("56 compte SUSPENDED conserve le succès paiement sans mouvement Caisse", async () => {
+  reset(agentProfile("FIH"));
+  enableCashCredits();
+  runtime.cashAccountActive = false;
+  runtime.upstream = () => paymentSuccess("FIH", 100);
+  const result = await json(await paymentHandler(paymentRequest({ montantPaye: 100 })));
+  assert.equal(result.status, 200);
+  assert.equal(result.body.cashRecorded, false);
+  assert.equal(result.body.cashStatus, "ACCOUNT_NOT_ACTIVE");
+  assert.equal(runtime.fetchCalls.length, 1);
+  assert.equal(runtime.cashRows.length, 0);
+});
+
+test("57 rejeu suspendu reste un succès source sans mouvement Caisse", async () => {
+  reset(agentProfile("FIH"));
+  enableCashCredits();
+  runtime.cashAccountActive = false;
+  runtime.upstream = () => paymentSuccess("FIH", 100);
+  const request = () => paymentRequest({ montantPaye: 100 });
+  assert.equal((await json(await paymentHandler(request()))).status, 200);
+  const replay = await json(await paymentHandler(request()));
+  assert.equal(replay.status, 200);
+  assert.equal(replay.body.cashStatus, "ACCOUNT_NOT_ACTIVE");
+  assert.equal(runtime.cashRows.length, 0);
+});
+
+test("58 une autre erreur Caisse reste bloquante", async () => {
+  reset(agentProfile("FIH"));
+  enableCashCredits();
+  runtime.cashRpcError = "CASH_VERSION_CONFLICT";
+  runtime.upstream = paymentSuccess("FIH", 100);
+  const result = await json(await paymentHandler(paymentRequest({ montantPaye: 100 })));
+  assert.equal(result.status, 503);
+  assert.equal(result.body.error, "SERVICE_INDISPONIBLE");
+  assert.equal(runtime.cashRows.length, 0);
+});
+
+test("59 les interfaces Agent affichent un succès non bloquant sans Request ID", () => {
+  assert.match(agentWorkspaceSource, /Paiement enregistré avec succès\. La caisse de l’agence n’est pas encore ouverte/);
+  assert.match(agentExpenseFormSource, /Dépense enregistrée avec succès\. La caisse de l’agence n’est pas encore ouverte/);
+  assert.doesNotMatch(agentWorkspaceSource, /Request ID/i);
+  assert.doesNotMatch(agentExpenseFormSource, /Request ID/i);
 });

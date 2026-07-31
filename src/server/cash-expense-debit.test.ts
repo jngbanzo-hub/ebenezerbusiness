@@ -154,3 +154,57 @@ test("flag désactivé et résultat non confirmé préservent Dépenses", async 
   assert.equal(unchanged, confirmed);
   assert.equal(writer.rows.size, 0);
 });
+
+test("compte SUSPENDED conserve le succès Dépenses sans débit Caisse", async () => {
+  const writer: ExpenseDebitWriter = async () => {
+    throw new CashExpenseDebitError("CASH_ACCOUNT_NOT_ACTIVE", 503);
+  };
+  const result = await attachConfirmedExpenseDebit(identity("LSHI"), expense(), confirmed, {
+    enabled: true,
+    now: () => new Date("2026-08-01T10:00:00.000Z"),
+    writer
+  });
+  assert.deepEqual(result, {
+    ...confirmed,
+    cashRecorded: false,
+    cashStatus: "ACCOUNT_NOT_ACTIVE",
+    replayed: false
+  });
+});
+
+test("rejeu Dépenses suspendu reste réussi sans débit Caisse", async () => {
+  let attempts = 0;
+  const writer: ExpenseDebitWriter = async () => {
+    attempts += 1;
+    throw new CashExpenseDebitError("CASH_ACCOUNT_NOT_ACTIVE", 503);
+  };
+  const suspendedOptions = {
+    enabled: true,
+    now: () => new Date("2026-08-01T10:00:00.000Z"),
+    writer
+  };
+  await attachConfirmedExpenseDebit(identity("KLZ"), expense(), confirmed, suspendedOptions);
+  const replay = await attachConfirmedExpenseDebit(
+    identity("KLZ"),
+    expense(),
+    { success: true, code: "DEPENSE_DEJA_ENREGISTREE" },
+    suspendedOptions
+  );
+  assert.equal((replay as { cashStatus: string }).cashStatus, "ACCOUNT_NOT_ACTIVE");
+  assert.equal(attempts, 2);
+});
+
+test("une erreur Caisse autre que compte suspendu reste bloquante", async () => {
+  const writer: ExpenseDebitWriter = async () => {
+    throw new CashExpenseDebitError("CASH_SERVICE_UNAVAILABLE", 503);
+  };
+  await assert.rejects(
+    () => attachConfirmedExpenseDebit(identity("FIH"), expense(), confirmed, {
+      enabled: true,
+      writer
+    }),
+    (error) =>
+      error instanceof CashExpenseDebitError &&
+      error.code === "CASH_SERVICE_UNAVAILABLE"
+  );
+});

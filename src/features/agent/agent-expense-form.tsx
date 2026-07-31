@@ -71,6 +71,8 @@ type ExpenseFormValues = {
 };
 
 type ExpenseResult = {
+  cashRecorded?: unknown;
+  cashStatus?: unknown;
   success?: unknown;
   code?: unknown;
   expenseRequestId?: unknown;
@@ -179,9 +181,12 @@ export function AgentExpenseForm() {
           payload.code === "DEPENSE_DEJA_ENREGISTREE";
         setResult({
           type: "success",
-          text: alreadyRecorded
-            ? "Cette dépense avait déjà été enregistrée."
-            : "Dépense enregistrée avec succès.",
+          text:
+            payload.cashStatus === "ACCOUNT_NOT_ACTIVE"
+              ? "Dépense enregistrée avec succès. La caisse de l’agence n’est pas encore ouverte ; aucun débit de caisse n’a été créé."
+              : alreadyRecorded
+                ? "Cette dépense avait déjà été enregistrée."
+                : "Dépense enregistrée avec succès.",
         });
         attemptRef.current = null;
         setValues(INITIAL_VALUES);

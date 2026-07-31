@@ -45,5 +45,7 @@ export interface PaymentResult {
   nouveauSolde: number;
   statutPaiement: "SOLDE" | "PARTIELLEMENT PAYE";
   datePaiement: string;
+  cashRecorded?: boolean;
+  cashStatus?: "RECORDED" | "ACCOUNT_NOT_ACTIVE";
   replayed?: boolean;
 }

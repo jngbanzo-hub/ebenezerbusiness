@@ -156,6 +156,12 @@ function parsePaymentResult(response: Record<string, unknown>): PaymentResult {
     nouveauSolde: response.nouveauSolde,
     statutPaiement: response.statutPaiement,
     datePaiement: response.datePaiement,
+    cashRecorded: response.cashRecorded === true,
+    cashStatus:
+      response.cashStatus === "RECORDED" ||
+      response.cashStatus === "ACCOUNT_NOT_ACTIVE"
+        ? response.cashStatus
+        : undefined,
     replayed: response.replayed === true
   };
 }

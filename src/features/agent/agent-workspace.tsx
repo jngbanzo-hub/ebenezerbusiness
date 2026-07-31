@@ -201,7 +201,10 @@ export function AgentWorkspace() {
       paymentAttemptRef.current = null;
       setMessage({
         type: "success",
-        text: "Paiement enregistré avec succès.",
+        text:
+          result.cashStatus === "ACCOUNT_NOT_ACTIVE"
+            ? "Paiement enregistré avec succès. La caisse de l’agence n’est pas encore ouverte ; aucun mouvement de caisse n’a été créé."
+            : "Paiement enregistré avec succès.",
         details: [
           `Montant payé : ${formatAmount(result.montantPaye)}`,
           `Nouveau total payé : ${formatAmount(result.nouveauTotalPaye)}`,

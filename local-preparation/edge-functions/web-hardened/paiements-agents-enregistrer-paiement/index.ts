@@ -46,6 +46,8 @@ type PublicPaymentResponse = {
   nouveauSolde: number;
   statutPaiement: "SOLDE" | "PARTIELLEMENT PAYE";
   datePaiement: string;
+  cashRecorded?: boolean;
+  cashStatus?: "RECORDED" | "ACCOUNT_NOT_ACTIVE";
   replayed?: boolean;
 };
 
@@ -361,6 +363,14 @@ Deno.serve(async (request: Request): Promise<Response> => {
           p_payment_request_id: paymentInput.paymentRequestId,
         });
         if (credit.error) {
+          if (String(credit.error.message).includes("CASH_ACCOUNT_NOT_ACTIVE")) {
+            return jsonResponse({
+              ...publicPayment,
+              cashRecorded: false,
+              cashStatus: "ACCOUNT_NOT_ACTIVE",
+              replayed: false,
+            }, 200);
+          }
           return errorResponse(
             String(credit.error.message).includes("IDEMPOTENCY_CONFLICT")
               ? "IDEMPOTENCY_CONFLICT"
@@ -371,7 +381,12 @@ Deno.serve(async (request: Request): Promise<Response> => {
           );
         }
         const replayed = isRecord(credit.data) && credit.data.replayed === true;
-        return jsonResponse({ ...publicPayment, replayed }, 200);
+        return jsonResponse({
+          ...publicPayment,
+          cashRecorded: true,
+          cashStatus: "RECORDED",
+          replayed,
+        }, 200);
       }
 
       // COO reste volontairement hors caisse canonique.

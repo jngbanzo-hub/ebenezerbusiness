@@ -29,7 +29,10 @@ export type ExpenseDebitWriter = (input: Readonly<{
 
 export class CashExpenseDebitError extends Error {
   constructor(
-    readonly code: "IDEMPOTENCY_CONFLICT" | "CASH_SERVICE_UNAVAILABLE",
+    readonly code:
+      | "IDEMPOTENCY_CONFLICT"
+      | "CASH_ACCOUNT_NOT_ACTIVE"
+      | "CASH_SERVICE_UNAVAILABLE",
     readonly status: 409 | 503
   ) {
     super(code);
@@ -84,29 +87,50 @@ export async function attachConfirmedExpenseDebit(
     observation: expense.observation
   });
   const writer = options.writer ?? createSupabaseExpenseDebitWriter();
-  const debit = await writer({
-    actorName: identity.nom,
-    actorUserId: identity.userId,
-    agency: identity.site,
-    allowCreate: upstreamResult.code === "DEPENSE_ENREGISTREE",
-    amount: expense.amount,
-    businessDate: businessDateInPortoNovo(new Date(occurredAt)),
-    category: expense.category,
-    commandFingerprint,
-    expenseReference: expense.expenseRequestId,
-    expenseRequestId: expense.expenseRequestId,
-    metadata: {
+  let debit: ExpenseDebitResult;
+  try {
+    debit = await writer({
+      actorName: identity.nom,
+      actorUserId: identity.userId,
+      agency: identity.site,
+      allowCreate: upstreamResult.code === "DEPENSE_ENREGISTREE",
+      amount: expense.amount,
+      businessDate: businessDateInPortoNovo(new Date(occurredAt)),
       category: expense.category,
-      description: expense.description,
-      modePaiement: expense.modePaiement,
-      observation: expense.observation,
-      reference: expense.reference,
-      source: "DEPENSES_PUBLIC"
-    },
-    occurredAt
-  });
+      commandFingerprint,
+      expenseReference: expense.expenseRequestId,
+      expenseRequestId: expense.expenseRequestId,
+      metadata: {
+        category: expense.category,
+        description: expense.description,
+        modePaiement: expense.modePaiement,
+        observation: expense.observation,
+        reference: expense.reference,
+        source: "DEPENSES_PUBLIC"
+      },
+      occurredAt
+    });
+  } catch (error) {
+    if (
+      error instanceof CashExpenseDebitError &&
+      error.code === "CASH_ACCOUNT_NOT_ACTIVE"
+    ) {
+      return {
+        ...upstreamResult,
+        cashRecorded: false,
+        cashStatus: "ACCOUNT_NOT_ACTIVE",
+        replayed: false
+      };
+    }
+    throw error;
+  }
 
-  return { ...upstreamResult, replayed: debit.replayed };
+  return {
+    ...upstreamResult,
+    cashRecorded: true,
+    cashStatus: "RECORDED",
+    replayed: debit.replayed
+  };
 }
 
 function createSupabaseExpenseDebitWriter(): ExpenseDebitWriter {
@@ -135,6 +159,9 @@ function createSupabaseExpenseDebitWriter(): ExpenseDebitWriter {
       p_occurred_at: input.occurredAt
     });
     if (error) {
+      if (String(error.message).includes("CASH_ACCOUNT_NOT_ACTIVE")) {
+        throw new CashExpenseDebitError("CASH_ACCOUNT_NOT_ACTIVE", 503);
+      }
       if (String(error.message).includes("IDEMPOTENCY_CONFLICT")) {
         throw new CashExpenseDebitError("IDEMPOTENCY_CONFLICT", 409);
       }
