@@ -5,3 +5,4 @@ test("couvre ajustement correction clôture et réouverture",()=>{for(const valu
 test("exclut COO et exige un compte actif",()=>{assert.match(sql,/p_agency not in \('FIH','LSHI','KLZ'\)/);assert.match(sql,/v_account\.status <> 'ACTIVE'/);});
 test("préserve historique et audit",()=>{assert.doesNotMatch(sql,/update public\.cash_events|delete from public\.cash_/i);assert.match(sql,/previousAmount/);assert.match(sql,/newAmount/);assert.match(sql,/public\.cash_admin_audit/);});
 test("idempotence et formule officielle",()=>{assert.match(sql,/IDEMPOTENCY_CONFLICT/);assert.match(sql,/v_opening\+v_payments-v_expenses\+v_corrections/);assert.match(sql,/status='CLOSED'/);});
+test("qualifie digest dans le schéma extensions avec search_path restreint",()=>{assert.match(sql,/extensions\.digest/);assert.doesNotMatch(sql,/(?<!extensions\.)digest\(/);});

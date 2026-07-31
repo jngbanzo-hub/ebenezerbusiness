@@ -41,11 +41,11 @@ begin
 
   select * into v_account from public.cash_accounts where agency = p_agency for update;
   if not found or v_account.status <> 'ACTIVE' then raise exception 'ACCOUNT_NOT_ACTIVE'; end if;
-  v_audit_id := 'cash-audit-' || encode(digest(p_admin_user_id::text || ':' || p_request_id, 'sha256'),'hex');
+  v_audit_id := 'cash-audit-' || encode(extensions.digest(p_admin_user_id::text || ':' || p_request_id, 'sha256'),'hex');
 
   if p_action = 'ADJUSTMENT' then
     if p_amount is null or p_amount <= 0 or p_direction not in ('CREDIT','DEBIT') then raise exception 'INVALID_COMMAND'; end if;
-    v_event_id := 'cash-adjust-' || encode(digest(p_admin_user_id::text || ':' || p_request_id, 'sha256'),'hex');
+    v_event_id := 'cash-adjust-' || encode(extensions.digest(p_admin_user_id::text || ':' || p_request_id, 'sha256'),'hex');
     insert into public.cash_events values (v_event_id,v_account.id,p_agency,p_business_date,clock_timestamp(),'ADMIN_ADJUSTMENT_RECORDED',p_direction,p_amount,'USD','ADMIN',v_event_id,p_request_id,p_admin_user_id,p_admin_name,null,p_reason,v_account.version,v_account.version+1,jsonb_build_object('commandFingerprint',p_fingerprint),clock_timestamp());
     update public.cash_accounts set version = version + 1 where id = v_account.id;
     insert into public.cash_admin_audit values (v_audit_id,p_agency,'ADMIN_ADJUSTMENT_RECORDED','CASH_EVENT',v_event_id,null,jsonb_build_object('amount',p_amount,'direction',p_direction),p_reason,p_admin_user_id,p_admin_name,clock_timestamp(),p_request_id,jsonb_build_object('commandFingerprint',p_fingerprint),clock_timestamp());
@@ -55,7 +55,7 @@ begin
     v_old := v_target.amount;
     v_delta := (case when v_target.direction='CREDIT' then 1 else -1 end) * (p_amount-v_old);
     if v_delta = 0 then raise exception 'INVALID_COMMAND'; end if;
-    v_event_id := 'cash-correction-' || encode(digest(p_admin_user_id::text || ':' || p_request_id, 'sha256'),'hex');
+    v_event_id := 'cash-correction-' || encode(extensions.digest(p_admin_user_id::text || ':' || p_request_id, 'sha256'),'hex');
     insert into public.cash_events values (v_event_id,v_account.id,p_agency,p_business_date,clock_timestamp(),'CASH_CORRECTION_RECORDED',case when v_delta>0 then 'CREDIT' else 'DEBIT' end,abs(v_delta),'USD','ADMIN_CORRECTION',p_target_event_id,p_request_id,p_admin_user_id,p_admin_name,p_target_event_id,p_reason,v_account.version,v_account.version+1,jsonb_build_object('commandFingerprint',p_fingerprint,'previousAmount',v_old,'newAmount',p_amount),clock_timestamp());
     update public.cash_accounts set version = version + 1 where id = v_account.id;
     insert into public.cash_admin_audit values (v_audit_id,p_agency,'CASH_CORRECTION_RECORDED','CASH_EVENT',v_event_id,jsonb_build_object('eventId',p_target_event_id,'amount',v_old),jsonb_build_object('eventId',v_event_id,'amount',p_amount,'difference',v_delta),p_reason,p_admin_user_id,p_admin_name,clock_timestamp(),p_request_id,jsonb_build_object('commandFingerprint',p_fingerprint),clock_timestamp());
@@ -66,14 +66,14 @@ begin
     v_balance := v_opening+v_payments-v_expenses+v_corrections;
     if v_balance < 0 then raise exception 'NEGATIVE_CASH_BALANCE'; end if;
     v_version := coalesce((select max(version) from public.cash_daily_closures where cash_account_id=v_account.id and business_date=p_business_date),0)+1;
-    v_event_id := coalesce(nullif(p_closure_id,''),'cash-close-' || encode(digest(p_admin_user_id::text || ':' || p_request_id,'sha256'),'hex'));
+    v_event_id := coalesce(nullif(p_closure_id,''),'cash-close-' || encode(extensions.digest(p_admin_user_id::text || ':' || p_request_id,'sha256'),'hex'));
     insert into public.cash_daily_closures values(v_event_id,v_account.id,p_agency,p_business_date,v_opening,v_payments,v_expenses,v_corrections,v_balance,'CLOSED',v_version,null,p_admin_user_id,p_admin_name,clock_timestamp(),null,null,null,v_audit_id,clock_timestamp());
     insert into public.cash_admin_audit values(v_audit_id,p_agency,'CASH_DAY_CLOSED','DAILY_CLOSURE',v_event_id,null,jsonb_build_object('openingBalance',v_opening,'paymentsTotal',v_payments,'expensesTotal',v_expenses,'correctionsNet',v_corrections,'closingBalance',v_balance),p_reason,p_admin_user_id,p_admin_name,clock_timestamp(),p_request_id,jsonb_build_object('commandFingerprint',p_fingerprint),clock_timestamp());
   else
     select * into v_closed from public.cash_daily_closures where closure_id=p_closure_id and agency=p_agency and status='CLOSED';
     if not found then raise exception 'CLOSURE_NOT_FOUND'; end if;
     v_version := (select coalesce(max(version),0)+1 from public.cash_daily_closures where cash_account_id=v_account.id and business_date=v_closed.business_date);
-    v_event_id := 'cash-reopen-' || encode(digest(p_admin_user_id::text || ':' || p_request_id,'sha256'),'hex');
+    v_event_id := 'cash-reopen-' || encode(extensions.digest(p_admin_user_id::text || ':' || p_request_id,'sha256'),'hex');
     insert into public.cash_daily_closures values(v_event_id,v_account.id,p_agency,v_closed.business_date,v_closed.opening_balance,v_closed.payments_total,v_closed.expenses_total,v_closed.corrections_net,v_closed.closing_balance,'REOPENED',v_version,v_closed.closure_id,p_admin_user_id,p_admin_name,v_closed.closed_at,clock_timestamp(),p_admin_user_id,p_reason,v_audit_id,clock_timestamp());
     insert into public.cash_admin_audit values(v_audit_id,p_agency,'CASH_DAY_REOPENED','DAILY_CLOSURE',v_event_id,jsonb_build_object('closureId',v_closed.closure_id,'status','CLOSED'),jsonb_build_object('closureId',v_event_id,'status','REOPENED','version',v_version),p_reason,p_admin_user_id,p_admin_name,clock_timestamp(),p_request_id,jsonb_build_object('commandFingerprint',p_fingerprint),clock_timestamp());
   end if;
