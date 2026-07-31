@@ -73,7 +73,7 @@ begin
   end if;
 
   v_event_id := 'cash-payment-' || encode(
-    extensions.digest(p_agency || E'\000' || lower(btrim(p_payment_request_id)), 'sha256'),
+    extensions.digest(p_agency || ':' || lower(btrim(p_payment_request_id)), 'sha256'),
     'hex'
   );
   v_metadata := coalesce(p_metadata, '{}'::jsonb) || jsonb_build_object(

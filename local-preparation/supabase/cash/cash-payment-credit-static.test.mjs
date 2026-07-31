@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 
 const root = new URL("./", import.meta.url);
@@ -18,6 +19,31 @@ test("un seul crédit par requestId et par colis", () => {
   assert.match(migration, /IDEMPOTENCY_CONFLICT/);
   assert.match(migration, /PAYMENT_ALREADY_CREDITED/);
   assert.match(migration, /PAYMENT_CREDIT_RECORDED/);
+});
+
+test("eventId utilise un séparateur textuel sûr et reste déterministe", () => {
+  assert.match(
+    migration,
+    /extensions\.digest\(p_agency \|\| ':' \|\| lower\(btrim\(p_payment_request_id\)\), 'sha256'\)/i,
+  );
+
+  const input = "LSHI:123e4567-e89b-42d3-a456-426614174000";
+  const eventId = () => `cash-payment-${createHash("sha256").update(input).digest("hex")}`;
+  assert.equal(eventId(), eventId());
+  assert.notEqual(
+    eventId(),
+    `cash-payment-${createHash("sha256").update(`FIH:${input.slice(5)}`).digest("hex")}`,
+  );
+});
+
+test("aucun script SQL Caisse ne contient de représentation d'octet NUL", async () => {
+  const sqlFiles = (await readdir(root)).filter((name) => name.endsWith(".sql"));
+  for (const name of sqlFiles) {
+    const sql = await readFile(new URL(name, root), "utf8");
+    assert.equal(sql.includes("E'\\000'"), false, `${name}: E'\\000' interdit`);
+    assert.equal(sql.includes("\\x00"), false, `${name}: \\x00 interdit`);
+    assert.equal(sql.includes("\0"), false, `${name}: octet NUL interdit`);
+  }
 });
 
 test("COO est exclu et USD reste canonique", () => {
