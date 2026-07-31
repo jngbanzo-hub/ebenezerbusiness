@@ -4,12 +4,14 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  BarChart3,
   Banknote,
   ArrowRightLeft,
   Boxes,
   Building2,
   CalendarDays,
   CircleAlert,
+  ClipboardList,
   CreditCard,
   LoaderCircle,
   LogOut,
@@ -69,7 +71,17 @@ const PERIOD_OPTIONS: Array<{ value: AdminPeriodPreset; label: string }> = [
 const fieldClassName =
   "mt-2 h-11 w-full rounded-md border border-white/15 bg-white/[0.05] px-3 text-white outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/25";
 
-export function AdminWorkspace() {
+export type AdminWorkspaceModule = "home" | "payments" | "cash" | "expenses" | "shippers";
+
+const MODULE_TITLES: Record<AdminWorkspaceModule, string> = {
+  home: "Tableau de bord Admin",
+  payments: "Encaissements",
+  cash: "Caisse",
+  expenses: "Dépenses",
+  shippers: "Statistiques par expéditeur"
+};
+
+export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceModule }) {
   const router = useRouter();
   const accessTokenRef = useRef("");
   const [profile, setProfile] = useState<AdminProfile | null>(null);
@@ -121,6 +133,7 @@ export function AdminWorkspace() {
     () => calculateAdminPaymentsSummary(filteredPayments),
     [filteredPayments]
   );
+  const agentSummary = useMemo(() => summarizePaymentsByAgent(filteredPayments), [filteredPayments]);
 
   useEffect(() => {
     let active = true;
@@ -170,7 +183,7 @@ export function AdminWorkspace() {
   }, [router]);
 
   useEffect(() => {
-    if (!profile || !isRangeValid || !accessTokenRef.current) {
+    if (module !== "payments" || !profile || !isRangeValid || !accessTokenRef.current) {
       return;
     }
 
@@ -231,6 +244,7 @@ export function AdminWorkspace() {
     };
   }, [
     isRangeValid,
+    module,
     profile,
     selectedRange.endDate,
     selectedRange.startDate
@@ -270,24 +284,13 @@ export function AdminWorkspace() {
         <header className="flex flex-col gap-5 border-b border-white/10 pb-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <Badge variant="growth">Administration</Badge>
-            <h1 className="mt-3 text-3xl font-semibold">Tableau de bord des encaissements</h1>
+            <h1 className="mt-3 text-3xl font-semibold">{MODULE_TITLES[module]}</h1>
             <p className="mt-2 text-sm text-muted-foreground">
               Consultation en lecture seule — {profile.nom}
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <Button asChild type="button" variant="outline">
-              <Link href="/admin/transferts">
-                <ArrowRightLeft className="h-4 w-4" />
-                Transferts
-              </Link>
-            </Button>
-            <Button asChild type="button" variant="outline">
-              <Link href="/admin/stockages">
-                <Boxes className="h-4 w-4" />
-                Stockages
-              </Link>
-            </Button>
+            {module !== "home" ? <Button asChild type="button" variant="outline"><Link href="/admin">Retour au tableau de bord Admin</Link></Button> : null}
             <Button type="button" variant="outline" onClick={handleSignOut}>
               <LogOut className="h-4 w-4" />
               Se déconnecter
@@ -295,6 +298,11 @@ export function AdminWorkspace() {
           </div>
         </header>
 
+        {module === "home" ? <AdminModuleGrid /> : null}
+        {module === "cash" ? <><CashOpeningBalanceSection accessToken={accessTokenRef.current} /><AdminCashDashboardView accessToken={accessTokenRef.current} /><CashAdminControls accessToken={accessTokenRef.current} /></> : null}
+        {module === "shippers" ? <ShipperStatisticsSection accessToken={accessTokenRef.current} /> : null}
+        {module === "expenses" ? <AdminExpensesModule /> : null}
+        {module === "payments" ? <>
         <GlassPanel className="mt-8 p-5 sm:p-6">
           <div className="flex items-center gap-3">
             <div className="grid h-10 w-10 place-items-center rounded-lg border border-primary/25 bg-primary/15 text-[#AFC7FF]">
@@ -453,9 +461,6 @@ export function AdminWorkspace() {
           />
         ) : (
           <>
-            <CashOpeningBalanceSection accessToken={accessTokenRef.current} />
-            <AdminCashDashboardView accessToken={accessTokenRef.current} />
-            <CashAdminControls accessToken={accessTokenRef.current} />
             <section className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               {ADMIN_SITES.map((site) => (
                 <StatsCard
@@ -465,6 +470,12 @@ export function AdminWorkspace() {
                 />
               ))}
             </section>
+
+            <GlassPanel className="mt-4 p-5 sm:p-6">
+              <h2 className="text-xl font-semibold">Statistiques par agent</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Détail des encaissements, consolidé dans une caisse unique par agence.</p>
+              {agentSummary.length ? <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{agentSummary.map((agent) => <div key={`${agent.agency}:${agent.name}`} className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><p className="font-semibold">{agent.name}</p><p className="mt-1 text-xs text-muted-foreground">{agent.agency}</p><p className="mt-3 text-sm">{agent.count} paiement{agent.count === 1 ? "" : "s"} · {formatAdminAmount(agent.amount)}</p></div>)}</div> : <p className="mt-4 text-sm text-muted-foreground">Aucun encaissement pour les filtres sélectionnés.</p>}
+            </GlassPanel>
 
             <GlassPanel className="mt-4 p-5 sm:p-6" glow="growth">
               <div className="flex items-center gap-3">
@@ -533,13 +544,42 @@ export function AdminWorkspace() {
                 <PaymentsTable payments={filteredPayments} />
               )}
             </GlassPanel>
-
-            <ShipperStatisticsSection accessToken={accessTokenRef.current} />
           </>
         )}
+        </> : null}
       </Container>
     </main>
   );
+}
+
+const ADMIN_MODULES = [
+  { title: "Encaissements", description: "Consultez les paiements, filtres, totaux et statistiques par agent.", href: "/admin/encaissements", icon: CreditCard },
+  { title: "Caisse", description: "Supervisez les caisses FIH, LSHI et KLZ et leurs contrôles Admin.", href: "/admin/caisse", icon: Banknote },
+  { title: "Dépenses", description: "Accédez au module Dépenses sans le mélanger aux opérations de Caisse.", href: "/admin/depenses", icon: ClipboardList },
+  { title: "Stockages", description: "Consultez les mouvements, états et audits du module Stockages.", href: "/admin/stockages", icon: Boxes },
+  { title: "Transferts", description: "Supervisez le module Transferts dans son périmètre totalement isolé.", href: "/admin/transferts", icon: ArrowRightLeft },
+  { title: "Statistiques par expéditeur", description: "Interrogez MANIFESTE PUBLIC en lecture seule par période et circuit.", href: "/admin/statistiques-expediteurs", icon: BarChart3 }
+] as const;
+
+function AdminModuleGrid() {
+  return <section className="mt-8"><div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{ADMIN_MODULES.map(({title,description,href,icon:Icon}) => <GlassPanel key={href} className="flex min-h-56 flex-col p-6"><div className="grid h-12 w-12 place-items-center rounded-xl border border-primary/25 bg-primary/15 text-[#AFC7FF]"><Icon className="h-6 w-6" /></div><h2 className="mt-5 text-xl font-semibold">{title}</h2><p className="mt-2 flex-1 text-sm text-muted-foreground">{description}</p><Button asChild className="mt-6 w-full sm:w-auto"><Link href={href}>Accéder au module</Link></Button></GlassPanel>)}</div></section>;
+}
+
+function AdminExpensesModule() {
+  return <GlassPanel className="mt-8 p-6"><div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-lg border border-primary/25 bg-primary/15 text-[#AFC7FF]"><ClipboardList className="h-5 w-5" /></div><div><h2 className="text-xl font-semibold">Module Dépenses</h2><p className="text-sm text-muted-foreground">Périmètre distinct de la Caisse.</p></div></div><p className="mt-5 text-sm text-muted-foreground">Les dépenses restent enregistrées et validées dans le module Dépenses existant. La Caisse consulte uniquement les débits USD confirmés, sans formulaire Dépenses sur sa page.</p></GlassPanel>;
+}
+
+function summarizePaymentsByAgent(payments: AdminPayment[]) {
+  const rows = new Map<string, { agency: AdminSite; name: string; count: number; amount: number }>();
+  for (const payment of payments) {
+    const name = payment.agent || "Agent non renseigné";
+    const key = `${payment.agenceEncaissement}:${name}`;
+    const current = rows.get(key) ?? { agency: payment.agenceEncaissement, name, count: 0, amount: 0 };
+    current.count += 1;
+    current.amount = Math.round((current.amount + payment.montantPaye) * 100) / 100;
+    rows.set(key, current);
+  }
+  return Array.from(rows.values()).sort((left, right) => left.agency.localeCompare(right.agency) || left.name.localeCompare(right.name));
 }
 
 function StatsCard({

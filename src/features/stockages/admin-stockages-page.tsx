@@ -10,6 +10,7 @@ import {
   History,
   LoaderCircle,
   LockKeyhole,
+  LogOut,
   ShieldCheck
 } from "lucide-react";
 
@@ -152,6 +153,12 @@ export function AdminStockagesPage() {
     }
   }
 
+  async function handleSignOut() {
+    await signOutAgent();
+    router.replace("/auth/sign-in");
+    router.refresh();
+  }
+
   return (
     <main className="min-h-screen bg-ebe-night py-8 text-white sm:py-12">
       <Container>
@@ -165,9 +172,7 @@ export function AdminStockagesPage() {
               Activation prévue le 03/08/2026 à 07:00 · Africa/Porto-Novo
             </p>
           </div>
-          <Button asChild type="button" variant="outline">
-            <Link href="/admin">Retour à l’administration</Link>
-          </Button>
+          <div className="flex flex-wrap gap-3"><Button asChild type="button" variant="outline"><Link href="/admin">Retour au tableau de bord Admin</Link></Button><Button type="button" variant="outline" onClick={handleSignOut}><LogOut className="h-4 w-4" />Se déconnecter</Button></div>
         </header>
 
         {error ? (

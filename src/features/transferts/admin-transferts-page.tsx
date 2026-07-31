@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BarChart3, LoaderCircle, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { BarChart3, LoaderCircle, LogOut, ShieldCheck, SlidersHorizontal } from "lucide-react";
 
 import { Container, GlassPanel } from "@/components/design-system";
 import { Badge } from "@/components/ui/badge";
@@ -136,6 +136,12 @@ export function AdminTransfertsPage() {
     return () => { active = false; controller.abort(); };
   }, [agencyFrom, agencyTo, authorized, circuit, currency, dateFrom, dateTo, filters, period, reloadKey, router, status, transferId]);
 
+  async function handleSignOut() {
+    await signOutAgent();
+    router.replace("/auth/sign-in");
+    router.refresh();
+  }
+
   if (!authorized) {
     return (
       <main className="grid min-h-screen place-items-center bg-ebe-night px-4 text-white">
@@ -161,7 +167,7 @@ export function AdminTransfertsPage() {
               Statistiques calculées côté serveur — fuseau Africa/Porto-Novo.
             </p>
           </div>
-          <Button asChild variant="outline"><Link href="/admin">Retour à l’administration</Link></Button>
+          <div className="flex flex-wrap gap-3"><Button asChild variant="outline"><Link href="/admin">Retour au tableau de bord Admin</Link></Button><Button type="button" variant="outline" onClick={handleSignOut}><LogOut className="h-4 w-4" />Se déconnecter</Button></div>
         </header>
 
         <section className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
