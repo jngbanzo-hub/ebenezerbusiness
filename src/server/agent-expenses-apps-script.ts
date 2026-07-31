@@ -1,5 +1,7 @@
 import "server-only";
 
+import { z } from "zod";
+
 import type { AuthorizedAgentIdentity } from "@/server/agent-authorization";
 import {
   attachConfirmedExpenseDebit,
@@ -10,6 +12,72 @@ const AGENT_EXPENSE_ACTIONS = [
   "ENREGISTRER_DEPENSE",
   "DEMANDER_CORRECTION"
 ] as const;
+
+const adminExpenseFiltersSchema = z.object({
+  dateDebut: z.string().date().optional(),
+  dateFin: z.string().date().optional(),
+  agence: z.enum(["COO", "FIH", "LSHI", "KLZ"]).optional(),
+  categorie: z.string().trim().min(1).max(200).optional(),
+  devise: z.enum(["USD", "FCFA", "CDF"]).optional(),
+  agent: z.string().trim().max(200).optional(),
+  statut: z.enum(["ACTIVE", "CORRECTION_DEMANDEE", "CORRIGEE", "ANNULEE"]).optional(),
+  reference: z.string().trim().max(200).optional(),
+  page: z.number().int().positive().default(1),
+  pageSize: z.number().int().min(1).max(100).default(50)
+}).refine(
+  (filters) => !filters.dateDebut || !filters.dateFin || filters.dateDebut <= filters.dateFin,
+  "Période invalide."
+);
+
+const adminExpenseSchema = z.object({
+  id: z.string().uuid(),
+  expenseRequestId: z.string().uuid(),
+  date: z.string().date(),
+  dateHeure: z.string().datetime({ offset: true }),
+  agence: z.enum(["COO", "FIH", "LSHI", "KLZ"]),
+  categorie: z.string(),
+  montant: z.number().positive(),
+  devise: z.enum(["USD", "FCFA", "CDF"]),
+  description: z.string(),
+  observation: z.string(),
+  agent: z.string(),
+  statut: z.enum(["ACTIVE", "CORRECTION_DEMANDEE", "CORRIGEE", "ANNULEE"]),
+  reference: z.string(),
+  dateCreation: z.string().datetime({ offset: true }),
+  dateMiseAJour: z.string().datetime({ offset: true }),
+  annulee: z.boolean(),
+  corrigee: z.boolean()
+});
+
+const currencyTotalsSchema = z.record(z.number().nonnegative());
+const groupedTotalsSchema = z.record(currencyTotalsSchema);
+const adminExpenseResponseSchema = z.object({
+  success: z.literal(true),
+  code: z.literal("DEPENSES_ADMIN_LISTEES"),
+  lectureSeule: z.literal(true),
+  depenses: z.array(adminExpenseSchema),
+  pagination: z.object({
+    page: z.number().int().positive(),
+    pageSize: z.number().int().min(1).max(100),
+    total: z.number().int().nonnegative(),
+    totalPages: z.number().int().nonnegative()
+  }),
+  totaux: z.object({
+    nombreDepenses: z.number().int().nonnegative(),
+    parDevise: currencyTotalsSchema,
+    parAgence: groupedTotalsSchema,
+    parCategorie: groupedTotalsSchema
+  })
+});
+
+export type AdminExpenseFilters = z.input<typeof adminExpenseFiltersSchema>;
+export type AdminExpenseListResponse = z.infer<typeof adminExpenseResponseSchema>;
+
+type AdminExpenseIdentity = Readonly<{
+  userId: string;
+  email: string;
+  agency: "COO" | "FIH" | "LSHI" | "KLZ" | null;
+}>;
 
 type AgentExpenseAction = (typeof AGENT_EXPENSE_ACTIONS)[number];
 
@@ -51,6 +119,51 @@ export class AgentExpenseRequestError extends Error {
   constructor(message: string, readonly status = 400) {
     super(message);
     this.name = "AgentExpenseRequestError";
+  }
+}
+
+export async function readAdminExpenses(
+  identity: AdminExpenseIdentity,
+  value: AdminExpenseFilters,
+  fetchImpl: typeof fetch = fetch
+): Promise<AdminExpenseListResponse> {
+  const filters = adminExpenseFiltersSchema.parse(value);
+  const { url, apiKey } = readExpensesAppsScriptConfiguration();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+
+  try {
+    const response = await fetchImpl(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        apiKey,
+        action: "LISTER_DEPENSES_ADMIN",
+        acteur: {
+          id: identity.userId,
+          nom: identity.email,
+          role: "ADMIN",
+          actif: true,
+          agence: identity.agency ?? ""
+        },
+        donnees: filters
+      }),
+      cache: "no-store",
+      redirect: "follow",
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error("Le service Dépenses a refusé la lecture Admin.");
+    }
+    const payload: unknown = await response.json();
+    const parsed = adminExpenseResponseSchema.safeParse(payload);
+    if (!parsed.success) {
+      throw new Error("Réponse Admin Dépenses invalide.");
+    }
+    return parsed.data;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

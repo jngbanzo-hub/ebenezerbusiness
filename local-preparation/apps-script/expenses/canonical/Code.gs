@@ -1416,6 +1416,13 @@ function doPost(e) {
     const acteur = validerActeurServeur_(body.acteur);
     const donnees = body.donnees || {};
 
+    if (action === 'LISTER_DEPENSES_ADMIN') {
+      exigerRoleDepenses_(acteur, 'ADMIN');
+      return reponseJsonDepenses_(
+        listerDepensesAdmin_(donnees)
+      );
+    }
+
     if (action === 'ENREGISTRER_DEPENSE') {
       exigerRoleDepenses_(acteur, 'AGENT');
       return reponseJsonDepenses_(
@@ -1457,6 +1464,267 @@ function doPost(e) {
         'Une erreur interne est survenue.'
     });
   }
+}
+
+/**
+ * Lecture Admin paginée. Cette fonction ne prend aucun verrou et n'appelle
+ * aucune primitive d'écriture Google Sheets.
+ */
+function listerDepensesAdmin_(donnees) {
+  validerProprietesObjet_(
+    donnees,
+    [
+      'dateDebut',
+      'dateFin',
+      'agence',
+      'categorie',
+      'devise',
+      'agent',
+      'statut',
+      'reference',
+      'page',
+      'pageSize'
+    ],
+    'FILTRES_ADMIN_INVALIDES'
+  );
+
+  const filtres = validerFiltresDepensesAdmin_(donnees);
+  const classeur = SpreadsheetApp.getActiveSpreadsheet();
+  const resultats = [];
+
+  CONFIG_DEPENSES.feuillesAgences.forEach(function(agence) {
+    if (filtres.agence && filtres.agence !== agence) {
+      return;
+    }
+
+    const feuille = classeur.getSheetByName(agence);
+    if (!feuille || feuille.getLastRow() < 2) {
+      return;
+    }
+
+    const lignes = feuille
+      .getRange(
+        2,
+        1,
+        feuille.getLastRow() - 1,
+        CONFIG_DEPENSES.entetes.length
+      )
+      .getValues();
+
+    lignes.forEach(function(ligne) {
+      const depense = convertirLigneDepenseAdmin_(ligne, agence);
+      if (depense && correspondFiltresDepensesAdmin_(depense, filtres)) {
+        resultats.push(depense);
+      }
+    });
+  });
+
+  resultats.sort(function(a, b) {
+    if (a.dateHeure !== b.dateHeure) {
+      return b.dateHeure.localeCompare(a.dateHeure);
+    }
+    return a.expenseRequestId.localeCompare(b.expenseRequestId);
+  });
+
+  const total = resultats.length;
+  const totalPages = total === 0 ? 0 : Math.ceil(total / filtres.pageSize);
+  const debut = (filtres.page - 1) * filtres.pageSize;
+
+  return {
+    success: true,
+    code: 'DEPENSES_ADMIN_LISTEES',
+    lectureSeule: true,
+    depenses: resultats.slice(debut, debut + filtres.pageSize),
+    pagination: {
+      page: filtres.page,
+      pageSize: filtres.pageSize,
+      total: total,
+      totalPages: totalPages
+    },
+    totaux: calculerTotauxDepensesAdmin_(resultats)
+  };
+}
+
+function validerFiltresDepensesAdmin_(donnees) {
+  const dateDebut = validerDateFiltreDepensesAdmin_(
+    donnees.dateDebut,
+    'DATE_DEBUT_INVALIDE'
+  );
+  const dateFin = validerDateFiltreDepensesAdmin_(
+    donnees.dateFin,
+    'DATE_FIN_INVALIDE'
+  );
+
+  if (dateDebut && dateFin && dateDebut > dateFin) {
+    throw erreurDepenses_(
+      'PERIODE_INVALIDE',
+      'La période est invalide.'
+    );
+  }
+
+  const agence = validerFiltreConfigureDepensesAdmin_(
+    donnees.agence,
+    CONFIG_DEPENSES.feuillesAgences,
+    'AGENCE_INVALIDE'
+  );
+  const categorie = validerFiltreConfigureDepensesAdmin_(
+    donnees.categorie,
+    CONFIG_DEPENSES.categories,
+    'CATEGORIE_INVALIDE'
+  );
+  const devise = validerFiltreConfigureDepensesAdmin_(
+    donnees.devise,
+    CONFIG_DEPENSES.devises,
+    'DEVISE_INVALIDE'
+  );
+  const statut = validerFiltreConfigureDepensesAdmin_(
+    donnees.statut,
+    CONFIG_DEPENSES.statuts,
+    'STATUT_INVALIDE'
+  );
+  const page = donnees.page === undefined ? 1 : Number(donnees.page);
+  const pageSize = donnees.pageSize === undefined
+    ? 50
+    : Number(donnees.pageSize);
+
+  if (!Number.isInteger(page) || page < 1) {
+    throw erreurDepenses_('PAGE_INVALIDE', 'Page invalide.');
+  }
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    throw erreurDepenses_(
+      'PAGE_SIZE_INVALIDE',
+      'La taille de page doit être comprise entre 1 et 100.'
+    );
+  }
+
+  return {
+    dateDebut: dateDebut,
+    dateFin: dateFin,
+    agence: agence,
+    categorie: categorie,
+    devise: devise,
+    agent: validerTexteMetierDepenses_(
+      donnees.agent,
+      'AGENT_INVALIDE',
+      200,
+      true
+    ).toUpperCase(),
+    statut: statut,
+    reference: validerTexteMetierDepenses_(
+      donnees.reference,
+      'REFERENCE_INVALIDE',
+      200,
+      true
+    ).toUpperCase(),
+    page: page,
+    pageSize: pageSize
+  };
+}
+
+function validerDateFiltreDepensesAdmin_(valeur, codeErreur) {
+  if (valeur === undefined || valeur === null || valeur === '') {
+    return '';
+  }
+  const texte = String(valeur).trim();
+  const correspondance = texte.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!correspondance) {
+    throw erreurDepenses_(codeErreur, 'Date invalide.');
+  }
+  const date = new Date(
+    Number(correspondance[1]),
+    Number(correspondance[2]) - 1,
+    Number(correspondance[3])
+  );
+  if (
+    date.getFullYear() !== Number(correspondance[1]) ||
+    date.getMonth() !== Number(correspondance[2]) - 1 ||
+    date.getDate() !== Number(correspondance[3])
+  ) {
+    throw erreurDepenses_(codeErreur, 'Date invalide.');
+  }
+  return texte;
+}
+
+function validerFiltreConfigureDepensesAdmin_(valeur, valeurs, codeErreur) {
+  const filtre = normaliserTexte_(valeur);
+  if (!filtre || filtre === 'ALL') {
+    return '';
+  }
+  for (let index = 0; index < valeurs.length; index++) {
+    if (normaliserTexte_(valeurs[index]) === filtre) {
+      return valeurs[index];
+    }
+  }
+  throw erreurDepenses_(codeErreur, 'Valeur de filtre invalide.');
+}
+
+function convertirLigneDepenseAdmin_(ligne, agence) {
+  const date = analyserDateDepense_(ligne[0]);
+  const expenseRequestId = normaliserUuidDepenses_(ligne[1]);
+  const montant = analyserMontantDepense_(ligne[5]);
+  if (!date || !expenseRequestId || montant === null) {
+    return null;
+  }
+  const statut = normaliserTexte_(ligne[11]);
+  const dateMiseAJour = analyserDateDepense_(ligne[19]) ||
+    analyserDateDepense_(ligne[17]) || date;
+  return {
+    id: expenseRequestId,
+    expenseRequestId: expenseRequestId,
+    date: Utilities.formatDate(date, CONFIG_DEPENSES.fuseauHoraire, 'yyyy-MM-dd'),
+    dateHeure: date.toISOString(),
+    agence: agence,
+    categorie: String(ligne[3] || ''),
+    montant: montant,
+    devise: normaliserTexte_(ligne[6]),
+    description: String(ligne[4] || ''),
+    observation: String(ligne[10] || ''),
+    agent: String(ligne[9] || ''),
+    statut: statut,
+    reference: String(ligne[8] || ''),
+    dateCreation: date.toISOString(),
+    dateMiseAJour: dateMiseAJour.toISOString(),
+    annulee: statut === 'ANNULEE' || statut === 'ANNULÉE',
+    corrigee: statut === 'CORRIGEE'
+  };
+}
+
+function correspondFiltresDepensesAdmin_(depense, filtres) {
+  return (
+    (!filtres.dateDebut || depense.date >= filtres.dateDebut) &&
+    (!filtres.dateFin || depense.date <= filtres.dateFin) &&
+    (!filtres.categorie || depense.categorie === filtres.categorie) &&
+    (!filtres.devise || depense.devise === filtres.devise) &&
+    (!filtres.statut || depense.statut === normaliserTexte_(filtres.statut)) &&
+    (!filtres.agent || normaliserTexte_(depense.agent).includes(filtres.agent)) &&
+    (!filtres.reference || normaliserTexte_(depense.reference).includes(filtres.reference))
+  );
+}
+
+function calculerTotauxDepensesAdmin_(depenses) {
+  const parDevise = {};
+  const parAgence = {};
+  const parCategorie = {};
+  depenses.forEach(function(depense) {
+    parDevise[depense.devise] =
+      (parDevise[depense.devise] || 0) + depense.montant;
+    if (!parAgence[depense.agence]) {
+      parAgence[depense.agence] = {};
+    }
+    parAgence[depense.agence][depense.devise] =
+      (parAgence[depense.agence][depense.devise] || 0) + depense.montant;
+    if (!parCategorie[depense.categorie]) {
+      parCategorie[depense.categorie] = {};
+    }
+    parCategorie[depense.categorie][depense.devise] =
+      (parCategorie[depense.categorie][depense.devise] || 0) + depense.montant;
+  });
+  return {
+    nombreDepenses: depenses.length,
+    parDevise: parDevise,
+    parAgence: parAgence,
+    parCategorie: parCategorie
+  };
 }
 
 /**
@@ -2809,4 +3077,3 @@ function limiterProtectionAuProprietaire_(protection) {
     protection.setDomainEdit(false);
   }
 }
-
