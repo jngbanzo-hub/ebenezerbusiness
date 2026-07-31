@@ -179,6 +179,14 @@ test("rejette une date invalide", () => {
   );
 });
 
+test("accepte deux représentations ISO du même instant", () => {
+  const restored = logisticsEventRowToStockEvent(
+    row({ occurred_at: "2026-07-31T18:00:00.000+00:00" }),
+  );
+
+  assert.equal(restored.occurredAt, "2026-07-31T18:00:00.000Z");
+});
+
 test("rejette un type d'événement inconnu", () => {
   rowError(() =>
     logisticsEventRowToStockEvent(

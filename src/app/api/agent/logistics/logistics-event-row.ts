@@ -71,7 +71,7 @@ export function logisticsEventRowToStockEvent(
       event.eventType !== row.event_type ||
       event.versionBefore !== row.version_before ||
       event.versionAfter !== row.version_after ||
-      event.occurredAt !== row.occurred_at ||
+      Date.parse(event.occurredAt) !== Date.parse(row.occurred_at) ||
       event.sourceType !== row.source
     ) {
       throw new LogisticsEventRowError();
