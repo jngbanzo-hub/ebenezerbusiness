@@ -122,8 +122,35 @@ where table_schema = 'public'
 
 select
   'immutability_trigger' as check_name,
-  count(*) = 1 as passed
-from information_schema.triggers
-where event_object_schema = 'public'
-  and event_object_table = 'logistics_events'
-  and trigger_name = 'logistics_events_reject_mutation';
+  exists (
+    select 1
+    from information_schema.triggers
+    where event_object_schema = 'public'
+      and event_object_table = 'logistics_events'
+      and trigger_name = 'logistics_events_reject_mutation'
+      and event_manipulation = 'UPDATE'
+  ) as update_covered,
+  exists (
+    select 1
+    from information_schema.triggers
+    where event_object_schema = 'public'
+      and event_object_table = 'logistics_events'
+      and trigger_name = 'logistics_events_reject_mutation'
+      and event_manipulation = 'DELETE'
+  ) as delete_covered,
+  exists (
+    select 1
+    from information_schema.triggers
+    where event_object_schema = 'public'
+      and event_object_table = 'logistics_events'
+      and trigger_name = 'logistics_events_reject_mutation'
+      and event_manipulation = 'UPDATE'
+  )
+  and exists (
+    select 1
+    from information_schema.triggers
+    where event_object_schema = 'public'
+      and event_object_table = 'logistics_events'
+      and trigger_name = 'logistics_events_reject_mutation'
+      and event_manipulation = 'DELETE'
+  ) as passed;
