@@ -6,7 +6,9 @@ export interface LogisticsEventSource {
   ): Promise<readonly StockEvent[] | null>;
 }
 
-export type LogisticsEventSourceErrorCode = "SOURCE_NOT_CONFIGURED";
+export type LogisticsEventSourceErrorCode =
+  | "SOURCE_NOT_CONFIGURED"
+  | "SOURCE_READ_FAILED";
 
 export class LogisticsEventSourceError extends Error {
   readonly code: LogisticsEventSourceErrorCode;
