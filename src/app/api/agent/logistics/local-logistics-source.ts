@@ -4,6 +4,8 @@ import {
   type StockEventInput,
 } from "../../../../../local-preparation/contracts/stock-event";
 
+import type { LogisticsEventSource } from "./logistics-event-source";
+
 type LocalParcelHistory = Readonly<{
   trackingCode: string;
   events: readonly StockEvent[];
@@ -117,3 +119,13 @@ export function findLocalParcelHistory(
     )?.events ?? null
   );
 }
+
+export class LocalLogisticsEventSource implements LogisticsEventSource {
+  async readEventsByTrackingCode(
+    trackingCode: string,
+  ): Promise<readonly StockEvent[] | null> {
+    return findLocalParcelHistory(trackingCode);
+  }
+}
+
+export const localLogisticsEventSource = new LocalLogisticsEventSource();
