@@ -55,7 +55,9 @@ export function buildDailyCashProjection(input: Readonly<{
 
   const payments = events.filter((event) => event.eventType === "PAYMENT_CREDIT_RECORDED");
   const expenses = events.filter((event) => event.eventType === "EXPENSE_DEBIT_RECORDED");
-  const corrections = events.filter((event) => event.eventType === "CASH_CORRECTION_RECORDED");
+  const corrections = events.filter((event) =>
+    ["ADMIN_ADJUSTMENT_RECORDED", "CASH_CORRECTION_RECORDED"].includes(event.eventType)
+  );
   const paymentsTotal = sum(payments.map((event) => event.amount));
   const expensesTotal = sum(expenses.map((event) => event.amount));
   const correctionsNet = sum(corrections.map((event) => event.direction === "CREDIT" ? event.amount : -event.amount));

@@ -12,6 +12,23 @@ les corrections relèvent de l'Admin.
 caisse**. Ses dépenses restent enregistrées par le module Dépenses existant et
 sont classées comme financées directement par le PDG, sans débit de caisse.
 
+## Contrôles Admin
+
+L'Admin consulte ensemble les caisses FIH, LSHI et KLZ, leurs sources,
+ventilations par agent, totaux, historiques de soldes, clôtures et Audit. COO
+n'apparaît jamais dans cette liste ; ses recettes restent une information
+séparée hors caisse.
+
+L'Admin définit et valide le solde initial, ajoute des ajustements explicites,
+et corrige par compensation. Chaque changement conserve l'ancienne valeur, la
+nouvelle valeur, le motif obligatoire, l'identité Admin, l'horodatage et un
+identifiant d'Audit. Une correction ne réécrit jamais l'événement original.
+
+Une journée ouverte peut être clôturée contre son solde calculé. Une journée
+clôturée peut être rouverte uniquement par un Admin, avec un motif obligatoire
+et une nouvelle trace d'Audit. Les écarts entre totaux sources et projection
+sont exposés comme anomalies, sans correction automatique.
+
 ## Sources existantes à réutiliser
 
 ### Encaissements

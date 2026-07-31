@@ -8,8 +8,11 @@ Il n'est importé par aucun fichier de production et n'effectue ni lecture, ni
   devise canonique.
 - `cash-projection.ts` calcule le solde quotidien, la ventilation multi-agents,
   la clôture et les capacités Agent/Admin.
+- `admin-controls.ts` définit les décisions Admin, ajustements, corrections,
+  clôtures/réouvertures, anomalies et vue consolidée.
 - `fixtures.ts` fournit des objets locaux de test.
 - `cash.test.ts` certifie les règles métier.
+- `admin-controls.test.ts` certifie les contrôles administratifs.
 - `ARCHITECTURE.md` documente l'audit et les futures interactions.
 
 Décisions structurantes : une seule caisse par agence FIH/LSHI/KLZ, aucune

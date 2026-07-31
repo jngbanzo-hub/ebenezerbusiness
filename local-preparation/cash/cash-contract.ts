@@ -5,6 +5,7 @@ export const CASH_EVENT_TYPES = [
   "OPENING_BALANCE_RECORDED",
   "PAYMENT_CREDIT_RECORDED",
   "EXPENSE_DEBIT_RECORDED",
+  "ADMIN_ADJUSTMENT_RECORDED",
   "CASH_CORRECTION_RECORDED",
 ] as const;
 
@@ -84,6 +85,7 @@ function assertEventSemantics(input: CashEventInput) {
     OPENING_BALANCE_RECORDED: "CREDIT",
     PAYMENT_CREDIT_RECORDED: "CREDIT",
     EXPENSE_DEBIT_RECORDED: "DEBIT",
+    ADMIN_ADJUSTMENT_RECORDED: null,
     CASH_CORRECTION_RECORDED: null,
   };
   const expected = expectedDirection[input.eventType];
@@ -93,6 +95,11 @@ function assertEventSemantics(input: CashEventInput) {
   if (input.eventType === "CASH_CORRECTION_RECORDED") {
     requireText(input.correctsEventId, "INVALID_CORRECTION");
     requireText(input.reason, "INVALID_CORRECTION");
+  } else if (input.eventType === "ADMIN_ADJUSTMENT_RECORDED") {
+    requireText(input.reason, "INVALID_ADJUSTMENT");
+    if (input.correctsEventId !== null) {
+      throw cashError("INVALID_ADJUSTMENT", "Un ajustement ne remplace aucun événement existant.");
+    }
   } else if (input.correctsEventId !== null) {
     throw cashError("INVALID_CORRECTION", "Une correction est compensatoire et explicite.");
   }
