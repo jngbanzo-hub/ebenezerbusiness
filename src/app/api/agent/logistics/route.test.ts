@@ -77,10 +77,5 @@ test("la lecture ne modifie pas la source locale et aucune route d'écriture n'e
   assert.equal(JSON.stringify(history), before);
   assert.equal(Object.isFrozen(history), true);
   const route = await import("./route");
-  assert.deepEqual(Object.keys(route).sort(), [
-    "GET",
-    "createLogisticsGetHandler",
-    "dynamic",
-    "runtime",
-  ]);
+  assert.deepEqual(Object.keys(route).sort(), ["GET", "dynamic", "runtime"]);
 });

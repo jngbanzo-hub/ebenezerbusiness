@@ -5,8 +5,8 @@ import test from "node:test";
 import type { StockEvent } from "../../../../../local-preparation/contracts/stock-event";
 
 import type { LogisticsEventSource } from "./logistics-event-source";
+import { createLogisticsGetHandler } from "./logistics-get-handler";
 import { findLocalParcelHistory } from "./local-logistics-source";
-import { createLogisticsGetHandler } from "./route";
 import { UnconfiguredSupabaseLogisticsEventSource } from "./supabase-logistics-source";
 
 const request = (trackingCode: string) =>
