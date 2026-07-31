@@ -20,7 +20,7 @@ export type LogisticsSupabaseReadRequest = Readonly<{
   table: "logistics_events";
   columns: typeof LOGISTICS_EVENT_COLUMNS;
   filter: Readonly<{
-    column: "tracking_code";
+    column: "tracking_code" | "id";
     operator: "eq";
     value: string;
   }>;

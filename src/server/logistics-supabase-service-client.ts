@@ -23,15 +23,15 @@ export class LogisticsServiceConfigurationError extends Error {
 
 export function createServerLogisticsEventProducer() {
   return new SupabaseLogisticsEventProducer(
-    createSupabaseLogisticsClient(),
+    createServerLogisticsSupabaseClient(),
   );
 }
 
 export function createServerSupabaseLogisticsEventSource() {
-  return new SupabaseLogisticsEventSource(createSupabaseLogisticsClient());
+  return new SupabaseLogisticsEventSource(createServerLogisticsSupabaseClient());
 }
 
-function createSupabaseLogisticsClient(): LogisticsSupabaseClient &
+export function createServerLogisticsSupabaseClient(): LogisticsSupabaseClient &
   LogisticsSupabaseWriteClient {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;

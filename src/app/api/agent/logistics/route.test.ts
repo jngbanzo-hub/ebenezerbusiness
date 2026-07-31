@@ -67,7 +67,7 @@ test("n'expose aucun champ financier", async () => {
   assert.equal("fees" in body, false);
 });
 
-test("la lecture ne modifie pas la source locale et aucune route d'écriture n'existe", async () => {
+test("la route de lecture reste pure et n'exporte aucune écriture", async () => {
   const history = findLocalParcelHistory("LOCAL-LOG-001");
   assert.notEqual(history, null);
   const before = JSON.stringify(history);
