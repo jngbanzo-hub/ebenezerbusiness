@@ -3,11 +3,16 @@ import "server-only";
 import { createClient } from "@supabase/supabase-js";
 
 import { SupabaseLogisticsEventProducer } from "@/app/api/agent/logistics/logistics-event-producer";
+import type { LogisticsEventRow } from "@/app/api/agent/logistics/logistics-event-row";
 import type {
   LogisticsSupabaseInsertRequest,
   LogisticsSupabaseInsertResult,
+  LogisticsSupabaseClient,
+  LogisticsSupabaseReadRequest,
+  LogisticsSupabaseReadResult,
   LogisticsSupabaseWriteClient,
 } from "@/app/api/agent/logistics/logistics-supabase-client";
+import { SupabaseLogisticsEventSource } from "@/app/api/agent/logistics/supabase-logistics-source";
 
 export class LogisticsServiceConfigurationError extends Error {
   constructor() {
@@ -18,11 +23,16 @@ export class LogisticsServiceConfigurationError extends Error {
 
 export function createServerLogisticsEventProducer() {
   return new SupabaseLogisticsEventProducer(
-    createSupabaseLogisticsWriteClient(),
+    createSupabaseLogisticsClient(),
   );
 }
 
-function createSupabaseLogisticsWriteClient(): LogisticsSupabaseWriteClient {
+export function createServerSupabaseLogisticsEventSource() {
+  return new SupabaseLogisticsEventSource(createSupabaseLogisticsClient());
+}
+
+function createSupabaseLogisticsClient(): LogisticsSupabaseClient &
+  LogisticsSupabaseWriteClient {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -38,6 +48,28 @@ function createSupabaseLogisticsWriteClient(): LogisticsSupabaseWriteClient {
   });
 
   return {
+    async readLogisticsEvents(
+      request: LogisticsSupabaseReadRequest,
+    ): Promise<LogisticsSupabaseReadResult> {
+      let query = client
+        .schema("public")
+        .from(request.table)
+        .select(request.columns.join(","))
+        .eq(request.filter.column, request.filter.value);
+
+      request.order.forEach((order) => {
+        query = query.order(order.column, { ascending: order.ascending });
+      });
+
+      const { data, error } = await query;
+      return {
+        data:
+          data === null
+            ? null
+            : (data as unknown as readonly LogisticsEventRow[]),
+        error: error === null ? null : { message: error.message },
+      };
+    },
     async insertLogisticsEvent(
       request: LogisticsSupabaseInsertRequest,
     ): Promise<LogisticsSupabaseInsertResult> {
