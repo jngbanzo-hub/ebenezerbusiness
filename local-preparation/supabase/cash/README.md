@@ -47,3 +47,9 @@ agence et anomalies de rapprochement. Elles sont reconstructibles depuis les
 journaux. Le rollback retire d'abord vues, politiques et triggers. Les `DROP
 TABLE` destructifs restent commentés et ne doivent être envisagés qu'après
 sauvegarde et décision explicite.
+
+`cash_current_day` n'utilise aucune date implicite de la base. Elle expose les
+agrégats de toutes les dates métier. Le futur serveur calcule obligatoirement la
+date demandée dans le fuseau officiel `Africa/Porto-Novo`, puis applique un
+filtre explicite `business_date = <date métier>`. Une requête sans date métier
+doit être refusée avant l'accès à la vue.

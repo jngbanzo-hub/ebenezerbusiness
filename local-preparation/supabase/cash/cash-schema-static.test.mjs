@@ -81,6 +81,19 @@ test("prévoit toutes les vues, avec COO séparé et sans caisse COO", () => {
   assert.match(security, /security_invoker = true/g);
 });
 
+test("exige une date métier serveur explicite pour la journée courante", () => {
+  const currentDayView = security.match(
+    /create view public\.cash_current_day[\s\S]+?group by e\.agency, e\.business_date;/i,
+  )?.[0] ?? "";
+  assert.match(currentDayView, /e\.business_date/i);
+  assert.doesNotMatch(currentDayView, /current_date/i);
+  assert.doesNotMatch(currentDayView, /\bnow\s*\(/i);
+  assert.match(documentation, /Africa\/Porto-Novo/);
+  assert.match(documentation, /filtre explicite `business_date = <date métier>`/i);
+  assert.match(documentation, /requête sans date métier[\s\S]+refusée/i);
+  assert.doesNotMatch(currentDayView, /\bUTC\b/i);
+});
+
 test("documente verrou transactionnel, Sheets non autoritaire et rollback prudent", () => {
   assert.match(documentation, /SELECT \.\.\. FOR UPDATE/);
   assert.match(documentation, /Google Sheets sera unidirectionnel et non autoritaire/i);

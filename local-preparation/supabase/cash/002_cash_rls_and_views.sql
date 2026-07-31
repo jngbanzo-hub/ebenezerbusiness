@@ -61,8 +61,12 @@ select e.agency, e.business_date,
   coalesce(sum(e.amount) filter (where e.event_type = 'PAYMENT_CREDIT_RECORDED'), 0)::numeric(18,2) as payments_total,
   coalesce(sum(e.amount) filter (where e.event_type = 'EXPENSE_DEBIT_RECORDED'), 0)::numeric(18,2) as expenses_total,
   coalesce(sum(case when e.event_type in ('ADMIN_ADJUSTMENT_RECORDED', 'CASH_CORRECTION_RECORDED') then case when e.direction = 'CREDIT' then e.amount else -e.amount end else 0 end), 0)::numeric(18,2) as corrections_net
-from public.cash_events e where e.business_date = current_date
+from public.cash_events e
 group by e.agency, e.business_date;
+
+-- This view intentionally contains every business_date. The server must compute
+-- the requested date in Africa/Porto-Novo and apply an explicit business_date
+-- predicate. Database clock and session timezone never select the cash day.
 
 create view public.cash_daily_history with (security_invoker = true) as
 select agency, business_date, opening_balance, payments_total, expenses_total,
