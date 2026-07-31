@@ -20,6 +20,7 @@ import { signOutAgent } from "@/features/agent/auth";
 import { CooDepositAgentAction } from "@/features/agent/coo-deposit-agent-action";
 import { canAccessCooDepositAction } from "@/features/agent/coo-deposit-client";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { AgentCashDashboardView } from "@/features/cash/cash-dashboard-view";
 import type { Agency } from "@/features/agent/types";
 
 type AgentDashboardProfile = {
@@ -269,6 +270,7 @@ export function AgentDashboard() {
         </section>
 
         {canAccessCooDepositAction(profile) ? <CooDepositAgentAction /> : null}
+        <AgentCashDashboardView isCoo={profile.site === "COO"} />
       </Container>
     </main>
   );
