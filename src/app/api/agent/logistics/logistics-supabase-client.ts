@@ -1,4 +1,7 @@
-import type { LogisticsEventRow } from "./logistics-event-row";
+import type {
+  LogisticsEventInsertRow,
+  LogisticsEventRow,
+} from "./logistics-event-row";
 
 export const LOGISTICS_EVENT_COLUMNS = [
   "id",
@@ -38,4 +41,20 @@ export interface LogisticsSupabaseClient {
   readLogisticsEvents(
     request: LogisticsSupabaseReadRequest,
   ): Promise<LogisticsSupabaseReadResult>;
+}
+
+export type LogisticsSupabaseInsertRequest = Readonly<{
+  table: "logistics_events";
+  row: LogisticsEventInsertRow;
+}>;
+
+export type LogisticsSupabaseInsertResult = Readonly<{
+  data: Readonly<{ id: string }> | null;
+  error: Readonly<{ code: string; message: string }> | null;
+}>;
+
+export interface LogisticsSupabaseWriteClient {
+  insertLogisticsEvent(
+    request: LogisticsSupabaseInsertRequest,
+  ): Promise<LogisticsSupabaseInsertResult>;
 }

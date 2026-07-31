@@ -10,6 +10,7 @@ import {
   deepFreeze,
   validateOccurredAt,
 } from "../../../../../local-preparation/contracts/common";
+import type { CanonicalAgency } from "../../../../../local-preparation/contracts/agencies";
 
 export type LogisticsEventRow = Readonly<{
   id: string;
@@ -23,6 +24,11 @@ export type LogisticsEventRow = Readonly<{
   payload: unknown;
   created_at: string;
 }>;
+
+export type LogisticsEventInsertRow = LogisticsEventRow &
+  Readonly<{
+    agency_scope: readonly CanonicalAgency[];
+  }>;
 
 export class LogisticsEventRowError extends Error {
   readonly code = "INVALID_LOGISTICS_EVENT_ROW";
