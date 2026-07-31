@@ -20,13 +20,69 @@ const siteClientSource = await readFile(
 
 const runtime = {
   authInvalid: false,
+  cashRows: [],
   fetchCalls: [],
+  profiles: {},
   profile: null,
+  rpcCalls: [],
   upstream: null
 };
 
 globalThis.__edgeRuntime = {
-  createClient() {
+  createClient(_url, key, options = {}) {
+    if (key === "local-service-role") {
+      return {
+        schema() { return this; },
+        from(table) {
+          const filters = {};
+          const chain = {
+            select() { return chain; },
+            eq(name, value) { filters[name] = value; return chain; },
+            async maybeSingle() {
+              const data = runtime.cashRows.find((row) =>
+                table === "cash_events" &&
+                Object.entries(filters).every(([name, value]) => row[name] === value)
+              ) ?? null;
+              return { data, error: null };
+            }
+          };
+          return chain;
+        },
+        async rpc(name, params) {
+          runtime.rpcCalls.push({ name, params });
+          const byRequest = runtime.cashRows.find((row) =>
+            row.source_request_id === params.p_payment_request_id
+          );
+          if (byRequest) {
+            return byRequest.metadata.commandFingerprint === params.p_command_fingerprint
+              ? { data: { eventId: byRequest.event_id, replayed: true, version: byRequest.version_after }, error: null }
+              : { data: null, error: { message: "IDEMPOTENCY_CONFLICT" } };
+          }
+          const sourceId = `parcel:${params.p_agency}:${params.p_payment_reference}`;
+          if (runtime.cashRows.some((row) => row.source_id === sourceId)) {
+            return { data: null, error: { message: "PAYMENT_ALREADY_CREDITED" } };
+          }
+          const row = {
+            actor_user_id: params.p_actor_user_id,
+            agency: params.p_agency,
+            amount: params.p_amount,
+            event_id: `event-${params.p_payment_request_id}`,
+            event_type: "PAYMENT_CREDIT_RECORDED",
+            metadata: {
+              ...params.p_metadata,
+              commandFingerprint: params.p_command_fingerprint
+            },
+            source_id: sourceId,
+            source_type: "PAYMENT_ENGINE",
+            source_request_id: params.p_payment_request_id,
+            version_after: runtime.cashRows.filter((item) => item.agency === params.p_agency).length + 2
+          };
+          runtime.cashRows.push(row);
+          return { data: { eventId: row.event_id, replayed: false, version: row.version_after }, error: null };
+        }
+      };
+    }
+    const token = options.global?.headers?.Authorization?.replace(/^Bearer\s+/i, "") ?? "valid";
     const chain = {
       select() {
         return chain;
@@ -35,15 +91,15 @@ globalThis.__edgeRuntime = {
         return chain;
       },
       async maybeSingle() {
-        return { data: runtime.profile, error: null };
+        return { data: runtime.profiles[token] ?? runtime.profile, error: null };
       }
     };
     return {
       auth: {
-        async getUser() {
+        async getUser(candidateToken) {
           return runtime.authInvalid
             ? { data: { user: null }, error: new Error("invalid") }
-            : { data: { user: { id: "user-1" } }, error: null };
+            : { data: { user: { id: runtime.profiles[candidateToken]?.id ?? "user-1" } }, error: null };
         }
       },
       schema() {
@@ -57,13 +113,17 @@ globalThis.__edgeRuntime = {
   env: {
     SUPABASE_URL: "https://example.supabase.co",
     SUPABASE_ANON_KEY: "public-test-key",
+    SUPABASE_SERVICE_ROLE_KEY: "local-service-role",
+    CASH_PAYMENT_CREDITS_ENABLED: "false",
     PAIEMENTS_AGENTS_APPS_SCRIPT_URL: "https://script.google.test/exec",
     PAIEMENTS_AGENTS_API_KEY: "local-test-key",
     PAIEMENTS_AGENTS_TIMEOUT_MS: "1000"
   },
   async fetch(url, init) {
     runtime.fetchCalls.push({ url, init });
-    return runtime.upstream;
+    return typeof runtime.upstream === "function"
+      ? runtime.upstream(url, init)
+      : runtime.upstream;
   }
 };
 
@@ -105,9 +165,13 @@ const paymentHandler = await loadHandler(paymentSource, "payment");
 
 function reset(profile = agentProfile("COTONOU")) {
   runtime.authInvalid = false;
+  runtime.cashRows = [];
   runtime.fetchCalls = [];
+  runtime.profiles = {};
   runtime.profile = profile;
+  runtime.rpcCalls = [];
   runtime.upstream = null;
+  globalThis.__edgeRuntime.env.CASH_PAYMENT_CREDITS_ENABLED = "false";
 }
 
 function agentProfile(agence, overrides = {}) {
@@ -189,6 +253,10 @@ function paymentSuccess(destinationCode = "FIH", amount = 25) {
     }),
     { status: 200 }
   );
+}
+
+function enableCashCredits() {
+  globalThis.__edgeRuntime.env.CASH_PAYMENT_CREDITS_ENABLED = "true";
 }
 
 async function json(response) {
@@ -444,7 +512,7 @@ for (const [number, label, forbidden] of [
   ["39", "aucun événement de livraison", /DELIVERY_CONFIRMED|LIVRAISON_EVENT/],
   ["40", "aucun mouvement de stock", /StockEvent|STOCK_MOVEMENT/],
   ["41", "aucun appel Transferts", /TRANSFERTS_API|transferId/],
-  ["42", "aucun lien avec la Caisse", /CAISSE_API|FinancialEvent/],
+  ["42", "aucune ancienne API Caisse ni FinancialEvent", /CAISSE_API|FinancialEvent/],
   ["43", "aucune écriture Google Sheets directe", /spreadsheets\.googleapis\.com/]
 ]) {
   test(`${number} ${label}`, () => {
@@ -526,6 +594,7 @@ test("48 erreurs métier interprétables par le site actuel", () => {
     "COLIS_DEJA_SOLDE",
     "MONTANT_SUPERIEUR_SOLDE",
     "PAIEMENT_PARTIEL_INTERDIT",
+    "IDEMPOTENCY_CONFLICT",
     "SERVICE_INDISPONIBLE"
   ]) {
     assert.ok(siteClientSource.includes(code), code);
@@ -549,4 +618,101 @@ test("49 aucune recherche ne modifie les données", async () => {
   assert.equal(searchSource.includes(".update("), false);
   assert.equal(searchSource.includes(".insert("), false);
   assert.equal(searchSource.includes(".delete("), false);
+});
+
+test("50 paiement confirmé crée un unique crédit de caisse", async () => {
+  reset(agentProfile("FIH"));
+  enableCashCredits();
+  runtime.upstream = paymentSuccess("FIH", 100);
+  const result = await json(await paymentHandler(paymentRequest({ montantPaye: 100 })));
+  assert.equal(result.status, 200);
+  assert.equal(result.body.replayed, false);
+  assert.equal(runtime.cashRows.length, 1);
+  assert.equal(runtime.cashRows[0].event_type, "PAYMENT_CREDIT_RECORDED");
+  assert.equal(runtime.cashRows[0].actor_user_id, "user-1");
+});
+
+test("51 même paymentRequestId et même contenu est rejoué sans Apps Script", async () => {
+  reset(agentProfile("FIH"));
+  enableCashCredits();
+  runtime.upstream = paymentSuccess("FIH", 100);
+  const request = () => paymentRequest({ montantPaye: 100 });
+  assert.equal((await json(await paymentHandler(request()))).body.replayed, false);
+  assert.equal((await json(await paymentHandler(request()))).body.replayed, true);
+  assert.equal(runtime.cashRows.length, 1);
+  assert.equal(runtime.fetchCalls.length, 1);
+});
+
+test("52 même paymentRequestId avec contenu différent retourne 409", async () => {
+  reset(agentProfile("FIH"));
+  enableCashCredits();
+  runtime.upstream = paymentSuccess("FIH", 100);
+  await paymentHandler(paymentRequest({ montantPaye: 100 }));
+  const result = await json(await paymentHandler(paymentRequest({ montantPaye: 99 })));
+  assert.equal(result.status, 409);
+  assert.equal(result.body.error, "IDEMPOTENCY_CONFLICT");
+  assert.equal(runtime.cashRows.length, 1);
+});
+
+test("53 deux agents de la même agence créditent deux paiements indépendants", async () => {
+  reset();
+  enableCashCredits();
+  runtime.profiles = {
+    "agent-a": agentProfile("FIH", { id: "user-a", nom: "Agent A" }),
+    "agent-b": agentProfile("FIH", { id: "user-b", nom: "Agent B" })
+  };
+  runtime.upstream = (_url, init) => {
+    const payload = JSON.parse(init.body);
+    return new Response(JSON.stringify({
+      success: true, simulation: false,
+      paiement: {
+        codeColis: payload.codeColis,
+        destinationCode: "FIH",
+        montantPaye: payload.montantPaye,
+        nouveauTotalPaye: payload.montantPaye,
+        nouveauSolde: 0,
+        statutPaiement: "SOLDE",
+        datePaiement: "2026-07-31T12:00:00.000Z"
+      }
+    }), { status: 200 });
+  };
+  const requestA = paymentRequest({ codeColis: "COLIS-A", montantPaye: 10 }, "agent-a");
+  const requestB = paymentRequest({
+    codeColis: "COLIS-B",
+    montantPaye: 20,
+    paymentRequestId: "B0B1C2D3-E4F5-4A67-8B90-123456789ABC"
+  }, "agent-b");
+  const results = await Promise.all([paymentHandler(requestA), paymentHandler(requestB)]);
+  assert.deepEqual(results.map((response) => response.status), [200, 200]);
+  assert.equal(runtime.cashRows.length, 2);
+  assert.deepEqual(new Set(runtime.cashRows.map((row) => row.actor_user_id)), new Set(["user-a", "user-b"]));
+  assert.equal(runtime.cashRows.reduce((sum, row) => sum + row.amount, 0), 30);
+});
+
+test("54 deux agents sur le même colis ne produisent qu'un crédit", async () => {
+  reset();
+  enableCashCredits();
+  runtime.profiles = {
+    "agent-a": agentProfile("FIH", { id: "user-a", nom: "Agent A" }),
+    "agent-b": agentProfile("FIH", { id: "user-b", nom: "Agent B" })
+  };
+  runtime.upstream = paymentSuccess("FIH", 100);
+  await paymentHandler(paymentRequest({ montantPaye: 100 }, "agent-a"));
+  const result = await json(await paymentHandler(paymentRequest({
+    montantPaye: 100,
+    paymentRequestId: "B0B1C2D3-E4F5-4A67-8B90-123456789ABC"
+  }, "agent-b")));
+  assert.equal(result.status, 503);
+  assert.equal(runtime.cashRows.length, 1);
+});
+
+test("55 COO reste hors caisse et conserve sa réponse paiement", async () => {
+  reset(agentProfile("COTONOU"));
+  enableCashCredits();
+  runtime.upstream = paymentSuccess("FIH", 25);
+  const result = await json(await paymentHandler(paymentRequest()));
+  assert.equal(result.status, 200);
+  assert.equal(result.body.replayed, false);
+  assert.equal(runtime.cashRows.length, 0);
+  assert.equal(runtime.rpcCalls.length, 0);
 });

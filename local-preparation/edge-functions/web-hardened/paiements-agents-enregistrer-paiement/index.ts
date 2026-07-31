@@ -16,6 +16,7 @@ type ErrorCode =
   | "MONTANT_SUPERIEUR_SOLDE"
   | "PAIEMENT_PARTIEL_INTERDIT"
   | "PAIEMENT_REFUSE"
+  | "IDEMPOTENCY_CONFLICT"
   | "SERVICE_INDISPONIBLE";
 
 type AgentProfile = {
@@ -45,6 +46,16 @@ type PublicPaymentResponse = {
   nouveauSolde: number;
   statutPaiement: "SOLDE" | "PARTIELLEMENT PAYE";
   datePaiement: string;
+  replayed?: boolean;
+};
+
+type CashCreditRow = {
+  actor_user_id: string;
+  agency: string;
+  amount: number | string;
+  event_id: string;
+  metadata: unknown;
+  version_after: number;
 };
 
 const AGENCE_DESTINATION: Readonly<Record<string, string>> = {
@@ -220,6 +231,42 @@ Deno.serve(async (request: Request): Promise<Response> => {
       return errorResponse("AGENCE_INVALIDE", 403);
     }
 
+    const cashCreditsEnabled =
+      Deno.env.get("CASH_PAYMENT_CREDITS_ENABLED")?.trim().toLowerCase() ===
+      "true";
+    const cashAgency = agenceEncaissement === "COO" ? null : agenceEncaissement;
+    const commandFingerprint = await paymentFingerprint(
+      paymentInput,
+      cashAgency,
+      user.id,
+    );
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim();
+    const cashClient = cashCreditsEnabled && cashAgency && serviceRoleKey
+      ? createClient(supabaseUrl, serviceRoleKey, {
+          auth: { autoRefreshToken: false, persistSession: false },
+        })
+      : null;
+    if (cashCreditsEnabled && cashAgency && !cashClient) {
+      return errorResponse("SERVICE_INDISPONIBLE", 503);
+    }
+
+    if (cashClient) {
+      const replay = await readCashCreditReplay(
+        cashClient,
+        paymentInput.paymentRequestId,
+        commandFingerprint,
+      );
+      if (replay.kind === "CONFLICT") {
+        return errorResponse("IDEMPOTENCY_CONFLICT", 409);
+      }
+      if (replay.kind === "REPLAY") {
+        return jsonResponse({ ...replay.payment, replayed: true }, 200);
+      }
+      if (replay.kind === "ERROR") {
+        return errorResponse("SERVICE_INDISPONIBLE", 503);
+      }
+    }
+
     const appsScriptUrl =
       Deno.env.get("PAIEMENTS_AGENTS_APPS_SCRIPT_URL")?.trim();
     const apiKey = Deno.env.get("PAIEMENTS_AGENTS_API_KEY")?.trim();
@@ -295,7 +342,40 @@ Deno.serve(async (request: Request): Promise<Response> => {
         return errorResponse("SERVICE_INDISPONIBLE", 503);
       }
 
-      return jsonResponse(publicPayment, 200);
+      if (cashClient && cashAgency) {
+        const credit = await cashClient.rpc("record_cash_payment_credit", {
+          p_actor_name: rawAgent.nom.trim(),
+          p_actor_user_id: user.id,
+          p_agency: cashAgency,
+          p_amount: publicPayment.montantPaye,
+          p_business_date: businessDateInPortoNovo(),
+          p_command_fingerprint: commandFingerprint,
+          p_metadata: {
+            modePaiement: paymentInput.modePaiement,
+            observation: paymentInput.observation,
+            paymentResult: publicPayment,
+            referencePaiement: paymentInput.referencePaiement,
+          },
+          p_occurred_at: new Date().toISOString(),
+          p_payment_reference: paymentInput.codeColis,
+          p_payment_request_id: paymentInput.paymentRequestId,
+        });
+        if (credit.error) {
+          return errorResponse(
+            String(credit.error.message).includes("IDEMPOTENCY_CONFLICT")
+              ? "IDEMPOTENCY_CONFLICT"
+              : "SERVICE_INDISPONIBLE",
+            String(credit.error.message).includes("IDEMPOTENCY_CONFLICT")
+              ? 409
+              : 503,
+          );
+        }
+        const replayed = isRecord(credit.data) && credit.data.replayed === true;
+        return jsonResponse({ ...publicPayment, replayed }, 200);
+      }
+
+      // COO reste volontairement hors caisse canonique.
+      return jsonResponse({ ...publicPayment, replayed: false }, 200);
     } catch {
       return errorResponse("SERVICE_INDISPONIBLE", 503);
     } finally {
@@ -310,6 +390,82 @@ Deno.serve(async (request: Request): Promise<Response> => {
 function readBearerToken(authorization: string | null): string | null {
   if (!authorization) return null;
   return authorization.match(/^Bearer\s+(\S+)$/i)?.[1] ?? null;
+}
+
+async function paymentFingerprint(
+  input: PaymentInput,
+  agency: string | null,
+  actorUserId: string,
+): Promise<string> {
+  const bytes = new TextEncoder().encode(JSON.stringify({
+    actorUserId,
+    agency,
+    codeColis: input.codeColis,
+    destinationCode: input.destinationCode,
+    modePaiement: input.modePaiement,
+    montantPaye: input.montantPaye,
+    observation: input.observation,
+    referencePaiement: input.referencePaiement,
+  }));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function readCashCreditReplay(
+  cashClient: ReturnType<typeof createClient>,
+  requestId: string,
+  fingerprint: string,
+): Promise<
+  | { kind: "NONE" }
+  | { kind: "ERROR" }
+  | { kind: "CONFLICT" }
+  | { kind: "REPLAY"; payment: PublicPaymentResponse }
+> {
+  const { data, error } = await cashClient
+    .schema("public")
+    .from("cash_events")
+    .select("event_id, agency, amount, actor_user_id, version_after, metadata")
+    .eq("source_type", "PAYMENT_ENGINE")
+    .eq("source_request_id", requestId)
+    .maybeSingle();
+  if (error) return { kind: "ERROR" };
+  if (!data) return { kind: "NONE" };
+  const row = data as CashCreditRow;
+  if (!isRecord(row.metadata) || row.metadata.commandFingerprint !== fingerprint) {
+    return { kind: "CONFLICT" };
+  }
+  const payment = row.metadata.paymentResult;
+  return sanitizeStoredPayment(payment) === null
+    ? { kind: "ERROR" }
+    : { kind: "REPLAY", payment: sanitizeStoredPayment(payment)! };
+}
+
+function sanitizeStoredPayment(value: unknown): PublicPaymentResponse | null {
+  if (!isRecord(value)) return null;
+  const codeColis = readText(value.codeColis, 64);
+  const destinationCode = readText(value.destinationCode, 16);
+  const destinationNom = readText(value.destinationNom, 64);
+  const montantPaye = readNumber(value.montantPaye);
+  const nouveauTotalPaye = readNumber(value.nouveauTotalPaye);
+  const nouveauSolde = readNumber(value.nouveauSolde);
+  const statutPaiement = readText(value.statutPaiement, 64);
+  const datePaiement = readText(value.datePaiement, 128);
+  if (!codeColis || !destinationCode || !destinationNom || montantPaye === null ||
+    nouveauTotalPaye === null || nouveauSolde === null || !datePaiement ||
+    (statutPaiement !== "SOLDE" && statutPaiement !== "PARTIELLEMENT PAYE")) return null;
+  return { codeColis, destinationCode, destinationNom, montantPaye,
+    nouveauTotalPaye, nouveauSolde, statutPaiement, datePaiement };
+}
+
+function businessDateInPortoNovo(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "Africa/Porto-Novo",
+    year: "numeric",
+  }).format(new Date());
 }
 
 async function readRequestBody(

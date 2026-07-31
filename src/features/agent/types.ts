@@ -45,4 +45,5 @@ export interface PaymentResult {
   nouveauSolde: number;
   statutPaiement: "SOLDE" | "PARTIELLEMENT PAYE";
   datePaiement: string;
+  replayed?: boolean;
 }
