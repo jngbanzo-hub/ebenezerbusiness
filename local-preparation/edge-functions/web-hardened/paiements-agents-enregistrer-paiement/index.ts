@@ -17,6 +17,9 @@ type ErrorCode =
   | "PAIEMENT_PARTIEL_INTERDIT"
   | "PAIEMENT_REFUSE"
   | "IDEMPOTENCY_CONFLICT"
+  | "PARCEL_NOT_IN_STOCK"
+  | "STOCK_INSUFFICIENT"
+  | "PAYMENT_ORCHESTRATION_INCOMPLETE"
   | "SERVICE_INDISPONIBLE";
 
 type AgentProfile = {
@@ -236,6 +239,9 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const cashCreditsEnabled =
       Deno.env.get("CASH_PAYMENT_CREDITS_ENABLED")?.trim().toLowerCase() ===
       "true";
+    const paidExitEnabled =
+      Deno.env.get("STOCKAGES_PAID_EXIT_ENABLED")?.trim().toLowerCase() ===
+      "true";
     const cashAgency = agenceEncaissement === "COO" ? null : agenceEncaissement;
     const commandFingerprint = await paymentFingerprint(
       paymentInput,
@@ -252,7 +258,33 @@ Deno.serve(async (request: Request): Promise<Response> => {
       return errorResponse("SERVICE_INDISPONIBLE", 503);
     }
 
-    if (cashClient) {
+    const usePaidExitOrchestration = Boolean(
+      paidExitEnabled && cashClient && cashAgency === destinationCode,
+    );
+    if (usePaidExitOrchestration && cashClient && cashAgency) {
+      const begun = await cashClient.rpc("begin_paid_destination_orchestration", {
+        p_actor_id: user.id,
+        p_agency: cashAgency,
+        p_command_fingerprint: commandFingerprint,
+        p_expected_amount: paymentInput.montantPaye,
+        p_paid_amount: paymentInput.montantPaye,
+        p_request_id: paymentInput.paymentRequestId,
+        p_tracking_code: paymentInput.codeColis,
+      });
+      if (begun.error) return orchestrationError(begun.error.message);
+      const checkpoint = isRecord(begun.data) ? begun.data : null;
+      const storedPayment = sanitizeStoredPayment(checkpoint?.paymentResponse);
+      if (checkpoint?.state === "COMPLETED" && storedPayment) {
+        return jsonResponse({ ...storedPayment, cashRecorded: true, cashStatus: "RECORDED", replayed: true }, 200);
+      }
+      if (checkpoint?.paymentCreated === true && storedPayment) {
+        const resumed = await finalizePaidExit(cashClient, paymentInput, commandFingerprint);
+        if (resumed.kind === "ERROR") return orchestrationError(resumed.code);
+        return jsonResponse({ ...storedPayment, cashRecorded: true, cashStatus: "RECORDED", replayed: true }, 200);
+      }
+    }
+
+    if (cashClient && !usePaidExitOrchestration) {
       const replay = await readCashCreditReplay(
         cashClient,
         paymentInput.paymentRequestId,
@@ -344,6 +376,18 @@ Deno.serve(async (request: Request): Promise<Response> => {
         return errorResponse("SERVICE_INDISPONIBLE", 503);
       }
 
+      if (usePaidExitOrchestration && cashClient) {
+        const checkpoint = await cashClient.rpc("checkpoint_paid_destination_payment", {
+          p_command_fingerprint: commandFingerprint,
+          p_payment_response: publicPayment,
+          p_request_id: paymentInput.paymentRequestId,
+        });
+        if (checkpoint.error) return orchestrationError(checkpoint.error.message);
+        const finalized = await finalizePaidExit(cashClient, paymentInput, commandFingerprint);
+        if (finalized.kind === "ERROR") return orchestrationError(finalized.code);
+        return jsonResponse({ ...publicPayment, cashRecorded: true, cashStatus: "RECORDED", replayed: finalized.replayed }, 200);
+      }
+
       if (cashClient && cashAgency) {
         const credit = await cashClient.rpc("record_cash_payment_credit", {
           p_actor_name: rawAgent.nom.trim(),
@@ -402,6 +446,37 @@ Deno.serve(async (request: Request): Promise<Response> => {
     return errorResponse("SERVICE_INDISPONIBLE", 503);
   }
 });
+
+async function finalizePaidExit(
+  client: ReturnType<typeof createClient>,
+  input: PaymentInput,
+  fingerprint: string,
+): Promise<{ kind: "SUCCESS"; replayed: boolean } | { kind: "ERROR"; code: string }> {
+  const result = await client.rpc("finalize_paid_destination_orchestration", {
+    p_business_date: businessDateInPortoNovo(),
+    p_command_fingerprint: fingerprint,
+    p_observation: input.observation,
+    p_payment_mode: input.modePaiement,
+    p_payment_reference: input.referencePaiement,
+    p_request_id: input.paymentRequestId,
+  });
+  if (result.error) return { kind: "ERROR", code: result.error.message };
+  if (!isRecord(result.data) || result.data.state !== "COMPLETED") {
+    return { kind: "ERROR", code: isRecord(result.data) && typeof result.data.code === "string" ? result.data.code : "PAYMENT_ORCHESTRATION_INCOMPLETE" };
+  }
+  return { kind: "SUCCESS", replayed: result.data.replayed === true };
+}
+
+function orchestrationError(value: string): Response {
+  const code: ErrorCode = value.includes("IDEMPOTENCY_CONFLICT")
+    ? "IDEMPOTENCY_CONFLICT"
+    : value.includes("PARCEL_NOT_IN_STOCK")
+      ? "PARCEL_NOT_IN_STOCK"
+      : value.includes("STOCK_INSUFFICIENT")
+        ? "STOCK_INSUFFICIENT"
+        : "PAYMENT_ORCHESTRATION_INCOMPLETE";
+  return errorResponse(code, code === "IDEMPOTENCY_CONFLICT" ? 409 : 503);
+}
 
 function readBearerToken(authorization: string | null): string | null {
   if (!authorization) return null;

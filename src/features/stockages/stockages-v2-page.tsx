@@ -37,6 +37,7 @@ export function AgentStockagesArrivalsPage() {
     {!data.actionsEnabled && <Notice text="Stockage non ouvert — solde initial requis" />}
     <div className="grid gap-5">
       <AgentCommandForm title="Déclarer un arrivage" endpoint="/api/agent/stockages/arrival" disabled={!data.actionsEnabled} fields="arrival" onDone={load} />
+      <ForwardingCommandForm mode="arrival" disabled={!data.actionsEnabled} onDone={load} />
     </div>
     <EventTable title="Arrivages récents" rows={arrivals} />
     {message && <Notice text={message} />}
@@ -53,7 +54,7 @@ function AgentPhysicalHistory({ mode }: { mode: "outputs" | "statistics" }) {
   const title = mode === "outputs" ? "Stockages — Sorties" : "Stockages — Statistiques";
   if (!data) return <Shell back="/agent/stockages" title={title}><Notice text={message || "Chargement…"} /></Shell>;
   const outputs = data.events.filter((event) => event.parcel_count_delta < 0);
-  return <Shell back="/agent/stockages" title={`${mode === "outputs" ? "Sorties" : "Statistiques"} — ${data.account.agency}`}><AccountCards accounts={[data.account]} />{mode === "outputs" ? <FilteredOutputHistory events={outputs} /> : <><PhysicalStatistics events={data.events} /><EventTable title="Historique physique" rows={data.events} /><ActivityTable rows={data.activity} /></>}{message && <Notice text={message} />}</Shell>;
+  return <Shell back="/agent/stockages" title={`${mode === "outputs" ? "Sorties" : "Statistiques"} — ${data.account.agency}`}><AccountCards accounts={[data.account]} />{mode === "outputs" ? <><ForwardingCommandForm mode="delivery" disabled={!data.actionsEnabled} onDone={load} /><FilteredOutputHistory events={outputs} /></> : <><PhysicalStatistics events={data.events} /><EventTable title="Historique physique" rows={data.events} /><ActivityTable rows={data.activity} /></>}{message && <Notice text={message} />}</Shell>;
 }
 
 function ModuleCard({ href, title, text, icon }: { href: string; title: string; text: string; icon: React.ReactNode }) { return <GlassPanel className="flex min-h-64 flex-col border-accent/25 p-5 sm:p-6" glow="growth"><div className="grid h-12 w-12 place-items-center rounded-xl border border-accent/30 bg-accent/15 text-accent">{icon}</div><h2 className="mt-6 text-xl font-semibold text-accent">{title}</h2><p className="mt-2 flex-1 text-sm leading-6 text-muted-foreground">{text}</p><Button asChild variant="growth" className="mt-6 w-full"><Link href={href}>Accéder</Link></Button></GlassPanel>; }
@@ -128,6 +129,12 @@ function AgentCommandForm({ title, endpoint, disabled, fields, onDone }: { title
     {fields === "arrival" ? <><label className="block text-sm">Colis arrivés — un par ligne au format CODE:POIDS<textarea name="parcels" required rows={6} placeholder={"JL00126:2.5\nJL00226:1"} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><Input name="reference" label="Référence d’arrivage" /><Input name="observation" label="Observation" /></> : <><Input name="trackingCode" label="Code colis" required /><p className="text-xs text-slate-400">La présence physique et le poids sont contrôlés côté serveur dans le Stockage de l’agence.</p></>}
     <Button disabled={disabled} className="w-full bg-lime-400 text-slate-950 hover:bg-lime-300 focus-visible:ring-lime-300 disabled:bg-slate-800 disabled:text-slate-400">{disabled ? "Solde initial requis" : title}</Button>{result && <p className="text-sm text-slate-300">{result}</p>}
   </form></Panel>;
+}
+
+function ForwardingCommandForm({ mode, disabled, onDone }: { mode: "arrival" | "delivery"; disabled: boolean; onDone: () => Promise<void> }) {
+  const [result,setResult]=useState(""); const title=mode==="arrival"?"Arrivage d’un acheminement":"Remise d’un acheminement";
+  async function submit(event:FormEvent<HTMLFormElement>){event.preventDefault();const form=event.currentTarget;const reference=String(new FormData(form).get("forwardingReference")??"").trim().toUpperCase();if(!window.confirm(`Confirmer : ${title} ${reference} ?`))return;try{const endpoint=mode==="arrival"?"/api/agent/stockages/forwardings/arrival":"/api/agent/stockages/forwardings/delivery";const body=mode==="arrival"?{forwardingReference:reference,requestId:crypto.randomUUID(),confirmed:true}:{forwardingReference:reference,requestId:crypto.randomUUID(),physicalDeliveryConfirmed:true};const response=await request<{replayed?:boolean}>(endpoint,body);setResult(response.replayed?"Commande déjà enregistrée : rejeu idempotent.":`${title} enregistré avec succès.`);form.reset();await onDone();}catch(error){setResult(error instanceof Error?error.message:"Commande refusée.");}}
+  return <Panel title={title}><form className="space-y-3" onSubmit={submit}><Input name="forwardingReference" label="Référence CODE-ORIGINE-DESTINATION" required/><p className="text-xs text-slate-400">Le serveur contrôle la destination, le poids canonique et l’état de l’acheminement.</p><Button disabled={disabled} className="w-full bg-lime-400 text-slate-950 hover:bg-lime-300 focus-visible:ring-lime-300 disabled:bg-slate-800 disabled:text-slate-400">{disabled?"Solde initial requis":title}</Button>{result&&<p className="text-sm text-slate-300">{result}</p>}</form></Panel>;
 }
 
 function AdminCommandForm({ action, title, accounts, onDone }: { action: string; title: string; accounts: Account[]; onDone: () => Promise<void> }) {
