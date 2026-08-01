@@ -17,7 +17,7 @@ export async function GET(request: Request) {
     const client = serviceClient();
     const [{ data: account, error: accountError }, { data: deliveries, error: deliveriesError }] = await Promise.all([
       client.from("stockage_accounts").select("status").eq("agency", agency).single(),
-      client.from("stockage_events").select("tracking_code,agency,business_date,occurred_at,actor_name,weight_kg_delta").eq("agency", agency).eq("event_type", "CONFIRMED_DELIVERY_RECORDED").order("occurred_at", { ascending: false }).limit(500)
+      client.from("stockage_events").select("event_id,tracking_code,agency,business_date,occurred_at,actor_name,weight_kg_delta").eq("agency", agency).eq("event_type", "CONFIRMED_DELIVERY_RECORDED").order("occurred_at", { ascending: false }).limit(500)
     ]);
     if (accountError || deliveriesError) return fail("STORAGE_QUEUE_READ_FAILED", 503);
     const result = await readAgentWorkQueue({ agency, accountActive: account?.status === "ACTIVE", deliveries: deliveries ?? [], filters: parseQueueFilters(new URL(request.url)) });

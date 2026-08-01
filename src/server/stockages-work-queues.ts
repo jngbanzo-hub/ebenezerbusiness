@@ -7,14 +7,14 @@ import { readAdminPayments } from "@/server/admin-payments-sheets";
 import { buildEncaissementsFinancialProjection } from "@/server/encaissements-financial-projection";
 import { requireStorageAgency, type StorageAgency } from "@/server/stockages-v2";
 
-export const QUEUE_SECTIONS = ["READY", "PENDING", "VERIFICATION", "RECENT"] as const;
+export const QUEUE_SECTIONS = ["TO_COLLECT", "PARTIAL", "READY", "VERIFICATION", "RECENT"] as const;
 export type QueueSection = (typeof QUEUE_SECTIONS)[number];
 
 export type QueueFilters = {
   section: QueueSection;
   query: string;
   paymentSite: "ALL" | "COO" | StorageAgency;
-  paymentStatus: "ALL" | "PAID" | "PENDING";
+  paymentStatus: "ALL" | "UNPAID" | "PARTIAL" | "PAID" | "VERIFICATION";
   paymentAgent: string;
   deliveryAgent: string;
   from: string;
@@ -35,12 +35,13 @@ export type WorkQueueItem = {
   paymentSites: string[];
   paymentAgents: string[];
   paymentLabel: string;
-  deliveryStatus: "READY" | "PAYMENT_PENDING" | "VERIFICATION_REQUIRED" | "DELIVERED";
+  deliveryStatus: "TO_COLLECT" | "PARTIAL_PAYMENT_REMAINING" | "READY" | "VERIFICATION_REQUIRED" | "DELIVERED";
   financialState: "COMPLETE" | "INCOMPLETE" | "CONFLICT";
   anomalies: string[];
   deliveredAt: string | null;
   businessDate: string | null;
   deliveredBy: string | null;
+  deliveryReference: string | null;
   canConfirmDelivery: boolean;
 };
 
@@ -65,6 +66,7 @@ export type WorkQueueAudit = {
 };
 
 type DeliveryRow = {
+  event_id?: string;
   tracking_code: string | null;
   agency: string;
   business_date: string;
@@ -81,7 +83,7 @@ export function parseQueueFilters(url: URL): QueueFilters {
   const paymentSite = (url.searchParams.get("paymentSite") ?? "ALL").toUpperCase();
   if (!["ALL", "COO", "FIH", "LSHI", "KLZ"].includes(paymentSite)) throw new Error("INVALID_PAYMENT_SITE");
   const paymentStatus = (url.searchParams.get("paymentStatus") ?? "ALL").toUpperCase();
-  if (!["ALL", "PAID", "PENDING"].includes(paymentStatus)) throw new Error("INVALID_PAYMENT_STATUS");
+  if (!["ALL", "UNPAID", "PARTIAL", "PAID", "VERIFICATION"].includes(paymentStatus)) throw new Error("INVALID_PAYMENT_STATUS");
   return {
     section: section as QueueSection,
     query: bounded(url.searchParams.get("query"), 80),
@@ -181,11 +183,27 @@ export function buildParcelWorkQueueAudit(input: {
     const weights = manifestRows.map((row) => parseStrictPositiveWeight(row.poidsRaw)).filter((value): value is number => value !== null);
     const weightKeys = new Set(weights.map((value) => value.toFixed(3)));
     const weightState = manifestRows.length === 0 || weights.length !== manifestRows.length ? "MISSING" : weightKeys.size === 1 ? "VALID" : "AMBIGUOUS";
+    const statusEligible = manifestRows.length > 0 && manifestRows.every((row) => isAdmissibleOperationalStatus(row.statutRaw));
     const financialState = financial.financialState;
     const fullyPaid = financial.deliveryEligible;
     const exactBalanceRemaining = financial.collectionEligible;
     const paymentSites = Array.from(new Set(payments.map((row) => row.agenceEncaissement)));
     const delivered = Boolean(delivery);
+    const blockingAnomalies = Array.from(new Set(financial.anomalies.concat(
+      weightState === "MISSING" ? "WEIGHT_MISSING" : weightState === "AMBIGUOUS" ? "WEIGHT_CONFLICT" : "",
+      statusEligible ? "" : "SOURCE_STATUS_INELIGIBLE"
+    ))).filter(Boolean);
+    const deliveryStatus: WorkQueueItem["deliveryStatus"] = delivered
+      ? "DELIVERED"
+      : blockingAnomalies.length > 0 || financialState !== "COMPLETE"
+        ? "VERIFICATION_REQUIRED"
+        : fullyPaid
+          ? "READY"
+          : exactBalanceRemaining && amountPaid === 0
+            ? "TO_COLLECT"
+            : exactBalanceRemaining && amountPaid !== null && amountPaid > 0
+              ? "PARTIAL_PAYMENT_REMAINING"
+              : "VERIFICATION_REQUIRED";
     return [{
       trackingCode,
       beneficiary: "Confidentiel",
@@ -198,13 +216,14 @@ export function buildParcelWorkQueueAudit(input: {
       paymentSites,
       paymentAgents: Array.from(new Set(payments.map((row) => row.agent).filter(Boolean))),
       paymentLabel: paymentLabel(paymentSites, fullyPaid, exactBalanceRemaining, amountPaid),
-      deliveryStatus: delivered ? "DELIVERED" : weightState !== "VALID" ? "VERIFICATION_REQUIRED" : fullyPaid ? "READY" : exactBalanceRemaining ? "PAYMENT_PENDING" : "VERIFICATION_REQUIRED",
+      deliveryStatus,
       financialState,
-      anomalies: Array.from(new Set(financial.anomalies.concat(weightState === "MISSING" ? "WEIGHT_MISSING" : weightState === "AMBIGUOUS" ? "WEIGHT_CONFLICT" : ""))).filter(Boolean),
+      anomalies: blockingAnomalies,
       deliveredAt: delivery?.occurred_at ?? null,
       businessDate: delivery?.business_date ?? null,
       deliveredBy: delivery?.actor_name ?? null,
-      canConfirmDelivery: input.accountActive && fullyPaid && financial.sourceEligible && !delivered && weightState === "VALID"
+      deliveryReference: delivery?.event_id ?? null,
+      canConfirmDelivery: input.accountActive && deliveryStatus === "READY"
     }];
   });
   return {
@@ -226,19 +245,19 @@ export function buildParcelWorkQueueAudit(input: {
 function filterQueue(items: WorkQueueItem[], filters: QueueFilters) {
   const query = normalizeSearch(filters.query);
   return items.filter((item) => {
-    const sectionMatches = filters.section === "READY" ? item.deliveryStatus === "READY" : filters.section === "PENDING" ? item.deliveryStatus === "PAYMENT_PENDING" : filters.section === "VERIFICATION" ? item.deliveryStatus === "VERIFICATION_REQUIRED" : item.deliveryStatus === "DELIVERED";
-    const paymentMatches = filters.paymentStatus === "ALL" || (filters.paymentStatus === "PAID" ? item.remainingBalance === 0 : item.remainingBalance !== 0);
+    const sectionMatches = filters.section === "TO_COLLECT" ? item.deliveryStatus === "TO_COLLECT" : filters.section === "PARTIAL" ? item.deliveryStatus === "PARTIAL_PAYMENT_REMAINING" : filters.section === "READY" ? item.deliveryStatus === "READY" : filters.section === "VERIFICATION" ? item.deliveryStatus === "VERIFICATION_REQUIRED" : item.deliveryStatus === "DELIVERED";
+    const paymentMatches = filters.paymentStatus === "ALL" || (filters.paymentStatus === "UNPAID" ? item.deliveryStatus === "TO_COLLECT" : filters.paymentStatus === "PARTIAL" ? item.deliveryStatus === "PARTIAL_PAYMENT_REMAINING" : filters.paymentStatus === "PAID" ? item.deliveryStatus === "READY" : item.deliveryStatus === "VERIFICATION_REQUIRED");
     return sectionMatches && (!query || normalizeSearch(`${item.trackingCode} ${item.beneficiary}`).includes(query)) && (filters.paymentSite === "ALL" || item.paymentSites.includes(filters.paymentSite)) && paymentMatches && (!filters.paymentAgent || item.paymentAgents.some((agent) => normalizeSearch(agent).includes(normalizeSearch(filters.paymentAgent)))) && (!filters.deliveryAgent || normalizeSearch(item.deliveredBy ?? "").includes(normalizeSearch(filters.deliveryAgent))) && (!filters.from || (item.businessDate ?? "9999-12-31") >= filters.from) && (!filters.to || (item.businessDate ?? "0000-01-01") <= filters.to);
   }).sort((a, b) => (b.deliveredAt ?? b.trackingCode).localeCompare(a.deliveredAt ?? a.trackingCode));
 }
 
 function paginate(items: WorkQueueItem[], page: number, pageSize: number) { const total = items.length; const totalPages = Math.max(1, Math.ceil(total / pageSize)); const safePage = Math.min(page, totalPages); return { items: items.slice((safePage - 1) * pageSize, safePage * pageSize), pagination: { page: safePage, pageSize, total, totalPages } }; }
-function summarizeQueue(items: WorkQueueItem[]) { return { totalDeduplicated: items.length, readyForDelivery: items.filter((item) => item.deliveryStatus === "READY").length, paymentPending: items.filter((item) => item.deliveryStatus === "PAYMENT_PENDING").length, verificationRequired: items.filter((item) => item.deliveryStatus === "VERIFICATION_REQUIRED").length, recentlyDelivered: items.filter((item) => item.deliveryStatus === "DELIVERED").length, weightToVerify: items.filter((item) => item.weightState !== "VALID").length, unknownAmounts: items.filter((item) => item.amountExpected === null).length, conflicts: items.filter((item) => item.financialState === "CONFLICT").length, activeCollectionButtons: items.filter((item) => item.deliveryStatus === "PAYMENT_PENDING" && item.remainingBalance !== null).length, activeDeliveryButtons: items.filter((item) => item.canConfirmDelivery).length }; }
+function summarizeQueue(items: WorkQueueItem[]) { return { totalDeduplicated: items.length, toCollect: items.filter((item) => item.deliveryStatus === "TO_COLLECT").length, partialPaymentRemaining: items.filter((item) => item.deliveryStatus === "PARTIAL_PAYMENT_REMAINING").length, readyForDelivery: items.filter((item) => item.deliveryStatus === "READY").length, verificationRequired: items.filter((item) => item.deliveryStatus === "VERIFICATION_REQUIRED").length, recentlyDelivered: items.filter((item) => item.deliveryStatus === "DELIVERED").length, weightToVerify: items.filter((item) => item.weightState !== "VALID").length, unknownAmounts: items.filter((item) => item.amountExpected === null).length, conflicts: items.filter((item) => item.financialState === "CONFLICT").length, activeCollectionButtons: items.filter((item) => item.deliveryStatus === "TO_COLLECT" || item.deliveryStatus === "PARTIAL_PAYMENT_REMAINING").length, activeDeliveryButtons: items.filter((item) => item.canConfirmDelivery).length }; }
 function paymentLabel(sites: string[], paid: boolean, exactBalanceRemaining: boolean, amountPaid: number | null) { if (paid && sites.length === 1 && sites[0] === "COO") return "Paiement intégral déjà effectué à COO — colis à remettre"; if (paid && sites.length > 1) return "Paiement réparti — prêt à remettre"; if (paid) return "Paiement complet — prêt à remettre"; if (exactBalanceRemaining) return sites.includes("COO") ? "Paiement partiel effectué à COO" : amountPaid === 0 ? "Aucun paiement — solde exact connu" : "Solde exact restant à encaisser"; return "Le montant attendu ou le solde exact n’est pas disponible. Vérification nécessaire avant encaissement."; }
 function normalizeCode(value: unknown) { const code = String(value ?? "").trim().replace(/\s+/g, "").toUpperCase(); return /^[A-Z0-9-]{3,40}$/.test(code) ? code : ""; }
 function manifestFingerprint(row: ManifestShipperRow) { return [row.dateRaw, row.codeColisRaw, row.poidsRaw, row.montantAttenduRaw, row.statutRaw].map((value) => String(value ?? "").trim()).join("\u001f"); }
 function isHistoricalClosedStatus(value: unknown) { const normalized = String(value ?? "").trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase(); return /LIVRE|ANNULE|ARCHIVE|CANCEL/.test(normalized); }
-function round(value: number) { return Math.round((value + Number.EPSILON) * 100) / 100; }
+function isAdmissibleOperationalStatus(value: unknown) { const normalized = String(value ?? "").trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/_/g, " ").toUpperCase(); return /(?:^|[^A-Z])(ENREGISTRE|EN ATTENTE|EN VOL|EN TRANSIT|ARRIVE|CODE RECU)(?:$|[^A-Z])/.test(normalized); }
 function normalizeSearch(value: string) { return value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase(); }
 function bounded(value: string | null, max: number) { const normalized = value?.trim() ?? ""; if (normalized.length > max) throw new Error("INVALID_FILTER"); return normalized; }
 function dateFilter(value: string | null) { const normalized = value?.trim() ?? ""; if (normalized && !/^\d{4}-\d{2}-\d{2}$/.test(normalized)) throw new Error("INVALID_DATE_FILTER"); return normalized; }

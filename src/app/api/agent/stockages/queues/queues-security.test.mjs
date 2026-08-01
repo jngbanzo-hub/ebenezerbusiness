@@ -25,7 +25,9 @@ test("les files sont en lecture seule et ne copient aucun paiement", () => {
 });
 
 test("l’interface sépare les files fiables, les vérifications et aucun Request ID visible", () => {
-  for (const title of ["COLIS PRÊTS À REMETTRE", "COLIS AVEC SOLDE RESTANT", "VÉRIFICATION NÉCESSAIRE", "LIVRAISONS RÉCENTES", "RECHERCHER UN AUTRE COLIS"]) assert.match(ui, new RegExp(title));
+  for (const title of ["COLIS À ENCAISSER", "COLIS AVEC SOLDE RESTANT", "COLIS PRÊTS À REMETTRE", "VÉRIFICATION NÉCESSAIRE", "LIVRAISONS RÉCENTES", "RECHERCHER UN AUTRE COLIS"]) assert.match(ui, new RegExp(title));
+  assert.match(ui, /label="Encaisser"/);
+  assert.match(ui, /label="Encaisser le solde"/);
   assert.doesNotMatch(ui, /label=["']Request ID|>Request ID</);
   assert.match(ui, /\/agent\/encaissement\?code=/);
 });

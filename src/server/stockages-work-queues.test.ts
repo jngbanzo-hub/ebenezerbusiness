@@ -22,7 +22,12 @@ test("paiement total réparti entre deux sites reste un seul colis prêt", () =>
 
 test("paiement partiel reste dans la file solde restant", () => {
   const [item] = buildParcelWorkQueues({ payments: [payment({ montantPaye: 35, soldeRestant: 65, statutPaiement: "PARTIELLEMENT PAYE" })], manifest: [manifest("TEST001", 2)], deliveries: [], agency: "LSHI", accountActive: true });
-  assert.equal(item.deliveryStatus, "PAYMENT_PENDING"); assert.equal(item.remainingBalance, 65); assert.equal(item.canConfirmDelivery, false);
+  assert.equal(item.deliveryStatus, "PARTIAL_PAYMENT_REMAINING"); assert.equal(item.amountPaid, 35); assert.equal(item.remainingBalance, 65); assert.equal(item.canConfirmDelivery, false);
+});
+
+test("montant fiable sans paiement est classé uniquement à encaisser", () => {
+  const [item] = buildParcelWorkQueues({ payments: [], manifest: [{ ...manifest("TEST001", 2), montantAttenduRaw: 77 }], deliveries: [], agency: "LSHI", accountActive: true });
+  assert.equal(item.deliveryStatus, "TO_COLLECT"); assert.equal(item.amountExpected, 77); assert.equal(item.amountPaid, 0); assert.equal(item.remainingBalance, 77);
 });
 
 test("absence de paiement et de montant attendu exige une vérification sans faux solde", () => {
@@ -43,6 +48,23 @@ test("montants attendus divergents bloquent l'encaissement et la remise", () => 
   assert.ok(item.anomalies.includes("PAYMENT_EXPECTED_AMOUNT_CONFLICT"));
 });
 
+test("trop-perçu reste exclusivement en vérification", () => {
+  const [item] = buildParcelWorkQueues({ payments: [payment({ montantPaye: 120, soldeRestant: -20 })], manifest: [manifest("TEST001", 2)], deliveries: [], agency: "LSHI", accountActive: true });
+  assert.equal(item.deliveryStatus, "VERIFICATION_REQUIRED"); assert.equal(item.canConfirmDelivery, false); assert.ok(item.anomalies.includes("PAYMENT_OVERPAID"));
+});
+
+test("statut opérationnel inconnu exige une vérification", () => {
+  const [item] = buildParcelWorkQueues({ payments: [], manifest: [{ ...manifest("TEST001", 2), statutRaw: "STATUT MYSTERE" }], deliveries: [], agency: "LSHI", accountActive: true });
+  assert.equal(item.deliveryStatus, "VERIFICATION_REQUIRED"); assert.ok(item.anomalies.includes("SOURCE_STATUS_INELIGIBLE"));
+});
+
+test("les libellés opérationnels décorés de la feuille restent admissibles", () => {
+  for (const statutRaw of ["⚪ En Attente", "✈️ En Vol", "🚚 En Transit", "🏢 Arrivé"]) {
+    const [item] = buildParcelWorkQueues({ payments: [], manifest: [{ ...manifest("TEST001", 2), statutRaw }], deliveries: [], agency: "LSHI", accountActive: true });
+    assert.equal(item.deliveryStatus, "TO_COLLECT", statutRaw);
+  }
+});
+
 test("même code dans deux destinations reste scoped par le couple destination/code Encaissements", () => {
   const rows = [manifest("TEST001", 2), { ...manifest("TEST001", 2), sourceSite: "KLZ" as const, rowNumber: 8 }];
   const [item] = buildParcelWorkQueues({ payments: [payment()], manifest: rows, deliveries: [], agency: "LSHI", accountActive: true });
@@ -53,8 +75,8 @@ test("même code dans deux destinations reste scoped par le couple destination/c
 });
 
 test("livraison confirmée exclut le colis des prêts et conserve Agent/date/poids", () => {
-  const [item] = buildParcelWorkQueues({ payments: [payment()], manifest: [manifest("TEST001", 2)], deliveries: [{ tracking_code: "TEST001", agency: "LSHI", business_date: "2026-08-01", occurred_at: "2026-08-01T12:00:00Z", actor_name: "Agent LSHI", weight_kg_delta: -2 }], agency: "LSHI", accountActive: true });
-  assert.equal(item.deliveryStatus, "DELIVERED"); assert.equal(item.deliveredBy, "Agent LSHI"); assert.equal(item.businessDate, "2026-08-01"); assert.equal(item.canConfirmDelivery, false);
+  const [item] = buildParcelWorkQueues({ payments: [payment()], manifest: [manifest("TEST001", 2)], deliveries: [{ event_id: "evt-delivery-1", tracking_code: "TEST001", agency: "LSHI", business_date: "2026-08-01", occurred_at: "2026-08-01T12:00:00Z", actor_name: "Agent LSHI", weight_kg_delta: -2 }], agency: "LSHI", accountActive: true });
+  assert.equal(item.deliveryStatus, "DELIVERED"); assert.equal(item.deliveredBy, "Agent LSHI"); assert.equal(item.businessDate, "2026-08-01"); assert.equal(item.deliveryReference, "evt-delivery-1"); assert.equal(item.canConfirmDelivery, false);
 });
 
 test("mauvaise agence absente et poids ambigu bloque la livraison", () => {
@@ -100,4 +122,6 @@ test("filtres et pagination sont bornés côté serveur", () => {
   assert.throws(() => parseQueueFilters(new URL("https://example.test?section=READY&pageSize=500")), /INVALID_PAGINATION/);
   assert.throws(() => parseQueueFilters(new URL("https://example.test?section=UNKNOWN")), /INVALID_QUEUE_SECTION/);
   assert.equal(parseQueueFilters(new URL("https://example.test?section=VERIFICATION")).section, "VERIFICATION");
+  assert.equal(parseQueueFilters(new URL("https://example.test?section=TO_COLLECT&paymentStatus=UNPAID")).paymentStatus, "UNPAID");
+  assert.equal(parseQueueFilters(new URL("https://example.test?section=PARTIAL&paymentStatus=PARTIAL")).section, "PARTIAL");
 });
