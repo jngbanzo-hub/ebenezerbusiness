@@ -21,5 +21,7 @@ grant select on table public.stockage_current_balances, public.stockage_current_
 
 revoke all on function public.reject_stockage_immutable_mutation()
   from public, anon, authenticated, service_role;
+revoke all on function public.reject_stockage_anomaly_delete()
+  from public, anon, authenticated, service_role;
 
 commit;

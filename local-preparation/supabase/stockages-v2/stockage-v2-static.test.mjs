@@ -85,6 +85,9 @@ test("les anomalies prévues sont enregistrables par une RPC serveur", () => {
     assert.match(schema, new RegExp(type));
   }
   assert.match(admin, /function public\.record_stockage_anomaly/i);
+  assert.match(admin, /function public\.resolve_stockage_anomaly/i);
+  assert.match(schema, /before delete on public\.stockage_anomalies/i);
+  assert.match(admin, /insert into public\.stockage_admin_audit[\s\S]*'STOCKAGE_ANOMALY_RESOLVED'/i);
 });
 
 test("le test transactionnel se termine par ROLLBACK", () => {

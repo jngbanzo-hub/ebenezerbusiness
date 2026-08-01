@@ -11,6 +11,7 @@ drop view if exists public.stockage_current_day;
 drop view if exists public.stockage_current_balances;
 
 drop function if exists public.record_stockage_anomaly(text,text,text,uuid,jsonb,uuid);
+drop function if exists public.resolve_stockage_anomaly(text,text,uuid,uuid);
 drop function if exists public.record_stock_correction(text,integer,numeric,date,text,uuid,uuid);
 drop function if exists public.record_admin_stock_adjustment(text,text,integer,numeric,date,text,uuid,uuid);
 drop function if exists public.confirm_parcel_delivery(text,text,numeric,text,text,date,boolean,jsonb,uuid,uuid);
@@ -24,5 +25,6 @@ drop table if exists public.stockage_parcels;
 drop table if exists public.stockage_events;
 drop table if exists public.stockage_accounts;
 drop function if exists public.reject_stockage_immutable_mutation();
+drop function if exists public.reject_stockage_anomaly_delete();
 
 commit;

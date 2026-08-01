@@ -148,7 +148,7 @@ create index stockage_audit_agency_date_idx
 
 create table public.stockage_anomalies (
   anomaly_id text primary key,
-  agency text,
+  agency text not null,
   tracking_code text,
   request_id uuid,
   anomaly_type text not null,
@@ -158,7 +158,7 @@ create table public.stockage_anomalies (
   resolved_at timestamptz,
   resolved_by uuid references auth.users(id),
   resolution_reason text,
-  constraint stockage_anomalies_agency_check check (agency is null or agency in ('FIH', 'LSHI', 'KLZ')),
+  constraint stockage_anomalies_agency_check check (agency in ('FIH', 'LSHI', 'KLZ')),
   constraint stockage_anomalies_type_check check (anomaly_type in (
     'WEIGHT_MISSING', 'WEIGHT_AMBIGUOUS', 'WEIGHT_CONFLICT', 'AGENCY_MISMATCH',
     'INSUFFICIENT_STOCK', 'PARCEL_NOT_FOUND', 'DUPLICATE_DELIVERY_ATTEMPT',
@@ -184,5 +184,12 @@ create trigger stockage_events_reject_mutation before update or delete on public
   for each row execute function public.reject_stockage_immutable_mutation();
 create trigger stockage_audit_reject_mutation before update or delete on public.stockage_admin_audit
   for each row execute function public.reject_stockage_immutable_mutation();
+
+create function public.reject_stockage_anomaly_delete()
+returns trigger language plpgsql security invoker
+set search_path = pg_catalog, public
+as $$ begin raise exception 'STOCKAGE_ANOMALY_DELETE_FORBIDDEN'; end; $$;
+create trigger stockage_anomalies_reject_delete before delete on public.stockage_anomalies
+  for each row execute function public.reject_stockage_anomaly_delete();
 
 commit;

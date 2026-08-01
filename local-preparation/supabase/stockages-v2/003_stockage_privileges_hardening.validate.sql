@@ -13,6 +13,7 @@ where specific_schema = 'public'
   and routine_name in (
     'record_opening_stock', 'record_manual_arrival', 'confirm_parcel_delivery',
     'record_admin_stock_adjustment', 'record_stock_correction', 'record_stockage_anomaly'
+    , 'resolve_stockage_anomaly'
   )
 order by routine_name, grantee;
 

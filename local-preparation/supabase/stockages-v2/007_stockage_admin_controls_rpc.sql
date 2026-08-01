@@ -144,7 +144,7 @@ begin
      or upper(btrim(v_actor.role)) not in ('AGENT', 'ADMIN') then
     raise exception 'AUTHORIZED_ACTOR_REQUIRED';
   end if;
-  if v_agency is not null and v_agency not in ('FIH', 'LSHI', 'KLZ') then
+  if v_agency is null or v_agency not in ('FIH', 'LSHI', 'KLZ') then
     raise exception 'INVALID_STORAGE_AGENCY';
   end if;
   if v_type not in ('WEIGHT_MISSING','WEIGHT_AMBIGUOUS','WEIGHT_CONFLICT','AGENCY_MISMATCH',
@@ -169,4 +169,61 @@ $$;
 revoke all on function public.record_stockage_anomaly(text,text,text,uuid,jsonb,uuid)
   from public, anon, authenticated;
 grant execute on function public.record_stockage_anomaly(text,text,text,uuid,jsonb,uuid) to service_role;
+
+create or replace function public.resolve_stockage_anomaly(
+  p_anomaly_id text, p_reason text, p_request_id uuid, p_actor_id uuid
+) returns jsonb language plpgsql security definer
+set search_path = pg_catalog, public, extensions
+as $$
+declare
+  v_admin public.agents%rowtype;
+  v_anomaly public.stockage_anomalies%rowtype;
+  v_existing public.stockage_admin_audit%rowtype;
+  v_hash text;
+begin
+  select * into v_admin from public.agents where id = p_actor_id;
+  if not found or v_admin.actif is not true or upper(btrim(v_admin.role)) <> 'ADMIN' then
+    raise exception 'ADMIN_REQUIRED';
+  end if;
+  if btrim(coalesce(p_anomaly_id, '')) = '' or btrim(coalesce(p_reason, '')) = ''
+     or p_request_id is null then
+    raise exception 'INVALID_ANOMALY_RESOLUTION';
+  end if;
+  v_hash := encode(extensions.digest(jsonb_build_object(
+    'type','STOCKAGE_ANOMALY_RESOLVED','anomalyId',btrim(p_anomaly_id),
+    'reason',btrim(p_reason),'actorId',p_actor_id
+  )::text, 'sha256'), 'hex');
+  select * into v_existing from public.stockage_admin_audit where request_id = p_request_id;
+  if found then
+    if v_existing.action <> 'STOCKAGE_ANOMALY_RESOLVED'
+       or v_existing.metadata->>'commandHash' <> v_hash then
+      raise exception 'IDEMPOTENCY_CONFLICT';
+    end if;
+    return jsonb_build_object('anomalyId',btrim(p_anomaly_id),'status','RESOLVED','replayed',true);
+  end if;
+  select * into v_anomaly from public.stockage_anomalies
+    where anomaly_id = btrim(p_anomaly_id) for update;
+  if not found then raise exception 'STOCKAGE_ANOMALY_NOT_FOUND'; end if;
+  if v_anomaly.status <> 'OPEN' then raise exception 'STOCKAGE_ANOMALY_ALREADY_RESOLVED'; end if;
+  update public.stockage_anomalies set status='RESOLVED',resolved_at=clock_timestamp(),
+    resolved_by=p_actor_id,resolution_reason=btrim(p_reason)
+  where anomaly_id=v_anomaly.anomaly_id and status='OPEN';
+  if not found then raise exception 'STOCKAGE_ANOMALY_VERSION_CONFLICT'; end if;
+  insert into public.stockage_admin_audit(
+    audit_id,action,agency,request_id,admin_id,admin_name,old_value,new_value,
+    reason,occurred_at,metadata
+  ) values (
+    'audit-'||encode(extensions.digest(p_request_id::text,'sha256'),'hex'),
+    'STOCKAGE_ANOMALY_RESOLVED',v_anomaly.agency,p_request_id,p_actor_id,btrim(v_admin.nom),
+    jsonb_build_object('anomalyId',v_anomaly.anomaly_id,'status','OPEN'),
+    jsonb_build_object('anomalyId',v_anomaly.anomaly_id,'status','RESOLVED'),
+    btrim(p_reason),clock_timestamp(),jsonb_build_object('commandHash',v_hash)
+  );
+  return jsonb_build_object('anomalyId',v_anomaly.anomaly_id,'status','RESOLVED','replayed',false);
+end;
+$$;
+
+revoke all on function public.resolve_stockage_anomaly(text,text,uuid,uuid)
+  from public, anon, authenticated;
+grant execute on function public.resolve_stockage_anomaly(text,text,uuid,uuid) to service_role;
 commit;

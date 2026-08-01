@@ -30,6 +30,7 @@ Documents :
 - `MIGRATION_PLAN.md` : neutralisation de l'ancien moteur et ordre de migration ;
 - `ROLLBACK.md` : sauvegarde, critères d'arrêt et restauration ;
 - `WEIGHT_SOURCE.md` : résolution stricte du poids et gestion des divergences ;
+- `weight-source.ts` : résolveur pur préparatoire et mocks des sources autorisées ;
 - `contracts.ts` : contrats TypeScript préparatoires purs.
 
 Les migrations, RPC, validations et tests SQL préparatoires sont versionnés

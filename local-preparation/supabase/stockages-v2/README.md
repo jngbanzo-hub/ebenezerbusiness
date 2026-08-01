@@ -23,6 +23,8 @@ Le rollback global est volontairement séparé et destructif. Il ne doit être e
 - Verrou par compte agence pour éviter les pertes de mise à jour ; verrou du colis avant le compte pour une livraison.
 - Une seule livraison par code colis, idempotence par `request_id`, versions séquentielles.
 - Les événements et l'Audit sont immutables ; les corrections sont compensatoires.
+- Les anomalies sont créées par une RPC serveur, résolues uniquement par un Admin actif,
+  auditées et impossibles à supprimer silencieusement.
 - Les Agents lisent uniquement leur agence. Les Admins lisent les trois agences, l'Audit et les anomalies. Toutes les écritures passent par des RPC `SECURITY DEFINER` exécutables uniquement par `service_role`.
 - La date métier est fournie explicitement par le serveur selon `Africa/Porto-Novo` ; aucune vue ne choisit implicitement la date UTC.
 - Le paiement peut être affiché comme contexte mais ne déclenche jamais une livraison.
