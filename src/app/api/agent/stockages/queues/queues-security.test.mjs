@@ -25,3 +25,10 @@ test("l’interface sépare les files fiables, les vérifications et aucun Reque
   assert.doesNotMatch(ui, /label=["']Request ID|>Request ID</);
   assert.match(ui, /\/agent\/encaissement\?code=/);
 });
+
+test("l’interface Stockages utilise les couleurs officielles sans bouton bleu principal", () => {
+  assert.match(ui, /bg-lime-400/);
+  assert.match(ui, /text-amber-300/);
+  assert.match(ui, /disabled:bg-slate-800/);
+  assert.doesNotMatch(ui, /(?:bg|text|border)-blue-/);
+});

@@ -12,10 +12,36 @@ test("montant canonique connu sans paiement produit un solde exact", () => {
   assert.equal(projection.amountExpected, 100); assert.equal(projection.totalPaid, 0); assert.equal(projection.remainingBalance, 100); assert.equal(projection.collectionEligible, true);
 });
 
+test("paiement partiel COO conserve un solde fiable", () => {
+  const projection = buildEncaissementsFinancialProjection({ trackingCode: "JL100", destination: "KLZ", manifestRows: [manifest()], payments: [payment()] });
+  assert.equal(projection.totalPaid, 40); assert.equal(projection.remainingBalance, 60); assert.equal(projection.collectionEligible, true); assert.equal(projection.deliveryEligible, false);
+});
+
+test("paiement total COO rend le colis financièrement éligible à la remise", () => {
+  const projection = buildEncaissementsFinancialProjection({ trackingCode: "JL100", destination: "KLZ", manifestRows: [manifest()], payments: [payment({ montantPaye: 100, soldeRestant: 0 })] });
+  assert.equal(projection.remainingBalance, 0); assert.equal(projection.paymentComplete, true); assert.equal(projection.deliveryEligible, true); assert.equal(projection.dataQuality, "RELIABLE");
+});
+
 test("paiements COO et destination sont agrégés sans doublon requestId", () => {
   const payments = [payment(), payment({ id: "COO:3" }), payment({ id: "KLZ:2", paymentRequestId: "req-2", agenceEncaissement: "KLZ", montantPaye: 60, soldeRestant: 0 })];
   const projection = buildEncaissementsFinancialProjection({ trackingCode: "JL100", destination: "KLZ", manifestRows: [manifest()], payments });
   assert.equal(projection.paymentCount, 2); assert.equal(projection.totalPaid, 100); assert.equal(projection.remainingBalance, 0); assert.deepEqual(projection.paymentSites.sort(), ["COO", "KLZ"]);
+});
+
+test("paiement total à destination est reconnu", () => {
+  const projection = buildEncaissementsFinancialProjection({ trackingCode: "JL100", destination: "KLZ", manifestRows: [manifest()], payments: [payment({ agenceEncaissement: "KLZ", montantPaye: 100, soldeRestant: 0 })] });
+  assert.deepEqual(projection.paymentSites, ["KLZ"]); assert.equal(projection.deliveryEligible, true);
+});
+
+test("anciennes lignes strictement identiques sans requestId sont dédupliquées", () => {
+  const legacy = payment({ paymentRequestId: undefined });
+  const projection = buildEncaissementsFinancialProjection({ trackingCode: "JL100", destination: "KLZ", manifestRows: [manifest()], payments: [legacy, { ...legacy, id: "COO:99" }] });
+  assert.equal(projection.paymentCount, 1); assert.equal(projection.totalPaid, 40);
+});
+
+test("montant attendu inconnu ne produit aucun faux total ni faux solde", () => {
+  const projection = buildEncaissementsFinancialProjection({ trackingCode: "JL100", destination: "KLZ", manifestRows: [manifest({ montantAttenduRaw: "" })], payments: [] });
+  assert.equal(projection.amountExpected, null); assert.equal(projection.totalPaid, null); assert.equal(projection.remainingBalance, null); assert.equal(projection.dataQuality, "INCOMPLETE");
 });
 
 test("trop-perçu et divergence de destination sont bloquants", () => {

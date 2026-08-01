@@ -29,7 +29,7 @@ export type WorkQueueItem = {
   weightKg: number | null;
   weightState: "VALID" | "MISSING" | "AMBIGUOUS";
   amountExpected: number | null;
-  amountPaid: number;
+  amountPaid: number | null;
   remainingBalance: number | null;
   paymentSites: string[];
   paymentAgents: string[];
@@ -112,7 +112,7 @@ export function buildParcelWorkQueues(input: {
     const payments = paymentsByCode.get(trackingCode) ?? [];
     const financial = buildEncaissementsFinancialProjection({ trackingCode, destination: input.agency, manifestRows: input.manifest, payments: input.payments });
     const amountExpected = financial.amountExpected;
-    const amountPaid = financial.totalPaid ?? 0;
+    const amountPaid = financial.totalPaid;
     const remainingBalance = financial.remainingBalance;
     const manifestRows = manifestByCode.get(trackingCode) ?? [];
     const weights = manifestRows.map((row) => parseWeight(row.poidsRaw)).filter((value): value is number => value !== null);
@@ -121,8 +121,8 @@ export function buildParcelWorkQueues(input: {
     const weightState = manifestRows.length === 0 || weights.length !== manifestRows.length ? "MISSING" : weightKeys.size === 1 && !destinationConflict ? "VALID" : "AMBIGUOUS";
     const delivery = deliveryByCode.get(trackingCode);
     const financialState = financial.financialState;
-    const fullyPaid = financialState === "COMPLETE" && remainingBalance === 0;
-    const exactBalanceRemaining = financialState === "COMPLETE" && remainingBalance !== null && remainingBalance > 0;
+    const fullyPaid = financial.deliveryEligible;
+    const exactBalanceRemaining = financial.collectionEligible;
     const paymentSites = Array.from(new Set(payments.map((row) => row.agenceEncaissement)));
     const delivered = Boolean(delivery);
     return {
@@ -137,7 +137,7 @@ export function buildParcelWorkQueues(input: {
       paymentSites,
       paymentAgents: Array.from(new Set(payments.map((row) => row.agent).filter(Boolean))),
       paymentLabel: paymentLabel(paymentSites, fullyPaid, exactBalanceRemaining, amountPaid),
-      deliveryStatus: delivered ? "DELIVERED" : fullyPaid ? "READY" : exactBalanceRemaining ? "PAYMENT_PENDING" : "VERIFICATION_REQUIRED",
+      deliveryStatus: delivered ? "DELIVERED" : weightState !== "VALID" ? "VERIFICATION_REQUIRED" : fullyPaid ? "READY" : exactBalanceRemaining ? "PAYMENT_PENDING" : "VERIFICATION_REQUIRED",
       financialState,
       anomalies: Array.from(new Set(financial.anomalies.concat(weightState === "MISSING" ? "WEIGHT_MISSING" : weightState === "AMBIGUOUS" ? "WEIGHT_CONFLICT" : ""))).filter(Boolean),
       deliveredAt: delivery?.occurred_at ?? null,
@@ -159,7 +159,7 @@ function filterQueue(items: WorkQueueItem[], filters: QueueFilters) {
 
 function paginate(items: WorkQueueItem[], page: number, pageSize: number) { const total = items.length; const totalPages = Math.max(1, Math.ceil(total / pageSize)); const safePage = Math.min(page, totalPages); return { items: items.slice((safePage - 1) * pageSize, safePage * pageSize), pagination: { page: safePage, pageSize, total, totalPages } }; }
 function summarizeQueue(items: WorkQueueItem[]) { return { totalDeduplicated: items.length, readyForDelivery: items.filter((item) => item.deliveryStatus === "READY").length, paymentPending: items.filter((item) => item.deliveryStatus === "PAYMENT_PENDING").length, verificationRequired: items.filter((item) => item.deliveryStatus === "VERIFICATION_REQUIRED").length, recentlyDelivered: items.filter((item) => item.deliveryStatus === "DELIVERED").length, weightToVerify: items.filter((item) => item.weightState !== "VALID").length, unknownAmounts: items.filter((item) => item.amountExpected === null).length, conflicts: items.filter((item) => item.financialState === "CONFLICT").length, activeCollectionButtons: items.filter((item) => item.deliveryStatus === "PAYMENT_PENDING" && item.remainingBalance !== null).length, activeDeliveryButtons: items.filter((item) => item.canConfirmDelivery).length }; }
-function paymentLabel(sites: string[], paid: boolean, exactBalanceRemaining: boolean, amountPaid: number) { if (paid && sites.length === 1 && sites[0] === "COO") return "Paiement intégral déjà effectué à COO — colis à remettre"; if (paid && sites.length > 1) return "Paiement réparti — prêt à remettre"; if (paid) return "Paiement complet — prêt à remettre"; if (exactBalanceRemaining) return sites.includes("COO") ? "Paiement partiel effectué à COO" : amountPaid === 0 ? "Aucun paiement — solde exact connu" : "Solde exact restant à encaisser"; return "Le montant attendu ou le solde exact n’est pas disponible. Vérification nécessaire avant encaissement."; }
+function paymentLabel(sites: string[], paid: boolean, exactBalanceRemaining: boolean, amountPaid: number | null) { if (paid && sites.length === 1 && sites[0] === "COO") return "Paiement intégral déjà effectué à COO — colis à remettre"; if (paid && sites.length > 1) return "Paiement réparti — prêt à remettre"; if (paid) return "Paiement complet — prêt à remettre"; if (exactBalanceRemaining) return sites.includes("COO") ? "Paiement partiel effectué à COO" : amountPaid === 0 ? "Aucun paiement — solde exact connu" : "Solde exact restant à encaisser"; return "Le montant attendu ou le solde exact n’est pas disponible. Vérification nécessaire avant encaissement."; }
 function normalizeCode(value: unknown) { const code = String(value ?? "").trim().toUpperCase(); return /^[A-Z0-9][A-Z0-9._/-]{1,63}$/.test(code) ? code : ""; }
 function parseWeight(value: unknown) { const parsed = typeof value === "number" ? value : Number(String(value ?? "").replace(",", ".")); return Number.isFinite(parsed) && parsed > 0 ? parsed : null; }
 function round(value: number) { return Math.round((value + Number.EPSILON) * 100) / 100; }

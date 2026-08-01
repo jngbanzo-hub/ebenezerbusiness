@@ -15,6 +15,8 @@ export type ParcelFinancialProjection = {
   paymentCount: number;
   paymentComplete: boolean;
   collectionEligible: boolean;
+  deliveryEligible: boolean;
+  dataQuality: "RELIABLE" | "INCOMPLETE" | "CONFLICT";
   sourceStatus: string;
   sourceEligible: boolean;
   financialState: "COMPLETE" | "INCOMPLETE" | "CONFLICT";
@@ -65,6 +67,8 @@ export function buildEncaissementsFinancialProjection(input: {
     paymentCount: matchingPayments.length,
     paymentComplete: remainingBalance === 0,
     collectionEligible: sourceEligible && financialState === "COMPLETE" && remainingBalance !== null && remainingBalance > 0,
+    deliveryEligible: sourceEligible && financialState === "COMPLETE" && remainingBalance === 0,
+    dataQuality: financialState === "COMPLETE" ? "RELIABLE" : financialState,
     sourceStatus,
     sourceEligible,
     financialState,
@@ -76,11 +80,15 @@ function deduplicatePayments(payments: readonly AdminPayment[]) {
   const seen = new Set<string>();
   return payments.filter((payment) => {
     const requestId = payment.paymentRequestId?.trim().toLowerCase();
-    const key = requestId ? `request:${requestId}` : `row:${payment.id}`;
+    const key = requestId ? `request:${requestId}` : `legacy:${legacyPaymentFingerprint(payment)}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+}
+
+function legacyPaymentFingerprint(payment: AdminPayment) {
+  return [payment.dateTime, normalizeCode(payment.codeColis), payment.destinationCode, payment.agenceEncaissement, round(payment.montantPaye).toFixed(2), payment.reference.trim().toUpperCase(), payment.modePaiement.trim().toUpperCase(), payment.agent.trim().toUpperCase()].join("\u001f");
 }
 
 function normalizeCode(value: unknown) { return String(value ?? "").trim().toUpperCase(); }

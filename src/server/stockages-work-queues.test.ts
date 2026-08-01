@@ -59,7 +59,17 @@ test("livraison confirmée exclut le colis des prêts et conserve Agent/date/poi
 
 test("mauvaise agence absente et poids ambigu bloque la livraison", () => {
   const items = buildParcelWorkQueues({ payments: [payment(), payment({ id: "FIH:2", codeColis: "OTHER", destinationCode: "FIH" })], manifest: [manifest("TEST001", 2), { ...manifest("TEST001", 3), rowNumber: 3 }], deliveries: [], agency: "LSHI", accountActive: true });
-  assert.equal(items.length, 1); assert.equal(items[0].weightState, "AMBIGUOUS"); assert.equal(items[0].canConfirmDelivery, false);
+  assert.equal(items.length, 1); assert.equal(items[0].weightState, "AMBIGUOUS"); assert.equal(items[0].deliveryStatus, "VERIFICATION_REQUIRED"); assert.equal(items[0].canConfirmDelivery, false);
+});
+
+test("poids absent classe toujours le colis en vérification", () => {
+  const [item] = buildParcelWorkQueues({ payments: [payment()], manifest: [{ ...manifest("TEST001", 2), poidsRaw: "" }], deliveries: [], agency: "LSHI", accountActive: true });
+  assert.equal(item.weightState, "MISSING"); assert.equal(item.deliveryStatus, "VERIFICATION_REQUIRED"); assert.equal(item.canConfirmDelivery, false);
+});
+
+test("statut source inéligible bloque les files actives", () => {
+  const [item] = buildParcelWorkQueues({ payments: [payment()], manifest: [{ ...manifest("TEST001", 2), statutRaw: "LIVRÉ" }], deliveries: [], agency: "LSHI", accountActive: true });
+  assert.equal(item.deliveryStatus, "VERIFICATION_REQUIRED"); assert.ok(item.anomalies.includes("SOURCE_STATUS_INELIGIBLE")); assert.equal(item.canConfirmDelivery, false);
 });
 
 test("compte SUSPENDED laisse les listes lisibles mais bloque la remise", () => {
