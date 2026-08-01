@@ -41,12 +41,15 @@ export function parseShipmentStatistics(rows: unknown[][]): ShipmentStatistics {
   return summarizeShipments(shipments);
 }
 
-export function filterShipmentStatistics(rows: ShipmentStatisticRow[], filters: { from?: string; to?: string; company?: string; destination?: string; status?: string }) {
+export function filterShipmentStatistics(rows: ShipmentStatisticRow[], filters: { from?: string; to?: string; company?: string; destination?: string; status?: string; arrival?: string; search?: string }) {
+  const search = normalize(filters.search);
   return summarizeShipments(rows.filter((row) =>
     (!filters.from || row.date >= filters.from) && (!filters.to || row.date <= filters.to) &&
     (!filters.company || filters.company === "ALL" || row.company === filters.company) &&
     (!filters.destination || filters.destination === "ALL" || row.destination === filters.destination) &&
-    (!filters.status || filters.status === "ALL" || row.status.toUpperCase() === filters.status.toUpperCase())
+    (!filters.status || filters.status === "ALL" || normalize(row.status) === filters.status) &&
+    (!filters.arrival || filters.arrival === "ALL" || (filters.arrival === "ARRIVED" ? Boolean(row.arrivedGroupages || row.arrivalDate) : !row.arrivedGroupages && !row.arrivalDate)) &&
+    (!search || normalize(`${row.groupageCodes} ${row.arrivedGroupages}`).includes(search))
   ));
 }
 
@@ -71,3 +74,4 @@ function normalizeDate(value: unknown) {
   return /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : null;
 }
 function parseParcelCount(...values: unknown[]) { for (const value of values) { const match = text(value).match(/(\d+)\s*(?:COLIS|PCS)/i); if (match) return Number(match[1]); } return null; }
+function normalize(value: unknown) { return text(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim().replace(/\s+/g, " "); }

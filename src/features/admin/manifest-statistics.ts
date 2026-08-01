@@ -61,10 +61,14 @@ function toNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-export function filterManifestStatistics(statistics: ManifestStatistics, year?: number, month?: number) {
+export function filterManifestStatistics(statistics: ManifestStatistics, filters: { year?: number; month?: number; fromMonth?: string; toMonth?: string } = {}) {
   const filter = (rows: ManifestMonthlyStatistic[]) => rows.filter((row) => {
     const parsed = parseMonthYear(row.month);
-    return (!year || row.year === year) && (!month || parsed?.month === month);
+    const key = parsed ? `${row.year}-${String(parsed.month).padStart(2, "0")}` : "";
+    return (!filters.year || row.year === filters.year) && (!filters.month || parsed?.month === filters.month) && (!filters.fromMonth || key >= filters.fromMonth) && (!filters.toMonth || key <= filters.toMonth);
   });
-  return { ...statistics, kilograms: filter(statistics.kilograms), parcels: filter(statistics.parcels) };
+  const kilograms = filter(statistics.kilograms); const parcels = filter(statistics.parcels);
+  return { kilograms, parcels, annualKilograms: sumRows(kilograms), annualParcels: sumRows(parcels) };
 }
+
+function sumRows(rows: ManifestMonthlyStatistic[]): ManifestMonthlyStatistic | null { if (!rows.length) return null; return rows.reduce((total, row) => ({ month: "TOTAL FILTRÉ", year: row.year, fih: total.fih + row.fih, lshi: total.lshi + row.lshi, klz: total.klz + row.klz, total: total.total + row.total }), { month: "TOTAL FILTRÉ", year: rows[0].year, fih: 0, lshi: 0, klz: 0, total: 0 }); }
