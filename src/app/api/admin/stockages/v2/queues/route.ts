@@ -13,12 +13,13 @@ export async function GET(request: Request) {
     const auth = await authorizeAdminRequest(request); if (!auth.authorized) return fail("ACCESS_DENIED", auth.status);
     const url = new URL(request.url); const agency = requireStorageAgency(url.searchParams.get("agency") ?? "");
     const client = serviceClient();
-    const [{ data: account, error: accountError }, { data: deliveries, error: deliveriesError }] = await Promise.all([
+    const [{ data: account, error: accountError }, { data: deliveries, error: deliveriesError }, { data: physicalParcels, error: physicalError }] = await Promise.all([
       client.from("stockage_accounts").select("status").eq("agency", agency).single(),
-      client.from("stockage_events").select("event_id,tracking_code,agency,business_date,occurred_at,actor_name,weight_kg_delta").eq("agency", agency).eq("event_type", "CONFIRMED_DELIVERY_RECORDED").order("occurred_at", { ascending: false }).limit(500)
+      client.from("stockage_events").select("event_id,tracking_code,agency,business_date,occurred_at,actor_name,weight_kg_delta").eq("agency", agency).eq("event_type", "CONFIRMED_DELIVERY_RECORDED").order("occurred_at", { ascending: false }).limit(500),
+      client.from("stockage_parcels").select("tracking_code,agency,canonical_weight_kg,delivery_status").eq("agency", agency).limit(1000)
     ]);
-    if (accountError || deliveriesError) return fail("STORAGE_QUEUE_READ_FAILED", 503);
-    return NextResponse.json({ agency, accountStatus: account?.status, ...(await readAdminWorkQueue({ agency, accountActive: account?.status === "ACTIVE", deliveries: deliveries ?? [], filters: parseQueueFilters(url) })) }, { headers: { "Cache-Control": "private, no-store" } });
+    if (accountError || deliveriesError || physicalError) return fail("STORAGE_QUEUE_READ_FAILED", 503);
+    return NextResponse.json({ agency, accountStatus: account?.status, ...(await readAdminWorkQueue({ agency, accountActive: account?.status === "ACTIVE", deliveries: deliveries ?? [], physicalParcels: physicalParcels ?? [], filters: parseQueueFilters(url) })) }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) { const code = error instanceof Error ? error.message : "STORAGE_QUEUE_READ_FAILED"; return fail(code, code.startsWith("INVALID_") ? 400 : 503); }
 }
 function serviceClient() { const url = process.env.NEXT_PUBLIC_SUPABASE_URL; const key = process.env.SUPABASE_SERVICE_ROLE_KEY; if (!url || !key) throw new Error("STORAGE_SERVICE_NOT_CONFIGURED"); return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } }).schema("public"); }

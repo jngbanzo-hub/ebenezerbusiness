@@ -355,6 +355,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
           p_metadata: {
             modePaiement: paymentInput.modePaiement,
             observation: paymentInput.observation,
+            paymentType: publicPayment.statutPaiement === "SOLDE" ? "SOLDE" : "FRET",
             paymentResult: publicPayment,
             referencePaiement: paymentInput.referencePaiement,
           },

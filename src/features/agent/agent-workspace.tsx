@@ -18,8 +18,10 @@ import {
   type PaymentAttempt
 } from "@/features/agent/payment-request-id";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { AgentEncaissementQueues } from "@/features/stockages/stockages-v2-page";
 import {
   PAYMENT_MODES,
+  DESTINATIONS,
   type AgentProfile,
   type DestinationCode,
   type Parcel,
@@ -40,6 +42,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
       : ""
   );
   const [parcel, setParcel] = useState<Parcel | null>(null);
+  const [routingQuote, setRoutingQuote] = useState<{ routingReference: string; origin: string; destination: string; weightKg: number; rateUsdPerKg: number; amountExpectedUsd: number } | null>(null);
   const [montantPaye, setMontantPaye] = useState("");
   const [modePaiement, setModePaiement] = useState<PaymentMode>("ESPECES");
   const [referencePaiement, setReferencePaiement] = useState("");
@@ -111,13 +114,14 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
 
   async function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!profile || !destinations.includes(destination)) {
-      setMessage({ type: "error", text: "Destination non autorisée pour cette agence." });
+    if (!profile || !DESTINATIONS.includes(destination)) {
+      setMessage({ type: "error", text: "Destination invalide." });
       return;
     }
 
     setMessage(null);
     setParcel(null);
+    setRoutingQuote(null);
     paymentAttemptRef.current = null;
     setIsSearching(true);
 
@@ -135,6 +139,9 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
         throw new Error("La réponse de recherche ne correspond pas au colis demandé.");
       }
       setParcel(foundParcel);
+      if (profile.agence !== "COTONOU" && destination !== profile.agence) {
+        setRoutingQuote(await loadInterAgencyQuote(foundParcel.codeColis, destination));
+      }
       setMontantPaye("");
     } catch (error) {
       setMessage({
@@ -280,7 +287,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
       <Container>
         <header className="flex flex-col gap-5 border-b border-white/10 pb-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <Badge variant="growth">Caisse agent</Badge>
+            <Badge variant="growth">Encaissements</Badge>
             <h1 className="mt-3 text-3xl font-semibold">{profile.nom}</h1>
             <p className="mt-1 text-sm text-muted-foreground">Agence : {profile.agence}</p>
           </div>
@@ -301,7 +308,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
                   onChange={(event) => setDestination(event.target.value as DestinationCode)}
                   className={fieldClassName}
                 >
-                  {destinations.map((item) => (
+                  {DESTINATIONS.map((item) => (
                     <option key={item} value={item} className="bg-ebe-navy">
                       {item}
                     </option>
@@ -370,7 +377,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
                 />
               </dl>
 
-              <form onSubmit={handlePayment} className="mt-7 grid gap-5">
+              {routingQuote ? <div className="mt-7 rounded-xl border border-accent/30 bg-accent/10 p-5"><h3 className="font-semibold text-accent">ACHEMINEMENT INTER-AGENCES</h3><p className="mt-2 text-sm">Référence : {routingQuote.routingReference}</p><p className="text-sm">Circuit : {routingQuote.origin} → {routingQuote.destination}</p><p className="text-sm">Poids canonique : {routingQuote.weightKg} kg · Tarif : {formatAmount(routingQuote.rateUsdPerKg)}/kg</p><p className="text-sm font-semibold">Montant attendu : {formatAmount(routingQuote.amountExpectedUsd)}</p><Button type="button" variant="growth" className="mt-4" disabled>Créer un acheminement — activation ultérieure</Button></div> : <form onSubmit={handlePayment} className="mt-7 grid gap-5">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className="text-sm font-medium">
                     Montant payé
@@ -427,9 +434,10 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
                   <Save className="h-5 w-5" />
                   {isSaving ? "Enregistrement…" : "Enregistrer le paiement"}
                 </Button>
-              </form>
+              </form>}
             </GlassPanel>
           ) : null}
+          {profile.agence !== "COTONOU" ? <AgentEncaissementQueues /> : null}
         </div>
       </Container>
     </main>
@@ -448,6 +456,16 @@ function getExactBalance(parcel: Parcel): number | null {
   return Number.isFinite(parcel.soldeRestant) && parcel.soldeRestant >= 0
     ? parcel.soldeRestant
     : null;
+}
+
+async function loadInterAgencyQuote(trackingCode: string, destination: DestinationCode) {
+  const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
+  if (!session?.access_token) throw new Error("Session expirée.");
+  const params = new URLSearchParams({ trackingCode, destination });
+  const response = await fetch(`/api/agent/inter-agency-routing/quote?${params}`, { headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store" });
+  const payload = await response.json().catch(() => null) as { quote?: { routingReference: string; origin: string; destination: string; weightKg: number; rateUsdPerKg: number; amountExpectedUsd: number }; message?: string } | null;
+  if (!response.ok || !payload?.quote) throw new Error(payload?.message ?? "Acheminement indisponible.");
+  return payload.quote;
 }
 
 function ParcelValue({

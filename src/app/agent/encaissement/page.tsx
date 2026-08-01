@@ -7,7 +7,7 @@ import { AgentWorkspace } from "@/features/agent/agent-workspace";
 import { createPageMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = createPageMetadata({
-  title: "Caisse agent",
+  title: "Encaissements agent",
   description: "Espace sécurisé de gestion des paiements agents.",
   path: "/agent/encaissement",
   noIndex: true

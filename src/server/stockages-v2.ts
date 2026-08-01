@@ -2,9 +2,6 @@ import "server-only";
 
 import { createClient } from "@supabase/supabase-js";
 
-import { parseStrictPositiveWeight } from "@/features/admin/shippers";
-import { readCanonicalPaymentManifestRows } from "@/server/admin-manifest-sheets";
-import { readAdminPayments } from "@/server/admin-payments-sheets";
 
 export const STORAGE_AGENCIES = ["FIH", "LSHI", "KLZ"] as const;
 export type StorageAgency = (typeof STORAGE_AGENCIES)[number];
@@ -62,35 +59,29 @@ export async function readAdminStorage() {
   return { mode: "V2" as const, accounts: accounts.data ?? [], events: events.data ?? [], activity: activity.data ?? [], anomalies: anomalies.data ?? [], audit: audit.data ?? [] };
 }
 
-export async function recordArrival(input: { parcelCount: number; weightKg: number; reference?: string; observation?: string; requestId: string; actorId: string }) {
+export type ArrivalParcel = Readonly<{ trackingCode: string; weightKg: number }>;
+
+export function validateArrivalParcels(value: unknown): readonly ArrivalParcel[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 500) throw new StockagesV2Error("INVALID_ARRIVAL_PARCELS");
+  const parcels = value.map((row) => {
+    if (!row || typeof row !== "object") throw new StockagesV2Error("INVALID_ARRIVAL_PARCELS");
+    const item = row as Record<string, unknown>;
+    return Object.freeze({ trackingCode: normalizeTrackingCode(item.trackingCode), weightKg: positive(item.weightKg) });
+  });
+  if (new Set(parcels.map((parcel) => parcel.trackingCode)).size !== parcels.length) throw new StockagesV2Error("DUPLICATE_ARRIVAL_PARCEL", 409);
+  return Object.freeze(parcels);
+}
+
+export async function recordArrival(input: { parcels: unknown; reference?: string; observation?: string; requestId: string; actorId: string }) {
   validateUuid(input.requestId);
-  return rpc("record_manual_arrival", { p_parcel_count: positiveInteger(input.parcelCount), p_weight_kg: positive(input.weightKg), p_business_date: businessDatePortoNovo(), p_arrival_reference: clean(input.reference), p_observation: clean(input.observation), p_request_id: input.requestId, p_actor_id: input.actorId });
+  const parcels = validateArrivalParcels(input.parcels);
+  return rpc("record_detailed_arrival", { p_parcels: parcels, p_business_date: businessDatePortoNovo(), p_arrival_reference: clean(input.reference), p_observation: clean(input.observation), p_request_id: input.requestId, p_actor_id: input.actorId });
 }
 
-export async function resolveParcelForDelivery(trackingCode: string, agency: StorageAgency) {
-  const code = normalizeTrackingCode(trackingCode);
-  const [manifest, payments] = await Promise.all([readCanonicalPaymentManifestRows(), readAdminPayments()]);
-  const occurrences = manifest.filter((row) => normalizeTrackingCode(row.codeColisRaw) === code);
-  if (!occurrences.length) throw new StockagesV2Error("PARCEL_NOT_FOUND", 404);
-  if (occurrences.some((row) => row.sourceSite !== agency)) throw new StockagesV2Error("PARCEL_AGENCY_MISMATCH", 409);
-  const parsedWeights = occurrences.map((row) => parseStrictPositiveWeight(row.poidsRaw));
-  if (parsedWeights.some((weight) => weight === null)) throw new StockagesV2Error("PARCEL_WEIGHT_UNAVAILABLE", 422);
-  const weights = parsedWeights.filter((weight): weight is number => weight !== null);
-  const keys = new Set(weights.map((weight) => weight.toFixed(3)));
-  if (keys.size !== 1) throw new StockagesV2Error("PARCEL_WEIGHT_AMBIGUOUS", 422);
-  const weightKg = weights[0]!;
-  const snapshots = payments.filter((row) => normalizeTrackingCode(row.codeColis) === code);
-  if (snapshots.some((row) => row.destinationCode !== agency || row.poidsKg === null || row.poidsKg.toFixed(3) !== weightKg.toFixed(3))) {
-    throw new StockagesV2Error("PARCEL_WEIGHT_CONFLICT", 422);
-  }
-  return { trackingCode: code, agency, weightKg, weightSource: "SHIPPING_MANIFEST" as const, weightSourceReference: occurrences.map((row) => `${row.sourceSite}:${row.rowNumber}`).join(","), paymentSnapshot: snapshots.length ? { checked: true, references: snapshots.map((row) => row.reference || row.id) } : { checked: false } };
-}
-
-export async function confirmDelivery(input: { trackingCode: string; requestId: string; physicalConfirmed: boolean; actorId: string; agency: StorageAgency }) {
+export async function confirmDelivery(input: { trackingCode: string; requestId: string; physicalConfirmed: boolean; actorId: string; agency: StorageAgency; weightKg: number; weightSourceReference: string; paymentSnapshot: Record<string, unknown> }) {
   validateUuid(input.requestId);
   if (input.physicalConfirmed !== true) throw new StockagesV2Error("PHYSICAL_CONFIRMATION_REQUIRED");
-  const parcel = await resolveParcelForDelivery(input.trackingCode, input.agency);
-  return rpc("confirm_parcel_delivery", { p_tracking_code: parcel.trackingCode, p_destination_agency: parcel.agency, p_canonical_weight_kg: parcel.weightKg, p_weight_source: parcel.weightSource, p_weight_source_reference: parcel.weightSourceReference, p_business_date: businessDatePortoNovo(), p_physical_delivery_confirmed: true, p_payment_snapshot: parcel.paymentSnapshot, p_request_id: input.requestId, p_actor_id: input.actorId });
+  return rpc("confirm_parcel_delivery", { p_tracking_code: normalizeTrackingCode(input.trackingCode), p_destination_agency: input.agency, p_canonical_weight_kg: positive(input.weightKg), p_weight_source: "PHYSICAL_ARRIVAL", p_weight_source_reference: requiredString(input.weightSourceReference), p_business_date: businessDatePortoNovo(), p_physical_delivery_confirmed: true, p_payment_snapshot: input.paymentSnapshot, p_request_id: input.requestId, p_actor_id: input.actorId });
 }
 
 export async function runAdminStorageCommand(action: string, body: Record<string, unknown>, actorId: string) {

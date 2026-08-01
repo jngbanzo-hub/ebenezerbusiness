@@ -15,12 +15,13 @@ export async function GET(request: Request) {
     if (!auth.authorized) return fail("ACCESS_DENIED", auth.status);
     const agency = requireStorageAgency(auth.identity.site);
     const client = serviceClient();
-    const [{ data: account, error: accountError }, { data: deliveries, error: deliveriesError }] = await Promise.all([
+    const [{ data: account, error: accountError }, { data: deliveries, error: deliveriesError }, { data: physicalParcels, error: physicalError }] = await Promise.all([
       client.from("stockage_accounts").select("status").eq("agency", agency).single(),
-      client.from("stockage_events").select("event_id,tracking_code,agency,business_date,occurred_at,actor_name,weight_kg_delta").eq("agency", agency).eq("event_type", "CONFIRMED_DELIVERY_RECORDED").order("occurred_at", { ascending: false }).limit(500)
+      client.from("stockage_events").select("event_id,tracking_code,agency,business_date,occurred_at,actor_name,weight_kg_delta").eq("agency", agency).eq("event_type", "CONFIRMED_DELIVERY_RECORDED").order("occurred_at", { ascending: false }).limit(500),
+      client.from("stockage_parcels").select("tracking_code,agency,canonical_weight_kg,delivery_status").eq("agency", agency).limit(1000)
     ]);
-    if (accountError || deliveriesError) return fail("STORAGE_QUEUE_READ_FAILED", 503);
-    const result = await readAgentWorkQueue({ agency, accountActive: account?.status === "ACTIVE", deliveries: deliveries ?? [], filters: parseQueueFilters(new URL(request.url)) });
+    if (accountError || deliveriesError || physicalError) return fail("STORAGE_QUEUE_READ_FAILED", 503);
+    const result = await readAgentWorkQueue({ agency, accountActive: account?.status === "ACTIVE", deliveries: deliveries ?? [], physicalParcels: physicalParcels ?? [], filters: parseQueueFilters(new URL(request.url)) });
     return NextResponse.json({ agency, accountStatus: account?.status, ...result }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     const code = error instanceof Error ? error.message : "STORAGE_QUEUE_READ_FAILED";

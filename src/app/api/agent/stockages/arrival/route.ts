@@ -12,7 +12,7 @@ export async function POST(request: Request) {
     if (!auth.authorized) return reply("ACCESS_DENIED", auth.status);
     requireStorageAgency(auth.identity.site);
     const body = await request.json() as Record<string, unknown>;
-    const result = await recordArrival({ parcelCount: Number(body.parcelCount), weightKg: Number(body.weightKg), reference: String(body.reference ?? ""), observation: String(body.observation ?? ""), requestId: String(body.requestId ?? ""), actorId: auth.identity.userId });
+    const result = await recordArrival({ parcels: body.parcels, reference: String(body.reference ?? ""), observation: String(body.observation ?? ""), requestId: String(body.requestId ?? ""), actorId: auth.identity.userId });
     return NextResponse.json({ state: "SUCCESS", ...result }, { status: result.replayed ? 200 : 201 });
   } catch (cause) { return cause instanceof StockagesV2Error ? reply(cause.code, cause.status) : reply("STORAGE_SERVICE_UNAVAILABLE", 503); }
 }

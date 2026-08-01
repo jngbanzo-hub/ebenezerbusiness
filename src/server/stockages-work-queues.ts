@@ -75,6 +75,13 @@ type DeliveryRow = {
   weight_kg_delta: number | string;
 };
 
+export type PhysicalParcelRow = {
+  tracking_code: string;
+  agency: string;
+  canonical_weight_kg: number | string;
+  delivery_status: string;
+};
+
 let sourceCache: { expiresAt: number; payments: AdminPayment[]; manifest: ManifestShipperRow[] } | null = null;
 
 export function parseQueueFilters(url: URL): QueueFilters {
@@ -102,10 +109,11 @@ export async function readAgentWorkQueue(input: {
   agency: StorageAgency;
   accountActive: boolean;
   deliveries: DeliveryRow[];
+  physicalParcels: PhysicalParcelRow[];
   filters: QueueFilters;
 }) {
   const { payments, manifest } = await readQueueSources();
-  const { items } = buildParcelWorkQueueAudit({ payments, manifest, deliveries: input.deliveries, agency: input.agency, accountActive: input.accountActive });
+  const { items } = buildParcelWorkQueueAudit({ payments, manifest, deliveries: input.deliveries, physicalParcels: input.physicalParcels, agency: input.agency, accountActive: input.accountActive });
   return { ...paginate(filterQueue(items, input.filters), input.filters.page, input.filters.pageSize), summary: summarizeQueue(items) };
 }
 
@@ -113,10 +121,11 @@ export async function readAdminWorkQueue(input: {
   agency: StorageAgency;
   accountActive: boolean;
   deliveries: DeliveryRow[];
+  physicalParcels: PhysicalParcelRow[];
   filters: QueueFilters;
 }) {
   const { payments, manifest } = await readQueueSources();
-  const { items, audit } = buildParcelWorkQueueAudit({ payments, manifest, deliveries: input.deliveries, agency: input.agency, accountActive: input.accountActive });
+  const { items, audit } = buildParcelWorkQueueAudit({ payments, manifest, deliveries: input.deliveries, physicalParcels: input.physicalParcels, agency: input.agency, accountActive: input.accountActive });
   return { ...paginate(filterQueue(items, input.filters), input.filters.page, input.filters.pageSize), summary: summarizeQueue(items), audit };
 }
 
@@ -124,6 +133,7 @@ export function buildParcelWorkQueues(input: {
   payments: readonly AdminPayment[];
   manifest: readonly ManifestShipperRow[];
   deliveries: readonly DeliveryRow[];
+  physicalParcels?: readonly PhysicalParcelRow[];
   agency: StorageAgency;
   accountActive: boolean;
 }): WorkQueueItem[] {
@@ -134,6 +144,7 @@ export function buildParcelWorkQueueAudit(input: {
   payments: readonly AdminPayment[];
   manifest: readonly ManifestShipperRow[];
   deliveries: readonly DeliveryRow[];
+  physicalParcels?: readonly PhysicalParcelRow[];
   agency: StorageAgency;
   accountActive: boolean;
 }): { items: WorkQueueItem[]; audit: WorkQueueAudit } {
@@ -159,13 +170,17 @@ export function buildParcelWorkQueueAudit(input: {
     manifestByCode.set(code, [...(manifestByCode.get(code) ?? []), row]);
   }
   const deliveryByCode = new Map(input.deliveries.filter((row) => row.tracking_code).map((row) => [normalizeCode(row.tracking_code), row]));
-  const codes = new Set(Array.from(paymentsByCode.keys()).concat(Array.from(manifestByCode.keys()), Array.from(deliveryByCode.keys())));
+  const physicalByCode = new Map((input.physicalParcels ?? []).filter((row) => row.agency === input.agency).map((row) => [normalizeCode(row.tracking_code), row]));
+  const physicalPresenceKnown = input.physicalParcels !== undefined;
+  const codes = new Set(Array.from(paymentsByCode.keys()).concat(Array.from(manifestByCode.keys()), Array.from(deliveryByCode.keys()), Array.from(physicalByCode.keys())));
   const strictDuplicateCodes = Array.from(manifestByCode.values()).filter((rows) => rows.length > 1 && new Set(rows.map(manifestFingerprint)).size === 1).length;
   const divergentDuplicateCodes = Array.from(manifestByCode.values()).filter((rows) => rows.length > 1 && new Set(rows.map(manifestFingerprint)).size > 1).length;
   const items = Array.from(codes).flatMap((trackingCode): WorkQueueItem[] => {
     const payments = paymentsByCode.get(trackingCode) ?? [];
     const manifestRows = manifestByCode.get(trackingCode) ?? [];
     const delivery = deliveryByCode.get(trackingCode);
+    const physicalParcel = physicalByCode.get(trackingCode);
+    const physicallyAvailable = physicalParcel?.delivery_status === "AVAILABLE";
     const sourceAgencies = Array.from(sourceAgenciesByCode.get(trackingCode) ?? []).sort() as StorageAgency[];
     if (!manifestRows.length && sourceAgencies.length && !delivery) {
       exclusions.push({ trackingCode, reason: "EXCLUDED_WRONG_AGENCY", sourceStatus: "", sourceDate: "", sourceAgencies });
@@ -191,7 +206,8 @@ export function buildParcelWorkQueueAudit(input: {
     const delivered = Boolean(delivery);
     const blockingAnomalies = Array.from(new Set(financial.anomalies.concat(
       weightState === "MISSING" ? "WEIGHT_MISSING" : weightState === "AMBIGUOUS" ? "WEIGHT_CONFLICT" : "",
-      statusEligible ? "" : "SOURCE_STATUS_INELIGIBLE"
+      statusEligible ? "" : "SOURCE_STATUS_INELIGIBLE",
+      fullyPaid && physicalPresenceKnown && !physicallyAvailable ? "PHYSICAL_PRESENCE_MISSING" : ""
     ))).filter(Boolean);
     const deliveryStatus: WorkQueueItem["deliveryStatus"] = delivered
       ? "DELIVERED"
@@ -208,7 +224,7 @@ export function buildParcelWorkQueueAudit(input: {
       trackingCode,
       beneficiary: "Confidentiel",
       destination: input.agency,
-      weightKg: weightState === "VALID" ? weights[0] : null,
+      weightKg: physicallyAvailable ? Number(physicalParcel.canonical_weight_kg) : weightState === "VALID" ? weights[0] : null,
       weightState,
       amountExpected,
       amountPaid,

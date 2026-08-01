@@ -14,6 +14,17 @@ test("paiement intégral COO produit un colis prêt sans sortie automatique", ()
   assert.match(item.paymentLabel, /COO/);
 });
 
+test("un paiement intégral exige une présence physique avant la remise", () => {
+  const withoutArrival = buildParcelWorkQueues({ payments: [payment()], manifest: [manifest("TEST001", 2)], deliveries: [], physicalParcels: [], agency: "LSHI", accountActive: true })[0];
+  assert.equal(withoutArrival.deliveryStatus, "VERIFICATION_REQUIRED");
+  assert.equal(withoutArrival.canConfirmDelivery, false);
+  assert.ok(withoutArrival.anomalies.includes("PHYSICAL_PRESENCE_MISSING"));
+
+  const withArrival = buildParcelWorkQueues({ payments: [payment()], manifest: [manifest("TEST001", 2)], deliveries: [], physicalParcels: [{ tracking_code: "TEST001", agency: "LSHI", canonical_weight_kg: 2, delivery_status: "AVAILABLE" }], agency: "LSHI", accountActive: true })[0];
+  assert.equal(withArrival.deliveryStatus, "READY");
+  assert.equal(withArrival.canConfirmDelivery, true);
+});
+
 test("paiement total réparti entre deux sites reste un seul colis prêt", () => {
   const rows = [payment({ montantPaye: 60, soldeRestant: 40 }), payment({ id: "LSHI:2", agenceEncaissement: "LSHI", montantPaye: 40, soldeRestant: 0, dateTime: "2026-08-01T11:00:00.000Z" })];
   const [item] = buildParcelWorkQueues({ payments: rows, manifest: [manifest("TEST001", 2)], deliveries: [], agency: "LSHI", accountActive: true });

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Boxes, ClipboardCheck, LogOut, RefreshCcw, ShieldCheck, Truck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -29,15 +29,21 @@ export function AgentStockagesV2Page() {
   return <Shell back="/agent" title={`Stockages ${data.account.agency}`}>
     <AccountCards accounts={[data.account]} />
     {!data.actionsEnabled && <Notice text="Stockage non ouvert — solde initial requis" />}
-    <div className="grid gap-5 lg:grid-cols-2">
+    <div className="grid gap-5">
       <AgentCommandForm title="Déclarer un arrivage" endpoint="/api/agent/stockages/arrival" disabled={!data.actionsEnabled} fields="arrival" onDone={load} />
-      <AgentCommandForm title="Confirmer une livraison" endpoint="/api/agent/stockages/delivery" disabled={!data.actionsEnabled} fields="delivery" onDone={load} />
     </div>
-    <AgentWorkQueues accountActive={data.actionsEnabled} onDelivery={load} />
+    <PhysicalStatistics events={data.events} />
     <EventTable title="Arrivages et livraisons récents" rows={data.events} />
     <ActivityTable rows={data.activity} />
     {message && <Notice text={message} />}
   </Shell>;
+}
+
+export function AgentEncaissementQueues() {
+  const [accountActive, setAccountActive] = useState(false);
+  const refresh = useCallback(async () => { const data = await request<AgentData>("/api/agent/stockages"); setAccountActive(data.actionsEnabled); }, []);
+  useEffect(() => { void refresh().catch(() => setAccountActive(false)); }, [refresh]);
+  return <AgentWorkQueues accountActive={accountActive} onDelivery={refresh} />;
 }
 
 function AgentWorkQueues({ accountActive, onDelivery }: { accountActive: boolean; onDelivery: () => Promise<void> }) {
@@ -82,7 +88,7 @@ export function AdminStockagesV2Page() {
     </div>
     <EventTable title="Mouvements consolidés" rows={data.events} />
     <ActivityTable rows={data.activity} />
-    <AdminWorkQueue accounts={data.accounts} />
+    <PhysicalStatistics events={data.events} />
     <JsonList title="Anomalies" rows={data.anomalies} />
     <JsonList title="Audit immutable" rows={data.audit} />
     {message && <Notice text={message} />}
@@ -94,11 +100,11 @@ function AgentCommandForm({ title, endpoint, disabled, fields, onDone }: { title
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = event.currentTarget; const values = new FormData(form);
     if (!window.confirm(`Confirmer : ${title} ?`)) return;
-    const payload = fields === "arrival" ? { parcelCount: Number(values.get("parcelCount")), weightKg: Number(values.get("weightKg")), reference: values.get("reference"), observation: values.get("observation"), requestId: crypto.randomUUID() } : { trackingCode: values.get("trackingCode"), physicalDeliveryConfirmed: true, requestId: crypto.randomUUID() };
+    const payload = fields === "arrival" ? { parcels: parseArrivalLines(String(values.get("parcels") ?? "")), reference: values.get("reference"), observation: values.get("observation"), requestId: crypto.randomUUID() } : { trackingCode: values.get("trackingCode"), physicalDeliveryConfirmed: true, requestId: crypto.randomUUID() };
     try { const response = await request<{ replayed?: boolean }>(endpoint, payload); setResult(response.replayed ? "Commande déjà enregistrée : rejeu idempotent." : "Commande enregistrée avec succès."); form.reset(); await onDone(); } catch (error) { setResult(error instanceof Error ? error.message : "Commande refusée."); }
   }
   return <Panel title={title}><form className="space-y-3" onSubmit={submit}>
-    {fields === "arrival" ? <><Input name="parcelCount" type="number" label="Nombre de colis" min="1" required /><Input name="weightKg" type="number" label="Poids total (kg)" min="0.001" step="0.001" required /><Input name="reference" label="Référence d’arrivage" /><Input name="observation" label="Observation" /></> : <><Input name="trackingCode" label="Code colis" required /><p className="text-xs text-slate-400">Le poids est résolu côté serveur depuis le Manifeste; aucune saisie Agent.</p></>}
+    {fields === "arrival" ? <><label className="block text-sm">Colis arrivés — un par ligne au format CODE:POIDS<textarea name="parcels" required rows={6} placeholder={"JL00126:2.5\nJL00226:1"} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><Input name="reference" label="Référence d’arrivage" /><Input name="observation" label="Observation" /></> : <><Input name="trackingCode" label="Code colis" required /><p className="text-xs text-slate-400">La présence physique et le poids sont contrôlés côté serveur dans le Stockage de l’agence.</p></>}
     <Button disabled={disabled} className="w-full bg-lime-400 text-slate-950 hover:bg-lime-300 focus-visible:ring-lime-300 disabled:bg-slate-800 disabled:text-slate-400">{disabled ? "Solde initial requis" : title}</Button>{result && <p className="text-sm text-slate-300">{result}</p>}
   </form></Panel>;
 }
@@ -122,11 +128,33 @@ function Shell({ back, title, children }: { back: string; title: string; childre
 function AccountCards({ accounts }: { accounts: Account[] }) { return <div className="grid gap-4 md:grid-cols-3">{accounts.map((a) => <div key={a.agency} className="rounded-2xl border border-lime-400/25 bg-slate-900 p-5"><div className="flex justify-between"><h2 className="text-xl font-semibold">{a.agency}</h2><span className={a.status === "ACTIVE" ? "text-lime-300" : "text-amber-300"}>{a.status}</span></div><p className="mt-4 text-3xl font-bold">{a.current_parcel_count} colis</p><p className="text-slate-300">{formatStockageWeight(Number(a.current_weight_kg))}</p></div>)}</div>; }
 function EventTable({ title, rows }: { title: string; rows: EventRow[] }) { return <Panel title={title}><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="text-slate-400"><th>Agence</th><th>Date</th><th>Type</th><th>Colis</th><th>Kg</th><th>Agent</th></tr></thead><tbody>{rows.map((row) => <tr key={row.event_id} className="border-t border-white/10"><td>{row.agency ?? "—"}</td><td>{row.business_date}</td><td>{row.event_type}</td><td>{row.parcel_count_delta}</td><td>{formatStockageWeight(row.weight_kg_delta)}</td><td>{row.actor_name}</td></tr>)}</tbody></table>{!rows.length && <p className="py-5 text-slate-400">Aucun mouvement.</p>}</div></Panel>; }
 function ActivityTable({ rows }: { rows: Activity[] }) { return <Panel title="Activité par Agent"><div className="grid gap-3 md:grid-cols-2">{rows.map((row, index) => <div key={`${row.actor_name}-${row.business_date}-${index}`} className="rounded-xl border border-white/10 p-3"><b>{row.actor_name}</b><p className="text-sm text-slate-300">{row.arrivals} arrivage(s) · {row.deliveries} livraison(s)</p></div>)}{!rows.length && <p className="text-slate-400">Aucune activité.</p>}</div></Panel>; }
+function PhysicalStatistics({ events }: { events: EventRow[] }) {
+  const [period, setPeriod] = useState("MONTH");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const filtered = useMemo(() => {
+    const today = new Date();
+    const start = new Date(today);
+    if (period === "DAY") start.setDate(today.getDate());
+    else if (period === "WEEK") start.setDate(today.getDate() - 6);
+    else if (period === "MONTH") start.setMonth(today.getMonth(), 1);
+    else if (period === "YEAR") start.setMonth(0, 1);
+    const inferredFrom = period === "CUSTOM" ? from : start.toISOString().slice(0, 10);
+    const inferredTo = period === "CUSTOM" ? to : today.toISOString().slice(0, 10);
+    return events.filter((event) => (!inferredFrom || event.business_date >= inferredFrom) && (!inferredTo || event.business_date <= inferredTo));
+  }, [events, from, period, to]);
+  const arrivals = filtered.filter((event) => event.parcel_count_delta > 0);
+  const deliveries = filtered.filter((event) => event.parcel_count_delta < 0);
+  const sum = (rows: EventRow[], field: "parcel_count_delta" | "weight_kg_delta") => rows.reduce((total, row) => total + Math.abs(Number(row[field])), 0);
+  return <Panel title="Statistiques physiques"><div className="grid gap-3 sm:grid-cols-3"><label className="text-sm">Période<select value={period} onChange={(event) => setPeriod(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2"><option value="DAY">Journalière</option><option value="WEEK">Hebdomadaire</option><option value="MONTH">Mensuelle</option><option value="YEAR">Annuelle</option><option value="CUSTOM">Personnalisée</option></select></label>{period === "CUSTOM" && <><label className="text-sm">Du<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><label className="text-sm">Au<input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label></>}</div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Metric label="Colis entrés" value={sum(arrivals, "parcel_count_delta")} /><Metric label="Kg entrés" value={formatStockageWeight(sum(arrivals, "weight_kg_delta"))} /><Metric label="Colis sortis" value={sum(deliveries, "parcel_count_delta")} /><Metric label="Kg sortis" value={formatStockageWeight(sum(deliveries, "weight_kg_delta"))} /></div></Panel>;
+}
+function Metric({ label, value }: { label: string; value: string | number }) { return <div className="rounded-xl border border-lime-400/20 bg-slate-950/60 p-4"><p className="text-xs uppercase tracking-wide text-slate-400">{label}</p><p className="mt-2 text-2xl font-semibold text-lime-300">{value}</p></div>; }
 function JsonList({ title, rows }: { title: string; rows: Array<Record<string, unknown>> }) { return <Panel title={title}>{rows.length ? <div className="space-y-2">{rows.map((row, i) => <pre key={i} className="overflow-x-auto rounded-lg bg-slate-950 p-3 text-xs">{JSON.stringify(row, null, 2)}</pre>)}</div> : <p className="text-slate-400">Aucune donnée.</p>}</Panel>; }
 function Panel({ title, children }: { title: string; children: React.ReactNode }) { return <section className="rounded-2xl border border-white/10 bg-slate-900/80 p-5"><h2 className="mb-4 flex items-center gap-2 text-xl font-semibold"><Boxes className="h-5 w-5 text-lime-300" />{title}</h2>{children}</section>; }
 function Notice({ text }: { text: string }) { return <div className="flex items-center gap-3 rounded-xl border border-amber-400/25 bg-amber-400/10 p-4 text-sm"><ShieldCheck className="h-5 w-5" />{text}</div>; }
 function Input(props: { name: string; label: string; type?: string; min?: string; step?: string; required?: boolean }) { return <label className="block text-sm">{props.label}<input {...props} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label>; }
 function CollectionLink({ item, label }: { item: QueueItem; label: string }) { return <Link href={`/agent/encaissement?code=${encodeURIComponent(item.trackingCode)}`} className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-lime-400 px-4 py-2 font-medium text-slate-950 hover:bg-lime-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300">{label}</Link>; }
+function parseArrivalLines(value: string) { return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => { const [trackingCode, weight] = line.split(":"); return { trackingCode: trackingCode?.trim(), weightKg: Number(weight?.trim().replace(",", ".")) }; }); }
 function queueStatusLabel(status: QueueItem["deliveryStatus"]) { return status === "DELIVERED" ? "Livré" : status === "READY" ? "Paiement terminé — colis à remettre" : status === "TO_COLLECT" ? "À encaisser" : status === "PARTIAL_PAYMENT_REMAINING" ? "Solde restant" : "Vérification nécessaire"; }
 function money(value: number | null) { return value === null ? "Non disponible" : `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(value)} $`; }
 function DataList({ rows, empty }: { rows: string[]; empty: string }) { return rows.length ? <div className="space-y-2">{rows.map((row, index) => <p key={`${row}-${index}`} className="rounded-lg border border-white/10 p-3 text-sm">{row}</p>)}</div> : <p className="text-slate-400">{empty}</p>; }

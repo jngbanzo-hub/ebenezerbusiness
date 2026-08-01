@@ -8,6 +8,7 @@ const agent = [read("./route.ts"), read("./arrival/route.ts"), read("./parcel/ro
 const admin = read("../../admin/stockages/v2/route.ts");
 const adminQueues = read("../../admin/stockages/v2/queues/route.ts");
 const ui = read("../../../../features/stockages/stockages-v2-page.tsx");
+const remittance = read("../../../../server/encaissements-remittance.ts");
 
 test("toutes les routes Agent exigent authorizeAgentRequest", () => {
   assert.equal((agent.match(/authorizeAgentRequest\(request\)/g) ?? []).length, 4);
@@ -27,10 +28,11 @@ test("les écritures passent uniquement par les RPC service_role", () => {
   assert.doesNotMatch(ui, /requestId[^\n]*<input/i);
 });
 
-test("le poids de livraison vient du Manifeste et est contrôlé par Paiements", () => {
-  assert.match(server, /readCanonicalPaymentManifestRows/);
-  assert.match(server, /readAdminPayments/);
-  assert.match(server, /weightSource: "SHIPPING_MANIFEST"/);
+test("la présence et le poids viennent du Stockage physique, le paiement reste contrôlé par Encaissements", () => {
+  assert.doesNotMatch(server, /readCanonicalPaymentManifestRows|readAdminPayments/);
+  assert.match(remittance, /stockage_parcels/);
+  assert.match(remittance, /readAdminPayments/);
+  assert.match(server, /p_weight_source: "PHYSICAL_ARRIVAL"/);
   assert.doesNotMatch(read("./delivery/route.ts"), /body\.weight/);
 });
 
@@ -41,5 +43,5 @@ test("COO est exclu et les comptes SUSPENDED désactivent les actions", () => {
 });
 
 test("Transferts, Caisse et Dépenses ne sont pas importés", () => {
-  assert.doesNotMatch(server + agent + admin + ui, /features\/transferts|cash_events|cash_|agent-expenses|expenses/);
+  assert.doesNotMatch(server + agent + admin + ui + remittance, /features\/transferts|cash_events|cash_|agent-expenses|expenses/);
 });

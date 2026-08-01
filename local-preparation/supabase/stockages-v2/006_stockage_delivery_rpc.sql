@@ -31,7 +31,7 @@ begin
     raise exception 'PARCEL_AGENCY_MISMATCH';
   end if;
   if v_code !~ '^[A-Z0-9][A-Z0-9._/-]{1,63}$' or p_canonical_weight_kg is null
-     or p_canonical_weight_kg <= 0 or p_weight_source <> 'SHIPPING_MANIFEST'
+     or p_canonical_weight_kg <= 0 or p_weight_source <> 'PHYSICAL_ARRIVAL'
      or btrim(coalesce(p_weight_source_reference,''))='' or p_business_date is null
      or p_physical_delivery_confirmed is not true or p_request_id is null then
     raise exception 'INVALID_DELIVERY_CONFIRMATION';
