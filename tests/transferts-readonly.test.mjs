@@ -171,9 +171,9 @@ test("le flag d’écriture ne désactive aucune route GET", () => {
   assert.equal(routes[1].includes("assertTransfertsReadOnlyMode"), false);
 });
 
-test("le tableau Agent contient exactement les quatre modules", () => {
-  for (const title of ["Encaissement", "Dépenses", "Stockages", "Transferts"]) {
+test("le tableau Agent contient les cinq modules autorisés", () => {
+  for (const title of ["Encaissement", "Dépenses", "Stockages", "Transferts", "Caisse"]) {
     assert.ok(dashboard.includes(`title: "${title}"`));
   }
-  assert.equal((dashboard.match(/available: true/g) ?? []).length, 4);
+  assert.equal((dashboard.match(/available: true/g) ?? []).length, 5);
 });

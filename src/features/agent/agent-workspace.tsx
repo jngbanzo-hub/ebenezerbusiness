@@ -328,7 +328,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
                   placeholder="Saisir le code"
                 />
               </label>
-              <Button type="submit" disabled={isSearching}>
+              <Button type="submit" variant="growth" disabled={isSearching}>
                 <PackageSearch className="h-4 w-4" />
                 {isSearching ? "Recherche…" : "Rechercher"}
               </Button>

@@ -127,7 +127,7 @@ test("la route profil ignore toute agence envoyée par le navigateur", async () 
   assert.equal(/export async function (POST|PUT|PATCH|DELETE)/.test(route), false);
 });
 
-test("/agent affiche exactement Encaissement, Dépenses, Stockages et Transferts", async () => {
+test("/agent affiche exactement les cinq modules, dont la Caisse dédiée", async () => {
   const dashboard = await readFile(
     new URL("../src/features/agent/agent-dashboard.tsx", import.meta.url),
     "utf8"
@@ -137,13 +137,13 @@ test("/agent affiche exactement Encaissement, Dépenses, Stockages et Transferts
     "utf8"
   );
 
-  for (const title of ["Encaissement", "Dépenses", "Stockages", "Transferts"]) {
+  for (const title of ["Encaissement", "Dépenses", "Stockages", "Transferts", "Caisse"]) {
     assert.ok(dashboard.includes(`title: "${title}"`));
   }
   assert.equal(dashboard.includes('title: "Arrivage"'), false);
   assert.equal(
     (dashboard.match(/available: true/g) ?? []).length,
-    4
+    5
   );
   assert.equal(
     dashboard.split('href: "/agent/encaissement"').length - 1,
@@ -161,6 +161,8 @@ test("/agent affiche exactement Encaissement, Dépenses, Stockages et Transferts
     dashboard.split('href: "/agent/transferts"').length - 1,
     1
   );
+  assert.equal(dashboard.split('href: "/agent/caisse"').length - 1, 1);
+  assert.equal(dashboard.includes("<AgentCashDashboardView"), false);
   assert.ok(page.includes("<AgentDashboard />"));
 });
 
@@ -183,12 +185,11 @@ test("la navigation connexion, encaissement, retour et déconnexion est conserv�
   );
   assert.ok(dashboard.includes('router.replace("/auth/sign-in")'));
   assert.ok(paymentPage.includes('href="/agent"'));
-  assert.ok(paymentPage.includes("<AgentWorkspace />"));
+  assert.ok(paymentPage.includes("<AgentWorkspace initialTrackingCode="));
 });
 
-test("AgentWorkspace et toutes ses dépendances internes restent identiques à HEAD", async () => {
+test("les dépendances métier internes de AgentWorkspace restent identiques à HEAD", async () => {
   const protectedFiles = [
-    "src/features/agent/agent-workspace.tsx",
     "src/features/agent/functions.ts",
     "src/features/agent/parcel.ts",
     "src/features/agent/payment-request-id.ts",
@@ -206,4 +207,13 @@ test("AgentWorkspace et toutes ses dépendances internes restent identiques à H
     });
     assert.equal(current, committed, `${file} a été modifié`);
   }
+});
+
+test("le bouton Rechercher conserve sa logique et utilise l’action vert citron", async () => {
+  const workspace = await readFile(
+    new URL("../src/features/agent/agent-workspace.tsx", import.meta.url),
+    "utf8"
+  );
+  assert.ok(workspace.includes('<Button type="submit" variant="growth" disabled={isSearching}>'));
+  assert.ok(workspace.includes('{isSearching ? "Recherche…" : "Rechercher"}'));
 });

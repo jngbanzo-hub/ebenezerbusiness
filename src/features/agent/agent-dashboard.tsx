@@ -20,7 +20,6 @@ import { signOutAgent } from "@/features/agent/auth";
 import { CooDepositAgentAction } from "@/features/agent/coo-deposit-agent-action";
 import { canAccessCooDepositAction } from "@/features/agent/coo-deposit-client";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
-import { AgentCashDashboardView } from "@/features/cash/cash-dashboard-view";
 import type { Agency } from "@/features/agent/types";
 
 type AgentDashboardProfile = {
@@ -41,10 +40,11 @@ const OPERATIONS = [
   {
     key: "encaissement",
     title: "Encaissement",
-    description: "Livraison et paiement des colis",
+    description: "Rechercher les colis et enregistrer leurs paiements",
     icon: Banknote,
     available: true,
-    href: "/agent/encaissement"
+    href: "/agent/encaissement",
+    actionLabel: "Ouvrir les encaissements"
   },
   {
     key: "depenses",
@@ -58,11 +58,11 @@ const OPERATIONS = [
   {
     key: "stockage",
     title: "Stockages",
-    description: "État préparatoire du système de gestion des stockages",
+    description: "Gérer les arrivages, les sorties et les statistiques physiques",
     icon: Boxes,
     available: true,
     href: "/agent/stockages",
-    actionLabel: "Consulter le statut"
+    actionLabel: "Ouvrir les Stockages"
   },
   {
     key: "transferts",
@@ -72,6 +72,15 @@ const OPERATIONS = [
     available: true,
     href: "/agent/transferts",
     actionLabel: "Consulter les transferts"
+  },
+  {
+    key: "caisse",
+    title: "Caisse",
+    description: "Consulter le solde et les mouvements financiers de votre agence",
+    icon: Banknote,
+    available: true,
+    href: "/agent/caisse",
+    actionLabel: "Ouvrir la caisse"
   }
 ] as const;
 
@@ -217,7 +226,7 @@ export function AgentDashboard() {
             </p>
           </div>
 
-          <div className="mt-6 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             {OPERATIONS.map((operation) => {
               const Icon = operation.icon;
 
@@ -270,7 +279,6 @@ export function AgentDashboard() {
         </section>
 
         {canAccessCooDepositAction(profile) ? <CooDepositAgentAction /> : null}
-        <AgentCashDashboardView isCoo={profile.site === "COO"} />
       </Container>
     </main>
   );

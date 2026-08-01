@@ -1,22 +1,33 @@
 "use client";
 
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Banknote, CircleAlert, LoaderCircle } from "lucide-react";
+import { Banknote, CircleAlert, LoaderCircle, LogOut } from "lucide-react";
 
-import { GlassPanel } from "@/components/design-system";
+import { Container, GlassPanel } from "@/components/design-system";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { signOutAgent } from "@/features/agent/auth";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import type { AdminCashDashboard, CashDashboard } from "./cash-dashboard";
 import { loadAdminCash, loadAgentCash } from "./cash-dashboard-client";
 
-export function AgentCashDashboardView({ isCoo }: { isCoo: boolean }) {
+export function AgentCashDashboardView() {
   const [data, setData] = useState<CashDashboard | null | undefined>();
+  const [outsideCash, setOutsideCash] = useState(false);
   const [error, setError] = useState("");
-  useEffect(() => { const controller = new AbortController(); void (async () => { try { const { data: { session } } = await getSupabaseBrowserClient().auth.getSession(); if (!session?.access_token) throw new Error("Session invalide."); const result = await loadAgentCash(session.access_token); if (!controller.signal.aborted) setData(result.cash); } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Lecture impossible."); } })(); return () => controller.abort(); }, []);
-  if (isCoo) return <GlassPanel className="mt-8 p-6"><Badge>Hors caisse</Badge><h2 className="mt-3 text-xl font-semibold">Aucune caisse COO</h2><p className="mt-2 text-sm text-muted-foreground">Les encaissements COO restent des recettes hors caisse. Aucun solde ni aucune clôture ne s’applique.</p></GlassPanel>;
+  useEffect(() => { const controller = new AbortController(); void (async () => { try { const { data: { session } } = await getSupabaseBrowserClient().auth.getSession(); if (!session?.access_token) throw new Error("Session invalide."); const result = await loadAgentCash(session.access_token); if (!controller.signal.aborted) { setData(result.cash); setOutsideCash(result.outsideCash); } } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Lecture impossible."); } })(); return () => controller.abort(); }, []);
+  if (outsideCash) return <GlassPanel className="mt-8 p-6"><Badge>Hors caisse</Badge><h2 className="mt-3 text-xl font-semibold">Aucune caisse COO</h2><p className="mt-2 text-sm text-muted-foreground">Les encaissements COO restent des recettes hors caisse. Aucun solde ni aucune clôture ne s’applique.</p></GlassPanel>;
   if (error) return <LoadState error={error} />;
   if (data === undefined) return <LoadState />;
   return data ? <AgencyCashPanel cash={data} /> : null;
+}
+
+export function AgentCashPage() {
+  const router = useRouter();
+  async function handleSignOut() { await signOutAgent(); router.replace("/auth/sign-in"); router.refresh(); }
+  return <main className="min-h-screen bg-ebe-night py-8 text-white sm:py-12"><Container><header className="flex flex-col gap-5 border-b border-white/10 pb-6 sm:flex-row sm:items-center sm:justify-between"><div><Link href="/agent" className="text-sm font-medium text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">← Retour au tableau de bord</Link><Badge variant="growth" className="mt-4 block w-fit">Caisse</Badge><h1 className="mt-3 text-3xl font-semibold">Caisse de votre agence</h1><p className="mt-2 text-sm text-muted-foreground">Consultation en lecture seule du solde, des mouvements et de l’historique.</p></div><Button type="button" variant="outline" onClick={handleSignOut}><LogOut className="h-4 w-4" />Se déconnecter</Button></header><AgentCashDashboardView /></Container></main>;
 }
 
 export function AdminCashDashboardView({ accessToken }: { accessToken: string }) {
