@@ -29,12 +29,16 @@ import {
 const fieldClassName =
   "mt-2 h-11 w-full rounded-md border border-white/15 bg-white/[0.05] px-3 text-white outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/25 disabled:cursor-not-allowed disabled:opacity-60";
 
-export function AgentWorkspace() {
+export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCode?: string }) {
   const router = useRouter();
   const [profile, setProfile] = useState<AgentProfile | null>(null);
   const [authError, setAuthError] = useState("");
   const [destination, setDestination] = useState<DestinationCode>("FIH");
-  const [codeColis, setCodeColis] = useState("");
+  const [codeColis, setCodeColis] = useState(
+    /^[A-Z0-9][A-Z0-9._/-]{1,63}$/i.test(initialTrackingCode.trim())
+      ? initialTrackingCode.trim().toUpperCase()
+      : ""
+  );
   const [parcel, setParcel] = useState<Parcel | null>(null);
   const [montantPaye, setMontantPaye] = useState("");
   const [modePaiement, setModePaiement] = useState<PaymentMode>("ESPECES");

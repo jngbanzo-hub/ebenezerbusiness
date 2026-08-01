@@ -12,6 +12,8 @@ type EventRow = { event_id: string; event_type: string; agency?: string; busines
 type Activity = { agency: string; business_date: string; actor_name: string; arrivals: number; deliveries: number; arrived_weight_kg: number; delivered_weight_kg: number };
 type AgentData = { mode: "V2"; account: Account; events: EventRow[]; activity: Activity[]; actionsEnabled: boolean };
 type AdminData = { mode: "V2"; accounts: Account[]; events: EventRow[]; activity: Activity[]; anomalies: Array<Record<string, unknown>>; audit: Array<Record<string, unknown>> };
+type QueueItem = { trackingCode: string; beneficiary: string; destination: string; weightKg: number | null; weightState: string; amountExpected: number | null; amountPaid: number; remainingBalance: number | null; paymentSites: string[]; paymentAgents: string[]; paymentLabel: string; deliveryStatus: "READY" | "PAYMENT_PENDING" | "DELIVERED"; deliveredAt: string | null; businessDate: string | null; deliveredBy: string | null; canConfirmDelivery: boolean };
+type QueueResponse = { agency: string; accountStatus: string; items: QueueItem[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } };
 
 export function AgentStockagesV2Page() {
   const [data, setData] = useState<AgentData | null>(null);
@@ -29,11 +31,35 @@ export function AgentStockagesV2Page() {
       <AgentCommandForm title="Déclarer un arrivage" endpoint="/api/agent/stockages/arrival" disabled={!data.actionsEnabled} fields="arrival" onDone={load} />
       <AgentCommandForm title="Confirmer une livraison" endpoint="/api/agent/stockages/delivery" disabled={!data.actionsEnabled} fields="delivery" onDone={load} />
     </div>
+    <AgentWorkQueues accountActive={data.actionsEnabled} onDelivery={load} />
     <EventTable title="Arrivages et livraisons récents" rows={data.events} />
     <ActivityTable rows={data.activity} />
     {message && <Notice text={message} />}
   </Shell>;
 }
+
+function AgentWorkQueues({ accountActive, onDelivery }: { accountActive: boolean; onDelivery: () => Promise<void> }) {
+  return <div className="space-y-5">
+    <QueueSection title="COLIS PRÊTS À REMETTRE" section="READY" accountActive={accountActive} onDelivery={onDelivery} />
+    <QueueSection title="COLIS AVEC SOLDE RESTANT" section="PENDING" accountActive={accountActive} onDelivery={onDelivery} />
+    <QueueSection title="LIVRAISONS RÉCENTES" section="RECENT" accountActive={accountActive} onDelivery={onDelivery} />
+    <Panel title="RECHERCHER UN AUTRE COLIS"><p className="mb-3 text-sm text-slate-400">Recherche complémentaire pour un colis précis ou un cas particulier.</p><Link className="inline-flex rounded-lg border border-lime-400/40 px-4 py-2 text-lime-300" href="#manual-delivery">Utiliser la recherche manuelle</Link></Panel>
+  </div>;
+}
+
+function QueueSection({ title, section, accountActive, onDelivery }: { title: string; section: "READY" | "PENDING" | "RECENT"; accountActive: boolean; onDelivery: () => Promise<void> }) {
+  const [response, setResponse] = useState<QueueResponse | null>(null); const [query, setQuery] = useState(""); const [paymentSite, setPaymentSite] = useState("ALL"); const [page, setPage] = useState(1); const [message, setMessage] = useState(""); const [pendingCode, setPendingCode] = useState("");
+  const load = useCallback(async () => { try { setMessage(""); const params = new URLSearchParams({ section, query, paymentSite, page: String(page), pageSize: "12" }); setResponse(await request<QueueResponse>(`/api/agent/stockages/queues?${params}`)); } catch (error) { setMessage(error instanceof Error ? error.message : "Liste indisponible."); } }, [section, query, paymentSite, page]);
+  useEffect(() => { void load(); }, [load]);
+  async function deliver(code: string) { if (!accountActive || pendingCode || !window.confirm(`Confirmer la remise physique du colis ${code} ?`)) return; setPendingCode(code); try { const result = await request<{ replayed?: boolean }>("/api/agent/stockages/delivery", { trackingCode: code, physicalDeliveryConfirmed: true, requestId: crypto.randomUUID() }); setMessage(result.replayed ? "Livraison déjà confirmée." : "Livraison confirmée avec succès."); await Promise.all([load(), onDelivery()]); } catch (error) { setMessage(error instanceof Error ? error.message : "Livraison refusée."); } finally { setPendingCode(""); } }
+  return <Panel title={title}><div className="mb-4 grid gap-3 sm:grid-cols-2"><label className="text-sm">Code colis<input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><label className="text-sm">Site d’encaissement<select value={paymentSite} onChange={(event) => { setPaymentSite(event.target.value); setPage(1); }} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2"><option value="ALL">Tous</option><option>COO</option><option>FIH</option><option>LSHI</option><option>KLZ</option></select></label></div>
+    {message && <p className="mb-3 rounded-lg bg-amber-400/10 p-3 text-sm">{message}</p>}
+    {!response ? <p className="text-slate-400">Chargement…</p> : response.items.length === 0 ? <p className="text-slate-400">Aucun résultat.</p> : <div className="grid gap-3 lg:grid-cols-2">{response.items.map((item) => <article key={item.trackingCode} className="rounded-xl border border-white/10 bg-slate-950/60 p-4"><div className="flex justify-between gap-3"><b>{item.trackingCode}</b><span className="text-xs text-lime-300">{item.deliveryStatus === "DELIVERED" ? "Livré" : item.deliveryStatus === "READY" ? "Prêt" : "Solde restant"}</span></div><p className="mt-2 text-sm">Bénéficiaire : {item.beneficiary}</p><p className="text-sm">Destination : {item.destination} · Poids : {item.weightKg === null ? "Indisponible" : `${item.weightKg.toFixed(3)} kg`}</p><p className="text-sm">Attendu : {money(item.amountExpected)} · Payé : {money(item.amountPaid)} · Solde : {money(item.remainingBalance)}</p><p className="mt-2 text-xs text-slate-400">{item.paymentLabel}</p>{section === "READY" && <Button disabled={!item.canConfirmDelivery || pendingCode === item.trackingCode} onClick={() => void deliver(item.trackingCode)} className="mt-3 w-full bg-lime-400 text-slate-950 hover:bg-lime-300">{pendingCode === item.trackingCode ? "Confirmation…" : item.weightState !== "VALID" ? "Poids à vérifier" : accountActive ? "Confirmer la livraison" : "Solde initial requis"}</Button>}{section === "PENDING" && <Link href={`/agent/encaissement?code=${encodeURIComponent(item.trackingCode)}`} className="mt-3 inline-flex w-full justify-center rounded-lg bg-lime-400 px-4 py-2 font-medium text-slate-950">Encaisser le solde</Link>}{section === "RECENT" && <p className="mt-3 text-xs text-slate-300">{item.businessDate ?? "—"} · {item.deliveredAt ? new Date(item.deliveredAt).toLocaleString("fr-FR") : "—"} · {item.deliveredBy ?? "—"}</p>}</article>)}</div>}
+    {response && <div className="mt-4 flex items-center justify-between text-sm"><Button variant="outline" disabled={response.pagination.page <= 1} onClick={() => setPage((value) => value - 1)}>Précédente</Button><span>Page {response.pagination.page}/{response.pagination.totalPages} · {response.pagination.total} résultat(s)</span><Button variant="outline" disabled={response.pagination.page >= response.pagination.totalPages} onClick={() => setPage((value) => value + 1)}>Suivante</Button></div>}
+  </Panel>;
+}
+
+function AdminWorkQueue({ accounts }: { accounts: Account[] }) { const [agency, setAgency] = useState(accounts[0]?.agency ?? "FIH"); const [section, setSection] = useState("READY"); const [response, setResponse] = useState<QueueResponse | null>(null); const [message, setMessage] = useState(""); useEffect(() => { let active = true; const params = new URLSearchParams({ agency, section, page: "1", pageSize: "12" }); request<QueueResponse>(`/api/admin/stockages/v2/queues?${params}`).then((data) => { if (active) { setResponse(data); setMessage(""); } }).catch((error) => { if (active) setMessage(error instanceof Error ? error.message : "Vue indisponible."); }); return () => { active = false; }; }, [agency, section]); return <Panel title="Vue consultative des colis"><div className="mb-4 flex flex-wrap gap-3"><select value={agency} onChange={(event) => setAgency(event.target.value)} className="rounded-lg border border-white/15 bg-slate-950 p-2">{accounts.map((account) => <option key={account.agency}>{account.agency}</option>)}</select><select value={section} onChange={(event) => setSection(event.target.value)} className="rounded-lg border border-white/15 bg-slate-950 p-2"><option value="READY">Prêts à remettre</option><option value="PENDING">Solde restant</option><option value="RECENT">Livraisons récentes</option></select></div>{message ? <p>{message}</p> : <DataList rows={(response?.items ?? []).map((item) => `${item.trackingCode} · ${item.paymentLabel} · ${item.deliveryStatus}`)} empty="Aucun colis." />}</Panel>; }
 
 export function AdminStockagesV2Page() {
   const [data, setData] = useState<AdminData | null>(null);
@@ -52,6 +78,7 @@ export function AdminStockagesV2Page() {
     </div>
     <EventTable title="Mouvements consolidés" rows={data.events} />
     <ActivityTable rows={data.activity} />
+    <AdminWorkQueue accounts={data.accounts} />
     <JsonList title="Anomalies" rows={data.anomalies} />
     <JsonList title="Audit immutable" rows={data.audit} />
     {message && <Notice text={message} />}
@@ -95,3 +122,5 @@ function JsonList({ title, rows }: { title: string; rows: Array<Record<string, u
 function Panel({ title, children }: { title: string; children: React.ReactNode }) { return <section className="rounded-2xl border border-white/10 bg-slate-900/80 p-5"><h2 className="mb-4 flex items-center gap-2 text-xl font-semibold"><Boxes className="h-5 w-5 text-lime-300" />{title}</h2>{children}</section>; }
 function Notice({ text }: { text: string }) { return <div className="flex items-center gap-3 rounded-xl border border-amber-400/25 bg-amber-400/10 p-4 text-sm"><ShieldCheck className="h-5 w-5" />{text}</div>; }
 function Input(props: { name: string; label: string; type?: string; min?: string; step?: string; required?: boolean }) { return <label className="block text-sm">{props.label}<input {...props} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label>; }
+function money(value: number | null) { return value === null ? "Non disponible" : `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(value)} $`; }
+function DataList({ rows, empty }: { rows: string[]; empty: string }) { return rows.length ? <div className="space-y-2">{rows.map((row, index) => <p key={`${row}-${index}`} className="rounded-lg border border-white/10 p-3 text-sm">{row}</p>)}</div> : <p className="text-slate-400">{empty}</p>; }

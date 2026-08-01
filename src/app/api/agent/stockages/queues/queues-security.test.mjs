@@ -1,0 +1,27 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const agentRoute = readFileSync(new URL("./route.ts", import.meta.url), "utf8");
+const adminRoute = readFileSync(new URL("../../../admin/stockages/v2/queues/route.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../../../../../server/stockages-work-queues.ts", import.meta.url), "utf8");
+const ui = readFileSync(new URL("../../../../../features/stockages/stockages-v2-page.tsx", import.meta.url), "utf8");
+
+test("les routes dérivent les droits et l’agence côté serveur", () => {
+  assert.match(agentRoute, /authorizeAgentRequest\(request\)/);
+  assert.match(agentRoute, /requireStorageAgency\(auth\.identity\.site\)/);
+  assert.match(adminRoute, /authorizeAdminRequest\(request\)/);
+  assert.doesNotMatch(agentRoute, /searchParams\.get\("agency"\)/);
+});
+
+test("les files sont en lecture seule et ne copient aucun paiement", () => {
+  assert.doesNotMatch(agentRoute + adminRoute + source, /\.insert\(|\.update\(|\.delete\(|cash_events|TRANSFER/);
+  assert.match(source, /readAdminPayments/);
+  assert.match(source, /readAdminManifestRows/);
+});
+
+test("l’interface contient les trois sections et aucun Request ID visible", () => {
+  for (const title of ["COLIS PRÊTS À REMETTRE", "COLIS AVEC SOLDE RESTANT", "LIVRAISONS RÉCENTES", "RECHERCHER UN AUTRE COLIS"]) assert.match(ui, new RegExp(title));
+  assert.doesNotMatch(ui, /label=["']Request ID|>Request ID</);
+  assert.match(ui, /\/agent\/encaissement\?code=/);
+});

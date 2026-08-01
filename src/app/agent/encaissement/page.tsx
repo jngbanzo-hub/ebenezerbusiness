@@ -13,7 +13,11 @@ export const metadata: Metadata = createPageMetadata({
   noIndex: true
 });
 
-export default function AgentPaymentPage() {
+export default function AgentPaymentPage({
+  searchParams
+}: {
+  searchParams?: { code?: string };
+}) {
   return (
     <>
       <div className="bg-ebe-night px-4 pt-4 text-white">
@@ -23,7 +27,7 @@ export default function AgentPaymentPage() {
           </Button>
         </Container>
       </div>
-      <AgentWorkspace />
+      <AgentWorkspace initialTrackingCode={searchParams?.code ?? ""} />
     </>
   );
 }
