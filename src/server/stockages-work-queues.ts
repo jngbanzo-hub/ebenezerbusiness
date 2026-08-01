@@ -1,7 +1,8 @@
 import "server-only";
 
+import { parseStrictPositiveWeight } from "@/features/admin/shippers";
 import type { AdminPayment, ManifestShipperRow } from "@/features/admin/types";
-import { readAdminManifestRows } from "@/server/admin-manifest-sheets";
+import { readCanonicalPaymentManifestRows } from "@/server/admin-manifest-sheets";
 import { readAdminPayments } from "@/server/admin-payments-sheets";
 import { buildEncaissementsFinancialProjection } from "@/server/encaissements-financial-projection";
 import { requireStorageAgency, type StorageAgency } from "@/server/stockages-v2";
@@ -115,7 +116,7 @@ export function buildParcelWorkQueues(input: {
     const amountPaid = financial.totalPaid;
     const remainingBalance = financial.remainingBalance;
     const manifestRows = manifestByCode.get(trackingCode) ?? [];
-    const weights = manifestRows.map((row) => parseWeight(row.poidsRaw)).filter((value): value is number => value !== null);
+    const weights = manifestRows.map((row) => parseStrictPositiveWeight(row.poidsRaw)).filter((value): value is number => value !== null);
     const weightKeys = new Set(weights.map((value) => value.toFixed(3)));
     const destinationConflict = manifestRows.some((row) => row.sourceSite !== input.agency);
     const weightState = manifestRows.length === 0 || weights.length !== manifestRows.length ? "MISSING" : weightKeys.size === 1 && !destinationConflict ? "VALID" : "AMBIGUOUS";
@@ -161,7 +162,6 @@ function paginate(items: WorkQueueItem[], page: number, pageSize: number) { cons
 function summarizeQueue(items: WorkQueueItem[]) { return { totalDeduplicated: items.length, readyForDelivery: items.filter((item) => item.deliveryStatus === "READY").length, paymentPending: items.filter((item) => item.deliveryStatus === "PAYMENT_PENDING").length, verificationRequired: items.filter((item) => item.deliveryStatus === "VERIFICATION_REQUIRED").length, recentlyDelivered: items.filter((item) => item.deliveryStatus === "DELIVERED").length, weightToVerify: items.filter((item) => item.weightState !== "VALID").length, unknownAmounts: items.filter((item) => item.amountExpected === null).length, conflicts: items.filter((item) => item.financialState === "CONFLICT").length, activeCollectionButtons: items.filter((item) => item.deliveryStatus === "PAYMENT_PENDING" && item.remainingBalance !== null).length, activeDeliveryButtons: items.filter((item) => item.canConfirmDelivery).length }; }
 function paymentLabel(sites: string[], paid: boolean, exactBalanceRemaining: boolean, amountPaid: number | null) { if (paid && sites.length === 1 && sites[0] === "COO") return "Paiement intégral déjà effectué à COO — colis à remettre"; if (paid && sites.length > 1) return "Paiement réparti — prêt à remettre"; if (paid) return "Paiement complet — prêt à remettre"; if (exactBalanceRemaining) return sites.includes("COO") ? "Paiement partiel effectué à COO" : amountPaid === 0 ? "Aucun paiement — solde exact connu" : "Solde exact restant à encaisser"; return "Le montant attendu ou le solde exact n’est pas disponible. Vérification nécessaire avant encaissement."; }
 function normalizeCode(value: unknown) { const code = String(value ?? "").trim().toUpperCase(); return /^[A-Z0-9][A-Z0-9._/-]{1,63}$/.test(code) ? code : ""; }
-function parseWeight(value: unknown) { const parsed = typeof value === "number" ? value : Number(String(value ?? "").replace(",", ".")); return Number.isFinite(parsed) && parsed > 0 ? parsed : null; }
 function round(value: number) { return Math.round((value + Number.EPSILON) * 100) / 100; }
 function normalizeSearch(value: string) { return value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase(); }
 function bounded(value: string | null, max: number) { const normalized = value?.trim() ?? ""; if (normalized.length > max) throw new Error("INVALID_FILTER"); return normalized; }
@@ -171,7 +171,7 @@ function boundedInteger(value: string | null, min: number, max: number, fallback
 async function readQueueSources() {
   const now = Date.now();
   if (sourceCache && sourceCache.expiresAt > now) return sourceCache;
-  const [payments, manifest] = await Promise.all([readAdminPayments(), readAdminManifestRows()]);
+  const [payments, manifest] = await Promise.all([readAdminPayments(), readCanonicalPaymentManifestRows()]);
   sourceCache = { payments, manifest, expiresAt: now + 30_000 };
   return sourceCache;
 }

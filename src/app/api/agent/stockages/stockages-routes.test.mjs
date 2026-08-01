@@ -25,7 +25,7 @@ test("les écritures passent uniquement par les RPC service_role", () => {
 });
 
 test("le poids de livraison vient du Manifeste et est contrôlé par Paiements", () => {
-  assert.match(server, /readAdminManifestRows/);
+  assert.match(server, /readCanonicalPaymentManifestRows/);
   assert.match(server, /readAdminPayments/);
   assert.match(server, /weightSource: "SHIPPING_MANIFEST"/);
   assert.doesNotMatch(read("./delivery/route.ts"), /body\.weight/);

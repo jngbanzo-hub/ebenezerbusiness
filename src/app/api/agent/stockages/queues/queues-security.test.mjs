@@ -17,7 +17,8 @@ test("les routes dérivent les droits et l’agence côté serveur", () => {
 test("les files sont en lecture seule et ne copient aucun paiement", () => {
   assert.doesNotMatch(agentRoute + adminRoute + source, /\.insert\(|\.update\(|\.delete\(|cash_events|TRANSFER/);
   assert.match(source, /readAdminPayments/);
-  assert.match(source, /readAdminManifestRows/);
+  assert.match(source, /readCanonicalPaymentManifestRows/);
+  assert.match(source, /GOOGLE_SHEETS_PAYMENTS_SOURCE_SPREADSHEET_ID|readCanonicalPaymentManifestRows/);
 });
 
 test("l’interface sépare les files fiables, les vérifications et aucun Request ID visible", () => {
@@ -30,5 +31,7 @@ test("l’interface Stockages utilise les couleurs officielles sans bouton bleu 
   assert.match(ui, /bg-lime-400/);
   assert.match(ui, /text-amber-300/);
   assert.match(ui, /disabled:bg-slate-800/);
+  assert.match(ui, /focus-visible:ring-lime-300/);
+  assert.doesNotMatch(ui, /Vérifier dans Encaissements<\/Button>/);
   assert.doesNotMatch(ui, /(?:bg|text|border)-blue-/);
 });

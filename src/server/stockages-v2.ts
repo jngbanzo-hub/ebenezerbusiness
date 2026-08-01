@@ -2,7 +2,8 @@ import "server-only";
 
 import { createClient } from "@supabase/supabase-js";
 
-import { readAdminManifestRows } from "@/server/admin-manifest-sheets";
+import { parseStrictPositiveWeight } from "@/features/admin/shippers";
+import { readCanonicalPaymentManifestRows } from "@/server/admin-manifest-sheets";
 import { readAdminPayments } from "@/server/admin-payments-sheets";
 
 export const STORAGE_AGENCIES = ["FIH", "LSHI", "KLZ"] as const;
@@ -68,14 +69,16 @@ export async function recordArrival(input: { parcelCount: number; weightKg: numb
 
 export async function resolveParcelForDelivery(trackingCode: string, agency: StorageAgency) {
   const code = normalizeTrackingCode(trackingCode);
-  const [manifest, payments] = await Promise.all([readAdminManifestRows(), readAdminPayments()]);
+  const [manifest, payments] = await Promise.all([readCanonicalPaymentManifestRows(), readAdminPayments()]);
   const occurrences = manifest.filter((row) => normalizeTrackingCode(row.codeColisRaw) === code);
   if (!occurrences.length) throw new StockagesV2Error("PARCEL_NOT_FOUND", 404);
   if (occurrences.some((row) => row.sourceSite !== agency)) throw new StockagesV2Error("PARCEL_AGENCY_MISMATCH", 409);
-  const weights = occurrences.map((row) => parseWeight(row.poidsRaw));
+  const parsedWeights = occurrences.map((row) => parseStrictPositiveWeight(row.poidsRaw));
+  if (parsedWeights.some((weight) => weight === null)) throw new StockagesV2Error("PARCEL_WEIGHT_UNAVAILABLE", 422);
+  const weights = parsedWeights.filter((weight): weight is number => weight !== null);
   const keys = new Set(weights.map((weight) => weight.toFixed(3)));
   if (keys.size !== 1) throw new StockagesV2Error("PARCEL_WEIGHT_AMBIGUOUS", 422);
-  const weightKg = weights[0];
+  const weightKg = weights[0]!;
   const snapshots = payments.filter((row) => normalizeTrackingCode(row.codeColis) === code);
   if (snapshots.some((row) => row.destinationCode !== agency || row.poidsKg === null || row.poidsKg.toFixed(3) !== weightKg.toFixed(3))) {
     throw new StockagesV2Error("PARCEL_WEIGHT_CONFLICT", 422);
@@ -121,7 +124,6 @@ function mapRpcError(message: string) {
 }
 
 function normalizeTrackingCode(value: unknown) { const code = String(value ?? "").trim().toUpperCase(); if (!/^[A-Z0-9][A-Z0-9._/-]{1,63}$/.test(code)) throw new StockagesV2Error("INVALID_TRACKING_CODE"); return code; }
-function parseWeight(value: unknown) { const parsed = typeof value === "number" ? value : Number(String(value).replace(",", ".")); if (!Number.isFinite(parsed) || parsed <= 0) throw new StockagesV2Error("PARCEL_WEIGHT_UNAVAILABLE", 422); return parsed; }
 function clean(value: unknown) { return typeof value === "string" ? value.trim() : ""; }
 function requiredString(value: unknown) { const result = clean(value); if (!result) throw new StockagesV2Error("REQUIRED_FIELD_MISSING"); return result; }
 function validateUuid(value: string) { if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) throw new StockagesV2Error("INVALID_REQUEST_ID"); }

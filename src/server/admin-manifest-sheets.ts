@@ -59,6 +59,19 @@ let tokenCache: { token: string; expiresAt: number } | null = null;
 
 export async function readAdminManifestRows(): Promise<ManifestShipperRow[]> {
   const config = getManifestGoogleSheetsConfig();
+  return readManifestRows(config);
+}
+
+export async function readCanonicalPaymentManifestRows(): Promise<ManifestShipperRow[]> {
+  const config = getManifestGoogleSheetsConfig();
+  const spreadsheetId = emptyToUndefined(process.env.GOOGLE_SHEETS_PAYMENTS_SOURCE_SPREADSHEET_ID);
+  if (!spreadsheetId) {
+    throw new Error("Configuration de la source canonique Encaissements incomplète.");
+  }
+  return readManifestRows({ ...config, spreadsheetId: normalizeSpreadsheetId(spreadsheetId) });
+}
+
+async function readManifestRows(config: ManifestGoogleSheetsConfig): Promise<ManifestShipperRow[]> {
   const valueRanges = await readManifestRanges(config);
   const rows: ManifestShipperRow[] = [];
 
