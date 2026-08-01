@@ -11,8 +11,8 @@ const routes = [
   ["statistiques-expediteurs", "shippers"]
 ];
 
-test("le tableau de bord expose les six modules sur des routes dédiées", () => {
-  for (const path of ["encaissements", "caisse", "depenses", "stockages", "transferts", "statistiques-expediteurs"]) {
+test("le tableau de bord expose les huit modules sur des routes dédiées", () => {
+  for (const path of ["encaissements", "caisse", "depenses", "stockages", "transferts", "statistiques-expediteurs", "statistiques-manifeste", "statistiques-expeditions"]) {
     assert.match(workspace, new RegExp(`href: "/admin/${path}"`));
     assert.equal(existsSync(new URL(`./${path}/page.tsx`, root)), true);
   }

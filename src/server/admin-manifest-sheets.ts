@@ -86,6 +86,36 @@ export async function readAdminManifestRows(): Promise<ManifestShipperRow[]> {
   return rows;
 }
 
+export async function readAdminManifestRange(range: string): Promise<unknown[][]> {
+  const config = getManifestGoogleSheetsConfig();
+  const accessToken = await getGoogleAccessToken(config);
+  const spreadsheetId = encodeURIComponent(config.spreadsheetId);
+  const searchParams = new URLSearchParams({
+    majorDimension: "ROWS",
+    valueRenderOption: "FORMATTED_VALUE"
+  });
+  const response = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?${searchParams.toString()}`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store"
+    }
+  );
+  const payload = (await response.json()) as GoogleValueRange & {
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? "Lecture du Manifeste impossible.");
+  }
+
+  const validated = z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))).safeParse(payload.values ?? []);
+  if (!validated.success) {
+    throw new Error("Réponse Google Sheets invalide.");
+  }
+  return validated.data;
+}
+
 function getManifestGoogleSheetsConfig(): ManifestGoogleSheetsConfig {
   const parsed = manifestSheetsEnvSchema.safeParse({
     GOOGLE_SERVICE_ACCOUNT_JSON: emptyToUndefined(

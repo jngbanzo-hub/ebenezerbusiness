@@ -17,6 +17,7 @@ import {
   LogOut,
   PackageSearch,
   Scale,
+  Send,
   ShieldX
 } from "lucide-react";
 
@@ -560,6 +561,8 @@ const ADMIN_MODULES = [
   { title: "Stockages", description: "Consultez les mouvements, états et audits du module Stockages.", href: "/admin/stockages", icon: Boxes },
   { title: "Transferts", description: "Supervisez le module Transferts dans son périmètre totalement isolé.", href: "/admin/transferts", icon: ArrowRightLeft },
   { title: "Statistiques par expéditeur", description: "Interrogez MANIFESTE PUBLIC en lecture seule par période et circuit.", href: "/admin/statistiques-expediteurs", icon: BarChart3 }
+  ,{ title: "Statistiques du manifeste", description: "Analysez les kilogrammes et volumes mensuels de FIH, LSHI et KLZ.", href: "/admin/statistiques-manifeste", icon: Scale }
+  ,{ title: "Statistiques des expéditions", description: "Consultez les expéditions, groupages, compagnies et destinations.", href: "/admin/statistiques-expeditions", icon: Send }
 ] as const;
 
 function AdminModuleGrid() {
