@@ -149,8 +149,8 @@ declare v_agent public.agents%rowtype; v_existing public.stockage_forwardings%ro
 begin
  select * into v_agent from public.agents where id=p_actor_id;
  if not found or v_agent.actif is not true or upper(btrim(v_agent.role))<>'AGENT' then raise exception 'ACTIVE_AGENT_REQUIRED'; end if;
- if upper(btrim(v_agent.agence))<>v_origin then raise exception 'WRONG_AGENCY'; end if;
- v_rate:=case v_origin||'-'||v_destination when 'FIH-LSHI' then 12 when 'LSHI-FIH' then 13 when 'FIH-KLZ' then 14 when 'KLZ-FIH' then 16 when 'LSHI-KLZ' then 11 when 'KLZ-LSHI' then 13 else null end;
+ if upper(btrim(v_agent.agence))<>v_destination then raise exception 'WRONG_AGENCY'; end if;
+ v_rate:=case v_origin||'-'||v_destination when 'FIH-LSHI' then 13 when 'LSHI-FIH' then 12 when 'FIH-KLZ' then 14 when 'KLZ-FIH' then 16 when 'LSHI-KLZ' then 11 when 'KLZ-LSHI' then 13 else null end;
  if v_rate is null then raise exception 'FORWARDING_ROUTE_NOT_ALLOWED'; end if;
  v_reference:=v_code||'-'||v_origin||'-'||v_destination; v_expected:=round(p_canonical_weight_kg*v_rate,2);
  if p_amount_paid<>v_expected or p_business_date is null or p_request_id is null then raise exception 'INVALID_FORWARDING_PAYMENT'; end if;
@@ -158,7 +158,7 @@ begin
  select * into v_existing from public.stockage_forwardings where creation_request_id=p_request_id;
  if found then if v_existing.command_fingerprint<>v_hash then raise exception 'IDEMPOTENCY_CONFLICT'; end if; return jsonb_build_object('forwardingId',v_existing.forwarding_id,'forwardingReference',v_existing.forwarding_reference,'replayed',true,'state',v_existing.status); end if;
  if exists(select 1 from public.stockage_forwardings where original_tracking_code=v_code and origin_agency=v_origin and destination_agency=v_destination) then raise exception 'FORWARDING_ALREADY_EXISTS'; end if;
- v_cash:=public.record_cash_payment_credit(p_request_id::text,v_reference,v_origin,p_amount_paid,p_business_date,clock_timestamp(),p_actor_id,btrim(v_agent.nom),v_hash,jsonb_build_object('service','INTER_AGENCY_FORWARDING','forwardingReference',v_reference,'modePaiement',p_payment_mode,'referencePaiement',coalesce(p_payment_reference,''),'observation',coalesce(p_observation,'')));
+ v_cash:=public.record_cash_payment_credit(p_request_id::text,v_reference,v_destination,p_amount_paid,p_business_date,clock_timestamp(),p_actor_id,btrim(v_agent.nom),v_hash,jsonb_build_object('service','INTER_AGENCY_FORWARDING','forwardingReference',v_reference,'modePaiement',p_payment_mode,'referencePaiement',coalesce(p_payment_reference,''),'observation',coalesce(p_observation,'')));
  v_id:=gen_random_uuid(); v_event_id:='forwarding-created-'||encode(extensions.digest(p_request_id::text,'sha256'),'hex');
  insert into public.stockage_forwardings(forwarding_id,forwarding_reference,original_tracking_code,origin_agency,destination_agency,canonical_weight_kg,rate_usd_per_kg,amount_expected,amount_paid,creation_request_id,command_fingerprint,created_by,created_by_name,cash_event_id,metadata) values(v_id,v_reference,v_code,v_origin,v_destination,p_canonical_weight_kg,v_rate,v_expected,p_amount_paid,p_request_id,v_hash,p_actor_id,btrim(v_agent.nom),v_cash->>'eventId',jsonb_build_object('paymentMode',p_payment_mode));
  insert into public.stockage_forwarding_events values(v_event_id,v_id,p_request_id,'FORWARDING_CREATED',p_actor_id,btrim(v_agent.nom),v_origin,0,1,v_hash,clock_timestamp(),'{}');

@@ -7,7 +7,7 @@ import { requireStorageAgency, StockagesV2Error } from "@/server/stockages-v2";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const ALLOWED = new Set(["trackingCode", "destination", "amountPaid", "paymentMode", "paymentReference", "observation", "requestId", "confirmed"]);
+const ALLOWED = new Set(["trackingCode", "sourceAgency", "amountPaid", "paymentMode", "paymentReference", "observation", "requestId", "confirmed"]);
 
 export async function POST(request: Request) {
   try {
@@ -17,8 +17,8 @@ export async function POST(request: Request) {
     if (body.confirmed !== true || Object.keys(body).some((key) => !ALLOWED.has(key))) return fail("INVALID_FORWARDING_COMMAND", 400);
     const result = await createInterAgencyForwarding({
       trackingCode: String(body.trackingCode ?? ""),
-      origin: requireStorageAgency(auth.identity.site),
-      destination: requireStorageAgency(String(body.destination ?? "")),
+      origin: requireStorageAgency(String(body.sourceAgency ?? "")),
+      destination: requireStorageAgency(auth.identity.site),
       amountPaid: Number(body.amountPaid),
       paymentMode: String(body.paymentMode ?? ""),
       paymentReference: String(body.paymentReference ?? ""),

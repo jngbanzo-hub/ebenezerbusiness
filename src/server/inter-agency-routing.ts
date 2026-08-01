@@ -1,12 +1,13 @@
 import "server-only";
 
 import { parseStrictPositiveWeight } from "@/features/admin/shippers";
+import type { ManifestShipperRow } from "@/features/admin/types";
 import { readCanonicalPaymentManifestRows } from "@/server/admin-manifest-sheets";
 import { StockagesV2Error, type StorageAgency } from "@/server/stockages-v2";
 
 export const INTER_AGENCY_RATES = Object.freeze({
-  "FIH-LSHI": 12,
-  "LSHI-FIH": 13,
+  "FIH-LSHI": 13,
+  "LSHI-FIH": 12,
   "FIH-KLZ": 14,
   "KLZ-FIH": 16,
   "LSHI-KLZ": 11,
@@ -37,9 +38,12 @@ export function quoteInterAgencyRouting(input: { trackingCode: string; origin: S
   });
 }
 
-export async function resolveInterAgencyQuote(input: { trackingCode: string; origin: StorageAgency; destination: StorageAgency }) {
+export async function resolveInterAgencyQuote(
+  input: { trackingCode: string; origin: StorageAgency; destination: StorageAgency },
+  readRows: () => Promise<ManifestShipperRow[]> = readCanonicalPaymentManifestRows
+) {
   const code = normalizeCode(input.trackingCode);
-  const rows = (await readCanonicalPaymentManifestRows()).filter((row) => row.sourceSite === input.destination && normalizeCode(row.codeColisRaw) === code);
+  const rows = (await readRows()).filter((row) => row.sourceSite === input.origin && normalizeCode(row.codeColisRaw) === code);
   if (!rows.length) throw new StockagesV2Error("PARCEL_NOT_FOUND", 404);
   const weights = rows.map((row) => parseStrictPositiveWeight(row.poidsRaw));
   if (weights.some((weight) => weight === null)) throw new StockagesV2Error("PARCEL_WEIGHT_UNAVAILABLE", 422);

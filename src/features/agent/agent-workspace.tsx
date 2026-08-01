@@ -34,7 +34,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
   const router = useRouter();
   const [profile, setProfile] = useState<AgentProfile | null>(null);
   const [authError, setAuthError] = useState("");
-  const [destination, setDestination] = useState<DestinationCode>("FIH");
+  const [sourceAgency, setSourceAgency] = useState<DestinationCode>("FIH");
   const [codeColis, setCodeColis] = useState(
     /^[A-Z0-9][A-Z0-9._/-]{1,63}$/i.test(initialTrackingCode.trim())
       ? initialTrackingCode.trim().toUpperCase()
@@ -57,7 +57,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
   const paymentLockRef = useRef(false);
   const paymentAttemptRef = useRef<PaymentAttempt | null>(null);
 
-  const destinations = useMemo(
+  const allowedPaymentAgencies = useMemo(
     () => (profile ? getAllowedDestinations(profile.agence) : []),
     [profile]
   );
@@ -81,7 +81,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
         if (!active) return;
 
         setProfile(agentProfile);
-        setDestination(getAllowedDestinations(agentProfile.agence)[0]);
+        setSourceAgency(getAllowedDestinations(agentProfile.agence)[0]);
       } catch (error) {
         await signOutAgent().catch(() => undefined);
         if (!active) return;
@@ -114,8 +114,8 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
 
   async function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!profile || !DESTINATIONS.includes(destination)) {
-      setMessage({ type: "error", text: "Destination invalide." });
+    if (!profile || !DESTINATIONS.includes(sourceAgency)) {
+      setMessage({ type: "error", text: "Agence source invalide." });
       return;
     }
 
@@ -129,19 +129,24 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
     try {
       const normalizedCode = codeColis.trim().toUpperCase();
       const response = await searchParcel({
-        destinationCode: destination,
+        destinationCode: sourceAgency,
         codeColis: normalizedCode
       });
       const foundParcel = parseParcelResponse(response);
       if (
         foundParcel.codeColis.toUpperCase() !== normalizedCode ||
-        foundParcel.destinationCode !== destination
+        foundParcel.destinationCode !== sourceAgency
       ) {
         throw new Error("La réponse de recherche ne correspond pas au colis demandé.");
       }
       setParcel(foundParcel);
-      if (profile.agence !== "COTONOU" && destination !== profile.agence) {
-        setRoutingQuote(await loadInterAgencyQuote(foundParcel.codeColis, destination));
+      if (profile.agence !== "COTONOU" && sourceAgency !== profile.agence) {
+        try {
+          setRoutingQuote(await loadInterAgencyQuote(foundParcel.codeColis, sourceAgency));
+        } catch (error) {
+          setParcel(null);
+          throw error;
+        }
       } else if (profile.agence !== "COTONOU") {
         setParcelAction(await loadParcelAction(foundParcel.codeColis));
       }
@@ -166,7 +171,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
     setIsSaving(true);
 
     try {
-      if (!profile || !parcel || !destinations.includes(destination)) {
+      if (!profile || !parcel || !allowedPaymentAgencies.includes(sourceAgency)) {
         throw new Error("Paiement non autorisé.");
       }
 
@@ -257,7 +262,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
     try {
       const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
       if (!session?.access_token) throw new Error("Session expirée.");
-      const response = await fetch("/api/agent/stockages/forwardings", { method: "POST", headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" }, body: JSON.stringify({ trackingCode: routingQuote.trackingCode, destination: routingQuote.destination, amountPaid: routingQuote.amountExpectedUsd, paymentMode: modePaiement, paymentReference: referencePaiement, observation, requestId: crypto.randomUUID(), confirmed: true }) });
+      const response = await fetch("/api/agent/stockages/forwardings", { method: "POST", headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" }, body: JSON.stringify({ trackingCode: routingQuote.trackingCode, sourceAgency: routingQuote.origin, amountPaid: routingQuote.amountExpectedUsd, paymentMode: modePaiement, paymentReference: referencePaiement, observation, requestId: crypto.randomUUID(), confirmed: true }) });
       const payload = await response.json().catch(() => null) as { replayed?: boolean; forwardingReference?: string; message?: string } | null;
       if (!response.ok) throw new Error(payload?.message ?? "Acheminement refusé.");
       setMessage({ type: "success", text: payload?.replayed ? "Acheminement déjà enregistré : rejeu idempotent." : `Acheminement ${payload?.forwardingReference ?? routingQuote.routingReference} créé. Son arrivage à destination reste à confirmer dans Stockages.` });
@@ -321,10 +326,10 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
             <h2 className="text-xl font-semibold">Rechercher un colis</h2>
             <form onSubmit={handleSearch} className="mt-5 grid gap-4 sm:grid-cols-[1fr_1.5fr_auto] sm:items-end">
               <label className="text-sm font-medium">
-                Destination
+                Agence source
                 <select
-                  value={destination}
-                  onChange={(event) => setDestination(event.target.value as DestinationCode)}
+                  value={sourceAgency}
+                  onChange={(event) => setSourceAgency(event.target.value as DestinationCode)}
                   className={fieldClassName}
                 >
                   {DESTINATIONS.map((item) => (
@@ -375,7 +380,20 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
 
           {parcel ? (
             <GlassPanel className="p-5 sm:p-6" glow="growth">
-              <h2 className="text-xl font-semibold">Colis {parcel.codeColis}</h2>
+              <h2 className="text-xl font-semibold">
+                {routingQuote ? "Acheminement inter-agences" : `Colis ${parcel.codeColis}`}
+              </h2>
+              {routingQuote ? (
+                <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <ParcelValue label="Origine" value={routingQuote.origin} />
+                  <ParcelValue label="Destination" value={routingQuote.destination} />
+                  <ParcelValue label="Code original" value={routingQuote.trackingCode} />
+                  <ParcelValue label="Poids" value={`${routingQuote.weightKg} kg`} />
+                  <ParcelValue label="Tarif" value={`${formatAmount(routingQuote.rateUsdPerKg)}/kg`} />
+                  <ParcelValue label="Montant attendu" value={formatAmount(routingQuote.amountExpectedUsd)} highlight />
+                  <ParcelValue label="Référence" value={routingQuote.routingReference} />
+                </dl>
+              ) : (
               <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <ParcelValue
                   label="Destination"
@@ -395,6 +413,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
                   highlight
                 />
               </dl>
+              )}
 
               {!routingQuote ? <p className="mt-5 rounded-lg border border-accent/25 bg-accent/10 p-3 font-semibold text-accent">Statut : {parcelStatus(parcel, parcelAction)}</p> : null}
 
@@ -478,13 +497,13 @@ function getExactBalance(parcel: Parcel): number | null {
     : null;
 }
 
-async function loadInterAgencyQuote(trackingCode: string, destination: DestinationCode) {
+async function loadInterAgencyQuote(trackingCode: string, sourceAgency: DestinationCode) {
   const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
   if (!session?.access_token) throw new Error("Session expirée.");
-  const params = new URLSearchParams({ trackingCode, destination });
+  const params = new URLSearchParams({ trackingCode, sourceAgency });
   const response = await fetch(`/api/agent/inter-agency-routing/quote?${params}`, { headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store" });
-  const payload = await response.json().catch(() => null) as { quote?: { trackingCode: string; routingReference: string; origin: string; destination: string; weightKg: number; rateUsdPerKg: number; amountExpectedUsd: number }; message?: string } | null;
-  if (!response.ok || !payload?.quote) throw new Error(payload?.message ?? "Acheminement indisponible.");
+  const payload = await response.json().catch(() => null) as { quote?: { trackingCode: string; routingReference: string; origin: string; destination: string; weightKg: number; rateUsdPerKg: number; amountExpectedUsd: number }; code?: string; message?: string } | null;
+  if (!response.ok || !payload?.quote) throw new Error(`${payload?.code ?? `HTTP_${response.status}`} — ${payload?.message ?? "Acheminement indisponible."}`);
   return payload.quote;
 }
 
