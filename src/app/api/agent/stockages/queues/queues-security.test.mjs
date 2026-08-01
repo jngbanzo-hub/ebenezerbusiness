@@ -20,8 +20,8 @@ test("les files sont en lecture seule et ne copient aucun paiement", () => {
   assert.match(source, /readAdminManifestRows/);
 });
 
-test("l’interface contient les trois sections et aucun Request ID visible", () => {
-  for (const title of ["COLIS PRÊTS À REMETTRE", "COLIS AVEC SOLDE RESTANT", "LIVRAISONS RÉCENTES", "RECHERCHER UN AUTRE COLIS"]) assert.match(ui, new RegExp(title));
+test("l’interface sépare les files fiables, les vérifications et aucun Request ID visible", () => {
+  for (const title of ["COLIS PRÊTS À REMETTRE", "COLIS AVEC SOLDE RESTANT", "VÉRIFICATION NÉCESSAIRE", "LIVRAISONS RÉCENTES", "RECHERCHER UN AUTRE COLIS"]) assert.match(ui, new RegExp(title));
   assert.doesNotMatch(ui, /label=["']Request ID|>Request ID</);
   assert.match(ui, /\/agent\/encaissement\?code=/);
 });

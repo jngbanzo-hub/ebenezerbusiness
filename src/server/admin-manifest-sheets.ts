@@ -78,7 +78,9 @@ export async function readAdminManifestRows(): Promise<ManifestShipperRow[]> {
         dateRaw: getCell(row, 0),
         codeColisRaw: getCell(row, 1),
         expediteurRaw: getCell(row, 2),
-        poidsRaw: getCell(row, 4)
+        poidsRaw: getCell(row, 4),
+        montantAttenduRaw: getCell(row, 5),
+        statutRaw: getCell(row, 8)
       });
     });
   }

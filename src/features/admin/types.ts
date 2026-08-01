@@ -29,6 +29,7 @@ export type AdminPayment = {
   modePaiement: string;
   reference: string;
   observation: string;
+  paymentRequestId?: string;
 };
 
 export type AdminPaymentFilters = {
@@ -68,6 +69,8 @@ export type ManifestShipperRow = {
   codeColisRaw: string;
   expediteurRaw: string;
   poidsRaw: string | number;
+  montantAttenduRaw?: string | number;
+  statutRaw?: string;
 };
 
 export type ShipperSuggestion = {

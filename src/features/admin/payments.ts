@@ -169,7 +169,8 @@ export function parseAdminPaymentRow(
     agent: normalizeText(row[9]),
     modePaiement: normalizeText(row[10]),
     reference: normalizeText(row[11]),
-    observation: normalizeText(row[14])
+    observation: normalizeText(row[14]),
+    paymentRequestId: normalizeText(row[15]).toLowerCase()
   };
 }
 

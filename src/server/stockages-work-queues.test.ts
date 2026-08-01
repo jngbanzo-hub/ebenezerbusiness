@@ -4,7 +4,7 @@ import test from "node:test";
 import type { AdminPayment, ManifestShipperRow } from "@/features/admin/types";
 import { buildParcelWorkQueues, parseQueueFilters } from "./stockages-work-queues";
 
-const manifest = (code: string, weight: number): ManifestShipperRow => ({ sourceSite: "LSHI", rowNumber: 2, dateRaw: "2026-08-01", codeColisRaw: code, expediteurRaw: "TEST", poidsRaw: weight });
+const manifest = (code: string, weight: number): ManifestShipperRow => ({ sourceSite: "LSHI", rowNumber: 2, dateRaw: "2026-08-01", codeColisRaw: code, expediteurRaw: "TEST", poidsRaw: weight, montantAttenduRaw: 100, statutRaw: "ARRIVÉ" });
 const payment = (overrides: Partial<AdminPayment> = {}): AdminPayment => ({ id: "COO:2", dateTime: "2026-08-01T10:00:00.000Z", dateKey: "2026-08-01", codeColis: "TEST001", poidsKg: 2, montantAttendu: 100, montantPaye: 100, soldeRestant: 0, agenceEncaissement: "COO", destinationCode: "LSHI", destination: "Lubumbashi", statutPaiement: "SOLDE", agent: "Agent COO", modePaiement: "ESPECES", reference: "REF", observation: "", ...overrides });
 
 test("paiement intégral COO produit un colis prêt sans sortie automatique", () => {
@@ -23,6 +23,33 @@ test("paiement total réparti entre deux sites reste un seul colis prêt", () =>
 test("paiement partiel reste dans la file solde restant", () => {
   const [item] = buildParcelWorkQueues({ payments: [payment({ montantPaye: 35, soldeRestant: 65, statutPaiement: "PARTIELLEMENT PAYE" })], manifest: [manifest("TEST001", 2)], deliveries: [], agency: "LSHI", accountActive: true });
   assert.equal(item.deliveryStatus, "PAYMENT_PENDING"); assert.equal(item.remainingBalance, 65); assert.equal(item.canConfirmDelivery, false);
+});
+
+test("absence de paiement et de montant attendu exige une vérification sans faux solde", () => {
+  const [item] = buildParcelWorkQueues({ payments: [], manifest: [{ ...manifest("TEST001", 2), montantAttenduRaw: "" }], deliveries: [], agency: "LSHI", accountActive: true });
+  assert.equal(item.deliveryStatus, "VERIFICATION_REQUIRED");
+  assert.equal(item.amountExpected, null);
+  assert.equal(item.remainingBalance, null);
+  assert.equal(item.financialState, "INCOMPLETE");
+  assert.match(item.paymentLabel, /Vérification nécessaire/);
+});
+
+test("montants attendus divergents bloquent l'encaissement et la remise", () => {
+  const rows = [payment({ montantPaye: 20, soldeRestant: 80 }), payment({ id: "LSHI:2", agenceEncaissement: "LSHI", montantAttendu: 120, montantPaye: 20, soldeRestant: 80 })];
+  const [item] = buildParcelWorkQueues({ payments: rows, manifest: [manifest("TEST001", 2)], deliveries: [], agency: "LSHI", accountActive: true });
+  assert.equal(item.deliveryStatus, "VERIFICATION_REQUIRED");
+  assert.equal(item.financialState, "CONFLICT");
+  assert.equal(item.remainingBalance, null);
+  assert.ok(item.anomalies.includes("PAYMENT_EXPECTED_AMOUNT_CONFLICT"));
+});
+
+test("même code dans deux destinations est dédupliqué mais signalé comme divergence", () => {
+  const rows = [manifest("TEST001", 2), { ...manifest("TEST001", 2), sourceSite: "KLZ" as const, rowNumber: 8 }];
+  const [item] = buildParcelWorkQueues({ payments: [payment()], manifest: rows, deliveries: [], agency: "LSHI", accountActive: true });
+  assert.equal(item.trackingCode, "TEST001");
+  assert.equal(item.weightState, "AMBIGUOUS");
+  assert.ok(item.anomalies.includes("DESTINATION_CONFLICT"));
+  assert.equal(item.canConfirmDelivery, false);
 });
 
 test("livraison confirmée exclut le colis des prêts et conserve Agent/date/poids", () => {
@@ -45,4 +72,5 @@ test("filtres et pagination sont bornés côté serveur", () => {
   assert.equal(filters.page, 2); assert.equal(filters.pageSize, 12); assert.equal(filters.paymentSite, "COO");
   assert.throws(() => parseQueueFilters(new URL("https://example.test?section=READY&pageSize=500")), /INVALID_PAGINATION/);
   assert.throws(() => parseQueueFilters(new URL("https://example.test?section=UNKNOWN")), /INVALID_QUEUE_SECTION/);
+  assert.equal(parseQueueFilters(new URL("https://example.test?section=VERIFICATION")).section, "VERIFICATION");
 });
