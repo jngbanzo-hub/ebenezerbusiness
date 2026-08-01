@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { AdminStockagesPage as AdminStockagesWorkspace } from "@/features/stockages/admin-stockages-page";
+import { AdminStockagesV2Page } from "@/features/stockages/stockages-v2-page";
 import { createPageMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = createPageMetadata({
@@ -11,5 +11,5 @@ export const metadata: Metadata = createPageMetadata({
 });
 
 export default function AdminStockagesPage() {
-  return <AdminStockagesWorkspace />;
+  return <AdminStockagesV2Page />;
 }

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { StockagesStatusPage } from "@/features/stockages/stockages-status-page";
+import { AgentStockagesV2Page } from "@/features/stockages/stockages-v2-page";
 import { createPageMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = createPageMetadata({
@@ -11,5 +11,5 @@ export const metadata: Metadata = createPageMetadata({
 });
 
 export default function AgentStockagesPage() {
-  return <StockagesStatusPage scope="agent" backHref="/agent" />;
+  return <AgentStockagesV2Page />;
 }
