@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { AdminPayment, ManifestShipperRow } from "@/features/admin/types";
-import { buildParcelWorkQueues, parseQueueFilters } from "./stockages-work-queues";
+import { buildParcelWorkQueueAudit, buildParcelWorkQueues, parseQueueFilters } from "./stockages-work-queues";
 
 const manifest = (code: string, weight: number): ManifestShipperRow => ({ sourceSite: "LSHI", rowNumber: 2, dateRaw: "2026-08-01", codeColisRaw: code, expediteurRaw: "TEST", poidsRaw: weight, montantAttenduRaw: 100, statutRaw: "ARRIVÉ" });
 const payment = (overrides: Partial<AdminPayment> = {}): AdminPayment => ({ id: "COO:2", dateTime: "2026-08-01T10:00:00.000Z", dateKey: "2026-08-01", codeColis: "TEST001", poidsKg: 2, montantAttendu: 100, montantPaye: 100, soldeRestant: 0, agenceEncaissement: "COO", destinationCode: "LSHI", destination: "Lubumbashi", statutPaiement: "SOLDE", agent: "Agent COO", modePaiement: "ESPECES", reference: "REF", observation: "", ...overrides });
@@ -43,13 +43,13 @@ test("montants attendus divergents bloquent l'encaissement et la remise", () => 
   assert.ok(item.anomalies.includes("PAYMENT_EXPECTED_AMOUNT_CONFLICT"));
 });
 
-test("même code dans deux destinations est dédupliqué mais signalé comme divergence", () => {
+test("même code dans deux destinations reste scoped par le couple destination/code Encaissements", () => {
   const rows = [manifest("TEST001", 2), { ...manifest("TEST001", 2), sourceSite: "KLZ" as const, rowNumber: 8 }];
   const [item] = buildParcelWorkQueues({ payments: [payment()], manifest: rows, deliveries: [], agency: "LSHI", accountActive: true });
   assert.equal(item.trackingCode, "TEST001");
-  assert.equal(item.weightState, "AMBIGUOUS");
-  assert.ok(item.anomalies.includes("DESTINATION_CONFLICT"));
-  assert.equal(item.canConfirmDelivery, false);
+  assert.equal(item.weightState, "VALID");
+  assert.doesNotMatch(item.anomalies.join(","), /DESTINATION_CONFLICT|WEIGHT_CONFLICT/);
+  assert.equal(item.canConfirmDelivery, true);
 });
 
 test("livraison confirmée exclut le colis des prêts et conserve Agent/date/poids", () => {
@@ -67,14 +67,26 @@ test("poids absent classe toujours le colis en vérification", () => {
   assert.equal(item.weightState, "MISSING"); assert.equal(item.deliveryStatus, "VERIFICATION_REQUIRED"); assert.equal(item.canConfirmDelivery, false);
 });
 
-test("statut source réellement inéligible bloque les files actives", () => {
-  const [item] = buildParcelWorkQueues({ payments: [payment()], manifest: [{ ...manifest("TEST001", 2), statutRaw: "ANNULÉ" }], deliveries: [], agency: "LSHI", accountActive: true });
-  assert.equal(item.deliveryStatus, "VERIFICATION_REQUIRED"); assert.ok(item.anomalies.includes("SOURCE_STATUS_INELIGIBLE")); assert.equal(item.canConfirmDelivery, false);
+test("statut annulé est exclu de la file Agent et reste visible dans l’audit Admin", () => {
+  const result = buildParcelWorkQueueAudit({ payments: [payment()], manifest: [{ ...manifest("TEST001", 2), statutRaw: "ANNULÉ" }], deliveries: [], agency: "LSHI", accountActive: true });
+  assert.equal(result.items.length, 0); assert.equal(result.audit.excludedHistorical, 1); assert.equal(result.audit.exclusions[0]?.reason, "EXCLUDED_HISTORICAL");
 });
 
-test("statut LIVRÉ du suivi historique conserve la classification financière canonique", () => {
-  const [item] = buildParcelWorkQueues({ payments: [], manifest: [{ ...manifest("TEST001", 2), montantAttenduRaw: "100 $", statutRaw: "LIVRÉ" }], deliveries: [], agency: "LSHI", accountActive: false });
-  assert.equal(item.amountExpected, 100); assert.equal(item.amountPaid, 0); assert.equal(item.remainingBalance, 100); assert.equal(item.deliveryStatus, "PAYMENT_PENDING"); assert.equal(item.canConfirmDelivery, false);
+test("statut LIVRÉ historique sans événement V2 est exclu de la file active", () => {
+  const result = buildParcelWorkQueueAudit({ payments: [], manifest: [{ ...manifest("TEST001", 2), montantAttenduRaw: "100 $", statutRaw: "LIVRÉ" }], deliveries: [], agency: "LSHI", accountActive: false });
+  assert.equal(result.items.length, 0); assert.equal(result.audit.excludedHistorical, 1);
+});
+
+test("un paiement ciblant l’agence sans colis dans sa feuille canonique exclut l’autre agence", () => {
+  const result = buildParcelWorkQueueAudit({ payments: [payment()], manifest: [{ ...manifest("TEST001", 2), sourceSite: "FIH" }], deliveries: [], agency: "LSHI", accountActive: true });
+  assert.equal(result.items.length, 0); assert.equal(result.audit.excludedWrongAgency, 1); assert.equal(result.audit.exclusions[0]?.reason, "EXCLUDED_WRONG_AGENCY");
+});
+
+test("doublon strict est dédupliqué et doublon divergent reste en vérification", () => {
+  const strict = buildParcelWorkQueueAudit({ payments: [], manifest: [manifest("STRICT1", 2), { ...manifest("STRICT1", 2), rowNumber: 3 }], deliveries: [], agency: "LSHI", accountActive: true });
+  assert.equal(strict.items.length, 1); assert.equal(strict.audit.strictDuplicateCodes, 1);
+  const divergent = buildParcelWorkQueueAudit({ payments: [], manifest: [manifest("DIVERGE1", 2), { ...manifest("DIVERGE1", 3), rowNumber: 3 }], deliveries: [], agency: "LSHI", accountActive: true });
+  assert.equal(divergent.items[0]?.deliveryStatus, "VERIFICATION_REQUIRED"); assert.equal(divergent.audit.divergentDuplicateCodes, 1);
 });
 
 test("compte SUSPENDED laisse les listes lisibles mais bloque la remise", () => {

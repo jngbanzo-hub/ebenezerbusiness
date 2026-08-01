@@ -19,6 +19,9 @@ test("les files sont en lecture seule et ne copient aucun paiement", () => {
   assert.match(source, /readAdminPayments/);
   assert.match(source, /readCanonicalPaymentManifestRows/);
   assert.match(source, /GOOGLE_SHEETS_PAYMENTS_SOURCE_SPREADSHEET_ID|readCanonicalPaymentManifestRows/);
+  assert.match(source, /EXCLUDED_HISTORICAL/);
+  assert.match(source, /EXCLUDED_WRONG_AGENCY/);
+  assert.match(adminRoute, /readAdminWorkQueue/);
 });
 
 test("l’interface sépare les files fiables, les vérifications et aucun Request ID visible", () => {
@@ -34,4 +37,5 @@ test("l’interface Stockages utilise les couleurs officielles sans bouton bleu 
   assert.match(ui, /focus-visible:ring-lime-300/);
   assert.doesNotMatch(ui, /Vérifier dans Encaissements<\/Button>/);
   assert.doesNotMatch(ui, /(?:bg|text|border)-blue-/);
+  assert.match(ui, /Audit source/);
 });

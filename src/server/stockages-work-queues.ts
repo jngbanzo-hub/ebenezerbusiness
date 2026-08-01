@@ -44,6 +44,26 @@ export type WorkQueueItem = {
   canConfirmDelivery: boolean;
 };
 
+export type WorkQueueExclusion = {
+  trackingCode: string;
+  reason: "EXCLUDED_HISTORICAL" | "EXCLUDED_WRONG_AGENCY" | "INVALID_CODE";
+  sourceStatus: string;
+  sourceDate: string;
+  sourceAgencies: StorageAgency[];
+};
+
+export type WorkQueueAudit = {
+  rawRows: number;
+  normalizedRows: number;
+  uniqueCodes: number;
+  strictDuplicateCodes: number;
+  divergentDuplicateCodes: number;
+  excludedHistorical: number;
+  excludedWrongAgency: number;
+  invalidCodes: number;
+  exclusions: WorkQueueExclusion[];
+};
+
 type DeliveryRow = {
   tracking_code: string | null;
   agency: string;
@@ -83,8 +103,19 @@ export async function readAgentWorkQueue(input: {
   filters: QueueFilters;
 }) {
   const { payments, manifest } = await readQueueSources();
-  const items = buildParcelWorkQueues({ payments, manifest, deliveries: input.deliveries, agency: input.agency, accountActive: input.accountActive });
+  const { items } = buildParcelWorkQueueAudit({ payments, manifest, deliveries: input.deliveries, agency: input.agency, accountActive: input.accountActive });
   return { ...paginate(filterQueue(items, input.filters), input.filters.page, input.filters.pageSize), summary: summarizeQueue(items) };
+}
+
+export async function readAdminWorkQueue(input: {
+  agency: StorageAgency;
+  accountActive: boolean;
+  deliveries: DeliveryRow[];
+  filters: QueueFilters;
+}) {
+  const { payments, manifest } = await readQueueSources();
+  const { items, audit } = buildParcelWorkQueueAudit({ payments, manifest, deliveries: input.deliveries, agency: input.agency, accountActive: input.accountActive });
+  return { ...paginate(filterQueue(items, input.filters), input.filters.page, input.filters.pageSize), summary: summarizeQueue(items), audit };
 }
 
 export function buildParcelWorkQueues(input: {
@@ -94,6 +125,16 @@ export function buildParcelWorkQueues(input: {
   agency: StorageAgency;
   accountActive: boolean;
 }): WorkQueueItem[] {
+  return buildParcelWorkQueueAudit(input).items;
+}
+
+export function buildParcelWorkQueueAudit(input: {
+  payments: readonly AdminPayment[];
+  manifest: readonly ManifestShipperRow[];
+  deliveries: readonly DeliveryRow[];
+  agency: StorageAgency;
+  accountActive: boolean;
+}): { items: WorkQueueItem[]; audit: WorkQueueAudit } {
   const paymentsByCode = new Map<string, AdminPayment[]>();
   for (const payment of input.payments) {
     if (payment.destinationCode !== input.agency) continue;
@@ -101,32 +142,51 @@ export function buildParcelWorkQueues(input: {
     paymentsByCode.set(code, [...(paymentsByCode.get(code) ?? []), payment]);
   }
   const manifestByCode = new Map<string, ManifestShipperRow[]>();
+  const sourceAgenciesByCode = new Map<string, Set<StorageAgency>>();
+  const exclusions: WorkQueueExclusion[] = [];
+  let normalizedRows = 0;
+  let invalidCodes = 0;
   for (const row of input.manifest) {
     const code = normalizeCode(row.codeColisRaw);
-    if (!code) continue;
+    if (!code) { if (row.sourceSite === input.agency) invalidCodes += 1; continue; }
+    const sourceAgencies = sourceAgenciesByCode.get(code) ?? new Set<StorageAgency>();
+    sourceAgencies.add(row.sourceSite);
+    sourceAgenciesByCode.set(code, sourceAgencies);
+    if (row.sourceSite !== input.agency) continue;
+    normalizedRows += 1;
     manifestByCode.set(code, [...(manifestByCode.get(code) ?? []), row]);
   }
   const deliveryByCode = new Map(input.deliveries.filter((row) => row.tracking_code).map((row) => [normalizeCode(row.tracking_code), row]));
-  const agencyManifestCodes = Array.from(manifestByCode.entries()).filter(([, rows]) => rows.some((row) => row.sourceSite === input.agency)).map(([code]) => code);
-  const codes = new Set(Array.from(paymentsByCode.keys()).concat(agencyManifestCodes, Array.from(deliveryByCode.keys())));
-  return Array.from(codes).map((trackingCode) => {
+  const codes = new Set(Array.from(paymentsByCode.keys()).concat(Array.from(manifestByCode.keys()), Array.from(deliveryByCode.keys())));
+  const strictDuplicateCodes = Array.from(manifestByCode.values()).filter((rows) => rows.length > 1 && new Set(rows.map(manifestFingerprint)).size === 1).length;
+  const divergentDuplicateCodes = Array.from(manifestByCode.values()).filter((rows) => rows.length > 1 && new Set(rows.map(manifestFingerprint)).size > 1).length;
+  const items = Array.from(codes).flatMap((trackingCode): WorkQueueItem[] => {
     const payments = paymentsByCode.get(trackingCode) ?? [];
-    const financial = buildEncaissementsFinancialProjection({ trackingCode, destination: input.agency, manifestRows: input.manifest, payments: input.payments });
+    const manifestRows = manifestByCode.get(trackingCode) ?? [];
+    const delivery = deliveryByCode.get(trackingCode);
+    const sourceAgencies = Array.from(sourceAgenciesByCode.get(trackingCode) ?? []).sort() as StorageAgency[];
+    if (!manifestRows.length && sourceAgencies.length && !delivery) {
+      exclusions.push({ trackingCode, reason: "EXCLUDED_WRONG_AGENCY", sourceStatus: "", sourceDate: "", sourceAgencies });
+      return [];
+    }
+    const canonicalRow = manifestRows.at(-1);
+    if (canonicalRow && isHistoricalClosedStatus(canonicalRow.statutRaw) && !delivery) {
+      exclusions.push({ trackingCode, reason: "EXCLUDED_HISTORICAL", sourceStatus: String(canonicalRow.statutRaw ?? "").trim(), sourceDate: String(canonicalRow.dateRaw ?? "").trim(), sourceAgencies: [input.agency] });
+      return [];
+    }
+    const financial = buildEncaissementsFinancialProjection({ trackingCode, destination: input.agency, manifestRows, payments: input.payments });
     const amountExpected = financial.amountExpected;
     const amountPaid = financial.totalPaid;
     const remainingBalance = financial.remainingBalance;
-    const manifestRows = manifestByCode.get(trackingCode) ?? [];
     const weights = manifestRows.map((row) => parseStrictPositiveWeight(row.poidsRaw)).filter((value): value is number => value !== null);
     const weightKeys = new Set(weights.map((value) => value.toFixed(3)));
-    const destinationConflict = manifestRows.some((row) => row.sourceSite !== input.agency);
-    const weightState = manifestRows.length === 0 || weights.length !== manifestRows.length ? "MISSING" : weightKeys.size === 1 && !destinationConflict ? "VALID" : "AMBIGUOUS";
-    const delivery = deliveryByCode.get(trackingCode);
+    const weightState = manifestRows.length === 0 || weights.length !== manifestRows.length ? "MISSING" : weightKeys.size === 1 ? "VALID" : "AMBIGUOUS";
     const financialState = financial.financialState;
     const fullyPaid = financial.deliveryEligible;
     const exactBalanceRemaining = financial.collectionEligible;
     const paymentSites = Array.from(new Set(payments.map((row) => row.agenceEncaissement)));
     const delivered = Boolean(delivery);
-    return {
+    return [{
       trackingCode,
       beneficiary: "Confidentiel",
       destination: input.agency,
@@ -145,8 +205,22 @@ export function buildParcelWorkQueues(input: {
       businessDate: delivery?.business_date ?? null,
       deliveredBy: delivery?.actor_name ?? null,
       canConfirmDelivery: input.accountActive && fullyPaid && financial.sourceEligible && !delivered && weightState === "VALID"
-    };
+    }];
   });
+  return {
+    items,
+    audit: {
+      rawRows: input.manifest.filter((row) => row.sourceSite === input.agency).length,
+      normalizedRows,
+      uniqueCodes: manifestByCode.size,
+      strictDuplicateCodes,
+      divergentDuplicateCodes,
+      excludedHistorical: exclusions.filter((row) => row.reason === "EXCLUDED_HISTORICAL").length,
+      excludedWrongAgency: exclusions.filter((row) => row.reason === "EXCLUDED_WRONG_AGENCY").length,
+      invalidCodes,
+      exclusions
+    }
+  };
 }
 
 function filterQueue(items: WorkQueueItem[], filters: QueueFilters) {
@@ -161,7 +235,9 @@ function filterQueue(items: WorkQueueItem[], filters: QueueFilters) {
 function paginate(items: WorkQueueItem[], page: number, pageSize: number) { const total = items.length; const totalPages = Math.max(1, Math.ceil(total / pageSize)); const safePage = Math.min(page, totalPages); return { items: items.slice((safePage - 1) * pageSize, safePage * pageSize), pagination: { page: safePage, pageSize, total, totalPages } }; }
 function summarizeQueue(items: WorkQueueItem[]) { return { totalDeduplicated: items.length, readyForDelivery: items.filter((item) => item.deliveryStatus === "READY").length, paymentPending: items.filter((item) => item.deliveryStatus === "PAYMENT_PENDING").length, verificationRequired: items.filter((item) => item.deliveryStatus === "VERIFICATION_REQUIRED").length, recentlyDelivered: items.filter((item) => item.deliveryStatus === "DELIVERED").length, weightToVerify: items.filter((item) => item.weightState !== "VALID").length, unknownAmounts: items.filter((item) => item.amountExpected === null).length, conflicts: items.filter((item) => item.financialState === "CONFLICT").length, activeCollectionButtons: items.filter((item) => item.deliveryStatus === "PAYMENT_PENDING" && item.remainingBalance !== null).length, activeDeliveryButtons: items.filter((item) => item.canConfirmDelivery).length }; }
 function paymentLabel(sites: string[], paid: boolean, exactBalanceRemaining: boolean, amountPaid: number | null) { if (paid && sites.length === 1 && sites[0] === "COO") return "Paiement intégral déjà effectué à COO — colis à remettre"; if (paid && sites.length > 1) return "Paiement réparti — prêt à remettre"; if (paid) return "Paiement complet — prêt à remettre"; if (exactBalanceRemaining) return sites.includes("COO") ? "Paiement partiel effectué à COO" : amountPaid === 0 ? "Aucun paiement — solde exact connu" : "Solde exact restant à encaisser"; return "Le montant attendu ou le solde exact n’est pas disponible. Vérification nécessaire avant encaissement."; }
-function normalizeCode(value: unknown) { const code = String(value ?? "").trim().toUpperCase(); return /^[A-Z0-9][A-Z0-9._/-]{1,63}$/.test(code) ? code : ""; }
+function normalizeCode(value: unknown) { const code = String(value ?? "").trim().replace(/\s+/g, "").toUpperCase(); return /^[A-Z0-9-]{3,40}$/.test(code) ? code : ""; }
+function manifestFingerprint(row: ManifestShipperRow) { return [row.dateRaw, row.codeColisRaw, row.poidsRaw, row.montantAttenduRaw, row.statutRaw].map((value) => String(value ?? "").trim()).join("\u001f"); }
+function isHistoricalClosedStatus(value: unknown) { const normalized = String(value ?? "").trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase(); return /LIVRE|ANNULE|ARCHIVE|CANCEL/.test(normalized); }
 function round(value: number) { return Math.round((value + Number.EPSILON) * 100) / 100; }
 function normalizeSearch(value: string) { return value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase(); }
 function bounded(value: string | null, max: number) { const normalized = value?.trim() ?? ""; if (normalized.length > max) throw new Error("INVALID_FILTER"); return normalized; }

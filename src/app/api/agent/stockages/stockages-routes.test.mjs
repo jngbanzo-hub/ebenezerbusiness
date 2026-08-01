@@ -6,6 +6,7 @@ const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const server = read("../../../../server/stockages-v2.ts");
 const agent = [read("./route.ts"), read("./arrival/route.ts"), read("./parcel/route.ts"), read("./delivery/route.ts")].join("\n");
 const admin = read("../../admin/stockages/v2/route.ts");
+const adminQueues = read("../../admin/stockages/v2/queues/route.ts");
 const ui = read("../../../../features/stockages/stockages-v2-page.tsx");
 
 test("toutes les routes Agent exigent authorizeAgentRequest", () => {
@@ -14,6 +15,8 @@ test("toutes les routes Agent exigent authorizeAgentRequest", () => {
 
 test("la route Admin exige authorizeAdminRequest", () => {
   assert.match(admin, /authorizeAdminRequest\(request\)/);
+  assert.match(adminQueues, /authorizeAdminRequest\(request\)/);
+  assert.match(adminQueues, /readAdminWorkQueue/);
   assert.doesNotMatch(admin, /body\.(role|actorId|actorAgency)/);
 });
 
