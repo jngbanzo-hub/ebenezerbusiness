@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { StockagesStatusPage } from "@/features/stockages/stockages-status-page";
 import { AgentStockagesV2Page } from "@/features/stockages/stockages-v2-page";
 import { createPageMetadata } from "@/lib/seo";
 
@@ -11,5 +12,9 @@ export const metadata: Metadata = createPageMetadata({
 });
 
 export default function AgentStockagesPage() {
-  return <AgentStockagesV2Page />;
+  return process.env.STOCKAGES_V2_ENABLED === "true" ? (
+    <AgentStockagesV2Page />
+  ) : (
+    <StockagesStatusPage scope="agent" backHref="/agent" />
+  );
 }
