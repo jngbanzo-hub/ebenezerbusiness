@@ -14,7 +14,7 @@ test("Stockages affiche uniquement les soldes et statistiques physiques", () => 
   assert.match(ui, /Statistiques physiques/);
   assert.match(ui, /Colis entrés/); assert.match(ui, /Kg sortis/);
   assert.doesNotMatch(ui, /<AgentWorkQueues accountActive=\{data\.actionsEnabled\}/);
-  assert.match(workspace, /<AgentEncaissementQueues/);
+  assert.doesNotMatch(workspace, /<AgentEncaissementQueues/);
 });
 
 test("le devis inter-agences est authentifié et calculé côté serveur", () => {

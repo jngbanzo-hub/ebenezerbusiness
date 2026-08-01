@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { Boxes, ClipboardCheck, LogOut, RefreshCcw, ShieldCheck, Truck } from "lucide-react";
+import { BarChart3, Boxes, ClipboardCheck, LogOut, PackagePlus, PackageX, RefreshCcw, ShieldCheck, Truck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
@@ -18,6 +18,10 @@ type QueueItem = { trackingCode: string; beneficiary: string; destination: strin
 type QueueResponse = { agency: string; accountStatus: string; items: QueueItem[]; pagination: { page: number; pageSize: number; total: number; totalPages: number }; summary: { totalDeduplicated: number; toCollect: number; partialPaymentRemaining: number; readyForDelivery: number; verificationRequired: number; recentlyDelivered: number; weightToVerify: number; unknownAmounts: number; conflicts: number; activeCollectionButtons: number; activeDeliveryButtons: number }; audit?: { rawRows: number; normalizedRows: number; uniqueCodes: number; strictDuplicateCodes: number; divergentDuplicateCodes: number; excludedHistorical: number; excludedWrongAgency: number; invalidCodes: number } };
 
 export function AgentStockagesV2Page() {
+  return <Shell back="/agent" title="Stockages"><div className="grid gap-5 md:grid-cols-3"><ModuleCard href="/agent/stockages/arrivages" title="ARRIVAGES" text="Enregistrer les colis reçus physiquement dans votre agence." icon={<PackagePlus className="h-8 w-8" />} /><ModuleCard href="/agent/stockages/sorties" title="SORTIES" text="Consulter les remises et autres sorties physiques." icon={<PackageX className="h-8 w-8" />} /><ModuleCard href="/agent/stockages/statistiques" title="STATISTIQUES" text="Analyser les volumes physiques et l’activité des Agents." icon={<BarChart3 className="h-8 w-8" />} /></div></Shell>;
+}
+
+export function AgentStockagesArrivalsPage() {
   const [data, setData] = useState<AgentData | null>(null);
   const [message, setMessage] = useState("");
   const load = useCallback(async () => {
@@ -25,19 +29,35 @@ export function AgentStockagesV2Page() {
     catch (error) { setMessage(error instanceof Error ? error.message : "Stockages indisponible."); }
   }, []);
   useEffect(() => { void load(); }, [load]);
-  if (!data) return <Shell back="/agent" title="Stockages"><Notice text={message || "Chargement…"} /><Button onClick={() => void load()} variant="outline"><RefreshCcw className="mr-2 h-4 w-4" />Réessayer</Button></Shell>;
-  return <Shell back="/agent" title={`Stockages ${data.account.agency}`}>
+  if (!data) return <Shell back="/agent/stockages" title="Stockages — Arrivages"><Notice text={message || "Chargement…"} /><Button onClick={() => void load()} variant="outline"><RefreshCcw className="mr-2 h-4 w-4" />Réessayer</Button></Shell>;
+  const arrivals = data.events.filter((event) => event.parcel_count_delta > 0);
+  return <Shell back="/agent/stockages" title={`Arrivages — ${data.account.agency}`}>
     <AccountCards accounts={[data.account]} />
     {!data.actionsEnabled && <Notice text="Stockage non ouvert — solde initial requis" />}
     <div className="grid gap-5">
       <AgentCommandForm title="Déclarer un arrivage" endpoint="/api/agent/stockages/arrival" disabled={!data.actionsEnabled} fields="arrival" onDone={load} />
     </div>
-    <PhysicalStatistics events={data.events} />
-    <EventTable title="Arrivages et livraisons récents" rows={data.events} />
-    <ActivityTable rows={data.activity} />
+    <EventTable title="Arrivages récents" rows={arrivals} />
     {message && <Notice text={message} />}
   </Shell>;
 }
+
+export function AgentStockagesOutputsPage() { return <AgentPhysicalHistory mode="outputs" />; }
+export function AgentStockagesStatisticsPage() { return <AgentPhysicalHistory mode="statistics" />; }
+
+function AgentPhysicalHistory({ mode }: { mode: "outputs" | "statistics" }) {
+  const [data, setData] = useState<AgentData | null>(null); const [message, setMessage] = useState("");
+  const load = useCallback(async () => { try { setMessage(""); setData(await request<AgentData>("/api/agent/stockages")); } catch (error) { setMessage(error instanceof Error ? error.message : "Stockages indisponible."); } }, []);
+  useEffect(() => { void load(); }, [load]);
+  const title = mode === "outputs" ? "Stockages — Sorties" : "Stockages — Statistiques";
+  if (!data) return <Shell back="/agent/stockages" title={title}><Notice text={message || "Chargement…"} /></Shell>;
+  const outputs = data.events.filter((event) => event.parcel_count_delta < 0);
+  return <Shell back="/agent/stockages" title={`${mode === "outputs" ? "Sorties" : "Statistiques"} — ${data.account.agency}`}><AccountCards accounts={[data.account]} />{mode === "outputs" ? <FilteredOutputHistory events={outputs} /> : <><PhysicalStatistics events={data.events} /><EventTable title="Historique physique" rows={data.events} /><ActivityTable rows={data.activity} /></>}{message && <Notice text={message} />}</Shell>;
+}
+
+function ModuleCard({ href, title, text, icon }: { href: string; title: string; text: string; icon: React.ReactNode }) { return <Link href={href} className="group rounded-2xl border border-lime-400/25 bg-slate-900 p-6 transition hover:border-lime-300 hover:bg-slate-900/80"><span className="text-lime-300">{icon}</span><h2 className="mt-5 text-xl font-semibold">{title}</h2><p className="mt-2 text-sm text-slate-300">{text}</p><span className="mt-6 inline-flex rounded-lg bg-lime-400 px-4 py-2 font-medium text-slate-950">Accéder</span></Link>; }
+
+function FilteredOutputHistory({ events }: { events: EventRow[] }) { const [query, setQuery] = useState(""); const [agent, setAgent] = useState(""); const [period,setPeriod]=useState("MONTH"); const [from,setFrom]=useState(""); const [to,setTo]=useState(""); const today=new Date(); const start=new Date(today); if(period==="DAY")start.setDate(today.getDate());else if(period==="WEEK")start.setDate(today.getDate()-6);else if(period==="MONTH")start.setMonth(today.getMonth(),1);else if(period==="YEAR")start.setMonth(0,1); const startDate=period==="CUSTOM"?from:start.toISOString().slice(0,10); const endDate=period==="CUSTOM"?to:today.toISOString().slice(0,10); const rows = events.filter((event) => (!query || String(event.tracking_code ?? "").toUpperCase().includes(query.toUpperCase())) && (!agent || event.actor_name.toUpperCase().includes(agent.toUpperCase())) && (!startDate||event.business_date>=startDate)&&(!endDate||event.business_date<=endDate)); return <Panel title="Historique des sorties"><div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><label className="block text-sm">Période<select value={period} onChange={(event)=>setPeriod(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2"><option value="DAY">Aujourd’hui</option><option value="WEEK">Semaine</option><option value="MONTH">Mois</option><option value="YEAR">Année</option><option value="CUSTOM">Personnalisée</option></select></label><label className="block text-sm">Code colis<input value={query} onChange={(event) => setQuery(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><label className="block text-sm">Agent<input value={agent} onChange={(event) => setAgent(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label>{period==="CUSTOM"&&<><label className="block text-sm">Du<input type="date" value={from} onChange={(event)=>setFrom(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><label className="block text-sm">Au<input type="date" value={to} onChange={(event)=>setTo(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label></>}</div><EventTable title="Mouvements physiques de sortie" rows={rows} /></Panel>; }
 
 export function AgentEncaissementQueues() {
   const [accountActive, setAccountActive] = useState(false);

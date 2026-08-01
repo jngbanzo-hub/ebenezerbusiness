@@ -18,7 +18,6 @@ import {
   type PaymentAttempt
 } from "@/features/agent/payment-request-id";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
-import { AgentEncaissementQueues } from "@/features/stockages/stockages-v2-page";
 import {
   PAYMENT_MODES,
   DESTINATIONS,
@@ -43,6 +42,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
   );
   const [parcel, setParcel] = useState<Parcel | null>(null);
   const [routingQuote, setRoutingQuote] = useState<{ routingReference: string; origin: string; destination: string; weightKg: number; rateUsdPerKg: number; amountExpectedUsd: number } | null>(null);
+  const [parcelAction, setParcelAction] = useState<{ totalPaid: number; paymentSites: string[]; physicallyPresent: boolean; delivered: boolean; fullyPaidAtCooOnly: boolean } | null>(null);
   const [montantPaye, setMontantPaye] = useState("");
   const [modePaiement, setModePaiement] = useState<PaymentMode>("ESPECES");
   const [referencePaiement, setReferencePaiement] = useState("");
@@ -122,6 +122,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
     setMessage(null);
     setParcel(null);
     setRoutingQuote(null);
+    setParcelAction(null);
     paymentAttemptRef.current = null;
     setIsSearching(true);
 
@@ -141,6 +142,8 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
       setParcel(foundParcel);
       if (profile.agence !== "COTONOU" && destination !== profile.agence) {
         setRoutingQuote(await loadInterAgencyQuote(foundParcel.codeColis, destination));
+      } else if (profile.agence !== "COTONOU") {
+        setParcelAction(await loadParcelAction(foundParcel.codeColis));
       }
       setMontantPaye("");
     } catch (error) {
@@ -377,7 +380,9 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
                 />
               </dl>
 
-              {routingQuote ? <div className="mt-7 rounded-xl border border-accent/30 bg-accent/10 p-5"><h3 className="font-semibold text-accent">ACHEMINEMENT INTER-AGENCES</h3><p className="mt-2 text-sm">Référence : {routingQuote.routingReference}</p><p className="text-sm">Circuit : {routingQuote.origin} → {routingQuote.destination}</p><p className="text-sm">Poids canonique : {routingQuote.weightKg} kg · Tarif : {formatAmount(routingQuote.rateUsdPerKg)}/kg</p><p className="text-sm font-semibold">Montant attendu : {formatAmount(routingQuote.amountExpectedUsd)}</p><Button type="button" variant="growth" className="mt-4" disabled>Créer un acheminement — activation ultérieure</Button></div> : <form onSubmit={handlePayment} className="mt-7 grid gap-5">
+              {!routingQuote ? <p className="mt-5 rounded-lg border border-accent/25 bg-accent/10 p-3 font-semibold text-accent">Statut : {parcelStatus(parcel, parcelAction)}</p> : null}
+
+              {routingQuote ? <div className="mt-7 rounded-xl border border-accent/30 bg-accent/10 p-5"><h3 className="font-semibold text-accent">ACHEMINEMENT INTER-AGENCES</h3><p className="mt-2 text-sm">Référence : {routingQuote.routingReference}</p><p className="text-sm">Circuit : {routingQuote.origin} → {routingQuote.destination}</p><p className="text-sm">Poids canonique : {routingQuote.weightKg} kg · Tarif : {formatAmount(routingQuote.rateUsdPerKg)}/kg</p><p className="text-sm font-semibold">Montant attendu : {formatAmount(routingQuote.amountExpectedUsd)}</p><Button type="button" variant="growth" className="mt-4" disabled>Créer un acheminement — activation ultérieure</Button></div> : parcel.soldeRestant > 0 ? <form onSubmit={handlePayment} className="mt-7 grid gap-5">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className="text-sm font-medium">
                     Montant payé
@@ -434,10 +439,9 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
                   <Save className="h-5 w-5" />
                   {isSaving ? "Enregistrement…" : "Enregistrer le paiement"}
                 </Button>
-              </form>}
+              </form> : parcelAction?.fullyPaidAtCooOnly && parcelAction.physicallyPresent && !parcelAction.delivered ? <Button type="button" variant="growth" className="mt-7" onClick={() => void confirmPhysicalRemittance(parcel.codeColis, setMessage, setParcel)}>Confirmer la remise</Button> : null}
             </GlassPanel>
           ) : null}
-          {profile.agence !== "COTONOU" ? <AgentEncaissementQueues /> : null}
         </div>
       </Container>
     </main>
@@ -467,6 +471,10 @@ async function loadInterAgencyQuote(trackingCode: string, destination: Destinati
   if (!response.ok || !payload?.quote) throw new Error(payload?.message ?? "Acheminement indisponible.");
   return payload.quote;
 }
+
+async function loadParcelAction(trackingCode: string) { const { data: { session } } = await getSupabaseBrowserClient().auth.getSession(); if (!session?.access_token) throw new Error("Session expirée."); const response=await fetch(`/api/agent/stockages/payment-action?trackingCode=${encodeURIComponent(trackingCode)}`,{headers:{Authorization:`Bearer ${session.access_token}`},cache:"no-store"}); const payload=await response.json().catch(()=>null) as {action?:{totalPaid:number;paymentSites:string[];physicallyPresent:boolean;delivered:boolean;fullyPaidAtCooOnly:boolean};message?:string}|null; if(!response.ok||!payload?.action)throw new Error(payload?.message??"Situation indisponible."); return payload.action; }
+function parcelStatus(parcel: Parcel, action: { physicallyPresent:boolean; delivered:boolean; fullyPaidAtCooOnly:boolean } | null) { if(parcel.soldeRestant>0)return parcel.montantDejaPaye>0?"COLIS AVEC SOLDE RESTANT":"COLIS À ENCAISSER"; if(action?.delivered)return "LIVRAISON TERMINÉE"; if(action?.fullyPaidAtCooOnly)return action.physicallyPresent?"PAIEMENT COO — COLIS PRÊT À REMETTRE":"PAIEMENT COO — EN ATTENTE D’ARRIVAGE"; return action?.physicallyPresent?"PAIEMENT TERMINÉ — SORTIE PHYSIQUE À FINALISER":"PAIEMENT TERMINÉ — COLIS NON PRÉSENT"; }
+async function confirmPhysicalRemittance(trackingCode:string,setMessage:React.Dispatch<React.SetStateAction<{type:"success"|"error";text:string;details?:string[]}|null>>,setParcel:React.Dispatch<React.SetStateAction<Parcel|null>>){ if(!window.confirm(`Confirmer la remise physique du colis ${trackingCode} ?`))return; try{const {data:{session}}=await getSupabaseBrowserClient().auth.getSession();if(!session?.access_token)throw new Error("Session expirée.");const response=await fetch("/api/agent/stockages/delivery",{method:"POST",headers:{Authorization:`Bearer ${session.access_token}`,"Content-Type":"application/json"},body:JSON.stringify({trackingCode,physicalDeliveryConfirmed:true,requestId:crypto.randomUUID()})});const payload=await response.json().catch(()=>null) as {message?:string};if(!response.ok)throw new Error(payload?.message??"Remise refusée.");setMessage({type:"success",text:"Remise physique confirmée. La sortie Stockages a été enregistrée."});setParcel(null);}catch(error){setMessage({type:"error",text:error instanceof Error?error.message:"Remise refusée."});}}
 
 function ParcelValue({
   label,
