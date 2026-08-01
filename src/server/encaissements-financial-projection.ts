@@ -39,7 +39,7 @@ export function buildEncaissementsFinancialProjection(input: {
   const amountKeys = new Set(knownAmounts.map((value) => value.toFixed(2)));
   const amountExpected = canonicalRow ? parseMoney(canonicalRow.montantAttenduRaw) : null;
   const sourceStatus = String(canonicalRow?.statutRaw ?? "").trim();
-  const sourceEligible = !/ANNUL|LIVR[ÉE]|ANNULE|DELIVERED/i.test(sourceStatus.normalize("NFD").replace(/[\u0300-\u036f]/g, ""));
+  const sourceEligible = !/ANNUL|CANCEL/i.test(sourceStatus.normalize("NFD").replace(/[\u0300-\u036f]/g, ""));
   const matchingPayments = deduplicatePayments(
     input.payments.filter((payment) => payment.destinationCode === input.destination && normalizeCode(payment.codeColis) === code)
   );
@@ -92,5 +92,13 @@ function legacyPaymentFingerprint(payment: AdminPayment) {
 }
 
 function normalizeCode(value: unknown) { return String(value ?? "").trim().toUpperCase(); }
-function parseMoney(value: unknown) { const parsed = typeof value === "number" ? value : Number(String(value ?? "").replace(",", ".").replace(/\s/g, "")); return Number.isFinite(parsed) && parsed > 0 ? round(parsed) : null; }
+function parseMoney(value: unknown) {
+  if (typeof value === "number") return Number.isFinite(value) && value > 0 ? round(value) : null;
+  let normalized = String(value ?? "").trim().replace(/\s/g, "").replace(/[^\d,.-]/g, "");
+  normalized = normalized.includes(",") && normalized.includes(".")
+    ? normalized.replace(/\./g, "").replace(",", ".")
+    : normalized.replace(",", ".");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed > 0 ? round(parsed) : null;
+}
 function round(value: number) { return Math.round((value + Number.EPSILON) * 100) / 100; }

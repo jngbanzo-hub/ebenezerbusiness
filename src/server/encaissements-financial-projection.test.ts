@@ -12,6 +12,20 @@ test("montant canonique connu sans paiement produit un solde exact", () => {
   assert.equal(projection.amountExpected, 100); assert.equal(projection.totalPaid, 0); assert.equal(projection.remainingBalance, 100); assert.equal(projection.collectionEligible, true);
 });
 
+test("le montant formaté par la source Encaissements est normalisé comme dans Apps Script", () => {
+  const projection = buildEncaissementsFinancialProjection({ trackingCode: "JL100", destination: "KLZ", manifestRows: [manifest({ montantAttenduRaw: "1 250,50 $" })], payments: [] });
+  assert.equal(projection.amountExpected, 1250.5);
+  assert.equal(projection.totalPaid, 0);
+  assert.equal(projection.remainingBalance, 1250.5);
+});
+
+test("un statut LIVRÉ reste recherchable financièrement comme dans Encaissements", () => {
+  const projection = buildEncaissementsFinancialProjection({ trackingCode: "JL100", destination: "KLZ", manifestRows: [manifest({ statutRaw: "LIVRÉ" })], payments: [] });
+  assert.equal(projection.sourceEligible, true);
+  assert.equal(projection.collectionEligible, true);
+  assert.doesNotMatch(projection.anomalies.join(","), /SOURCE_STATUS_INELIGIBLE/);
+});
+
 test("paiement partiel COO conserve un solde fiable", () => {
   const projection = buildEncaissementsFinancialProjection({ trackingCode: "JL100", destination: "KLZ", manifestRows: [manifest()], payments: [payment()] });
   assert.equal(projection.totalPaid, 40); assert.equal(projection.remainingBalance, 60); assert.equal(projection.collectionEligible, true); assert.equal(projection.deliveryEligible, false);

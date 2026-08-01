@@ -67,9 +67,14 @@ test("poids absent classe toujours le colis en vérification", () => {
   assert.equal(item.weightState, "MISSING"); assert.equal(item.deliveryStatus, "VERIFICATION_REQUIRED"); assert.equal(item.canConfirmDelivery, false);
 });
 
-test("statut source inéligible bloque les files actives", () => {
-  const [item] = buildParcelWorkQueues({ payments: [payment()], manifest: [{ ...manifest("TEST001", 2), statutRaw: "LIVRÉ" }], deliveries: [], agency: "LSHI", accountActive: true });
+test("statut source réellement inéligible bloque les files actives", () => {
+  const [item] = buildParcelWorkQueues({ payments: [payment()], manifest: [{ ...manifest("TEST001", 2), statutRaw: "ANNULÉ" }], deliveries: [], agency: "LSHI", accountActive: true });
   assert.equal(item.deliveryStatus, "VERIFICATION_REQUIRED"); assert.ok(item.anomalies.includes("SOURCE_STATUS_INELIGIBLE")); assert.equal(item.canConfirmDelivery, false);
+});
+
+test("statut LIVRÉ du suivi historique conserve la classification financière canonique", () => {
+  const [item] = buildParcelWorkQueues({ payments: [], manifest: [{ ...manifest("TEST001", 2), montantAttenduRaw: "100 $", statutRaw: "LIVRÉ" }], deliveries: [], agency: "LSHI", accountActive: false });
+  assert.equal(item.amountExpected, 100); assert.equal(item.amountPaid, 0); assert.equal(item.remainingBalance, 100); assert.equal(item.deliveryStatus, "PAYMENT_PENDING"); assert.equal(item.canConfirmDelivery, false);
 });
 
 test("compte SUSPENDED laisse les listes lisibles mais bloque la remise", () => {
