@@ -32,15 +32,22 @@ test("la commande préparatoire conserve la même direction autoritaire", () => 
 test("les erreurs conservent leur code métier et leur statut HTTP", () => {
   assert.match(route, /error instanceof StockagesV2Error/);
   assert.match(route, /fail\(error\.code, error\.status\)/);
-  for (const code of ["INVALID_INTER_AGENCY_ROUTE", "STORAGE_AGENCY_NOT_SUPPORTED", "PARCEL_NOT_FOUND", "INTER_AGENCY_SOURCE_UNAVAILABLE"]) {
+  for (const code of ["INVALID_INTER_AGENCY_ROUTE", "STORAGE_AGENCY_NOT_SUPPORTED", "INVALID_TRACKING_CODE", "TRACKING_CODE_NOT_FOUND", "SOURCE_AGENCY_MISMATCH", "AGENT_SERVICE_UNAVAILABLE"]) {
     assert.ok(route.includes(code));
   }
   assert.match(workspace, /payload\?\.code.*HTTP_\$\{response\.status\}/s);
   assert.doesNotMatch(route, /L’acheminement ne peut pas être préparé/);
 });
 
+test("une seule recherche active et une seule réponse courante peuvent modifier l’interface", () => {
+  assert.match(workspace, /searchLockRef\.current/);
+  assert.match(workspace, /activeSearchIdRef\.current/);
+  assert.match(workspace, /if \(searchLockRef\.current\) return/);
+  assert.match(workspace, /searchId !== activeSearchIdRef\.current/);
+});
+
 test("un échec de devis retire le colis source et empêche le formulaire normal", () => {
-  assert.match(workspace, /setRoutingQuote\(await loadInterAgencyQuote[\s\S]*catch \(error\) \{\s*setParcel\(null\)/);
+  assert.match(workspace, /const quote = await loadInterAgencyQuote[\s\S]*setRoutingQuote\(quote\)[\s\S]*catch \(error\) \{\s*setParcel\(null\)/);
 });
 
 test("le succès affiche uniquement les données propres à l’acheminement", () => {

@@ -43,8 +43,16 @@ export async function resolveInterAgencyQuote(
   readRows: () => Promise<ManifestShipperRow[]> = readCanonicalPaymentManifestRows
 ) {
   const code = normalizeCode(input.trackingCode);
-  const rows = (await readRows()).filter((row) => row.sourceSite === input.origin && normalizeCode(row.codeColisRaw) === code);
-  if (!rows.length) throw new StockagesV2Error("PARCEL_NOT_FOUND", 404);
+  let canonicalRows: ManifestShipperRow[];
+  try {
+    canonicalRows = await readRows();
+  } catch {
+    throw new StockagesV2Error("AGENT_SERVICE_UNAVAILABLE", 503);
+  }
+  const matchingCodeRows = canonicalRows.filter((row) => normalizeCandidateCode(row.codeColisRaw) === code);
+  const rows = matchingCodeRows.filter((row) => row.sourceSite === input.origin);
+  if (!rows.length && matchingCodeRows.length) throw new StockagesV2Error("SOURCE_AGENCY_MISMATCH", 409);
+  if (!rows.length) throw new StockagesV2Error("TRACKING_CODE_NOT_FOUND", 404);
   const weights = rows.map((row) => parseStrictPositiveWeight(row.poidsRaw));
   if (weights.some((weight) => weight === null)) throw new StockagesV2Error("PARCEL_WEIGHT_UNAVAILABLE", 422);
   const known = weights.filter((weight): weight is number => weight !== null);
@@ -58,4 +66,5 @@ function requireDistinctRoute(origin: StorageAgency, destination: StorageAgency)
   return route;
 }
 function normalizeCode(value: unknown) { const code = String(value ?? "").trim().toUpperCase(); if (!/^[A-Z0-9][A-Z0-9._/-]{1,63}$/.test(code)) throw new StockagesV2Error("INVALID_TRACKING_CODE"); return code; }
+function normalizeCandidateCode(value: unknown) { const code = String(value ?? "").trim().toUpperCase(); return /^[A-Z0-9][A-Z0-9._/-]{1,63}$/.test(code) ? code : null; }
 function round(value: number) { return Math.round((value + Number.EPSILON) * 100) / 100; }

@@ -44,6 +44,7 @@ test("le poids de JL111126 est résolu dans la source LSHI et jamais fourni par 
   const quote = await resolveInterAgencyQuote(
     { trackingCode: "JL111126", origin: "LSHI", destination: "KLZ" },
     async () => [
+      { sourceSite: "LSHI", rowNumber: 1, dateRaw: "", codeColisRaw: "Code colis", expediteurRaw: "", poidsRaw: "Poids" },
       { sourceSite: "FIH", rowNumber: 2, dateRaw: "", codeColisRaw: "JL111126", expediteurRaw: "", poidsRaw: 99 },
       { sourceSite: "LSHI", rowNumber: 3, dateRaw: "", codeColisRaw: "jl111126", expediteurRaw: "", poidsRaw: "6 kg" }
     ]
@@ -51,6 +52,23 @@ test("le poids de JL111126 est résolu dans la source LSHI et jamais fourni par 
   assert.equal(quote.weightKg, 6);
   assert.equal(quote.amountExpectedUsd, 66);
   assert.equal(quote.routingReference, "JL111126-LSHI-KLZ");
+});
+
+test("les espaces et minuscules sont normalisés", () => {
+  const quote = quoteInterAgencyRouting({ trackingCode: "  jl110126  ", origin: "LSHI", destination: "FIH", weightKg: 1 });
+  assert.equal(quote.trackingCode, "JL110126");
+  assert.equal(quote.routingReference, "JL110126-LSHI-FIH");
+});
+
+test("un format invalide, une absence et une mauvaise agence ont des codes distincts", async () => {
+  assert.throws(() => quoteInterAgencyRouting({ trackingCode: "?", origin: "LSHI", destination: "KLZ", weightKg: 6 }), /INVALID_TRACKING_CODE/);
+  const rows = async () => [{ sourceSite: "FIH" as const, rowNumber: 2, dateRaw: "", codeColisRaw: "MR04326", expediteurRaw: "", poidsRaw: 2 }];
+  await assert.rejects(resolveInterAgencyQuote({ trackingCode: "MA00326", origin: "LSHI", destination: "KLZ" }, rows), /TRACKING_CODE_NOT_FOUND/);
+  await assert.rejects(resolveInterAgencyQuote({ trackingCode: "MR04326", origin: "LSHI", destination: "KLZ" }, rows), /SOURCE_AGENCY_MISMATCH/);
+});
+
+test("une véritable panne de source reste une indisponibilité technique", async () => {
+  await assert.rejects(resolveInterAgencyQuote({ trackingCode: "JL111126", origin: "LSHI", destination: "KLZ" }, async () => { throw new Error("network"); }), /AGENT_SERVICE_UNAVAILABLE/);
 });
 
 test("une même agence ou un poids invalide sont refusés", () => {

@@ -55,6 +55,8 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
   const [isSearching, setIsSearching] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const paymentLockRef = useRef(false);
+  const searchLockRef = useRef(false);
+  const activeSearchIdRef = useRef(0);
   const paymentAttemptRef = useRef<PaymentAttempt | null>(null);
 
   const allowedPaymentAgencies = useMemo(
@@ -114,11 +116,14 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
 
   async function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (searchLockRef.current) return;
     if (!profile || !DESTINATIONS.includes(sourceAgency)) {
       setMessage({ type: "error", text: "Agence source invalide." });
       return;
     }
 
+    searchLockRef.current = true;
+    const searchId = ++activeSearchIdRef.current;
     setMessage(null);
     setParcel(null);
     setRoutingQuote(null);
@@ -133,6 +138,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
         codeColis: normalizedCode
       });
       const foundParcel = parseParcelResponse(response);
+      if (searchId !== activeSearchIdRef.current) return;
       if (
         foundParcel.codeColis.toUpperCase() !== normalizedCode ||
         foundParcel.destinationCode !== sourceAgency
@@ -142,7 +148,9 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
       setParcel(foundParcel);
       if (profile.agence !== "COTONOU" && sourceAgency !== profile.agence) {
         try {
-          setRoutingQuote(await loadInterAgencyQuote(foundParcel.codeColis, sourceAgency));
+          const quote = await loadInterAgencyQuote(foundParcel.codeColis, sourceAgency);
+          if (searchId !== activeSearchIdRef.current) return;
+          setRoutingQuote(quote);
         } catch (error) {
           setParcel(null);
           throw error;
@@ -152,12 +160,17 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
       }
       setMontantPaye("");
     } catch (error) {
-      setMessage({
-        type: "error",
-        text: error instanceof Error ? error.message : "Recherche impossible."
-      });
+      if (searchId === activeSearchIdRef.current) {
+        setMessage({
+          type: "error",
+          text: error instanceof Error ? error.message : "Recherche impossible."
+        });
+      }
     } finally {
-      setIsSearching(false);
+      if (searchId === activeSearchIdRef.current) {
+        searchLockRef.current = false;
+        setIsSearching(false);
+      }
     }
   }
 
