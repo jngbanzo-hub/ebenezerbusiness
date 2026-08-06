@@ -38,7 +38,12 @@ type PaymentInput = {
   paymentRequestId: string;
   referencePaiement: string;
   observation: string;
+  operationContext: PaymentOperationContext;
 };
+
+type PaymentOperationContext =
+  | { type: "STANDARD_PAYMENT"; sourceDestinationCode: string; collectionSiteCode: string }
+  | { type: "INTER_AGENCY_FORWARDING"; sourceDestinationCode: string; collectionSiteCode: string; forwardingDestinationCode: string; forwardingReference: string };
 
 type PublicPaymentResponse = {
   codeColis: string;
@@ -85,6 +90,7 @@ const ALLOWED_BODY_KEYS = new Set([
   "paymentRequestId",
   "referencePaiement",
   "observation",
+  "operationContext",
 ]);
 
 const CORS_HEADERS = {
@@ -217,19 +223,30 @@ Deno.serve(async (request: Request): Promise<Response> => {
       return errorResponse("ACCES_REFUSE", 400);
     }
 
+    const internalForwarding = body.operationContext !== undefined;
+    if (internalForwarding && !await verifyInternalOrchestration(request, body)) {
+      return errorResponse("ACCES_REFUSE", 403);
+    }
+
     const paymentRequestId = normalizePaymentRequestId(body.paymentRequestId);
     if (paymentRequestId === null) {
       return errorResponse("PAYMENT_REQUEST_ID_INVALIDE", 400);
     }
 
-    const paymentInput = parsePaymentInput(body, paymentRequestId);
+    const paymentInput = parsePaymentInput(body, paymentRequestId, agenceEncaissement, internalForwarding);
     if (!paymentInput) {
       return errorResponse("MONTANT_INVALIDE", 400);
     }
 
-    const destinationCode = paymentInput.destinationCode;
+    const destinationCode = paymentInput.operationContext.sourceDestinationCode;
+    const isInterAgencyForwarding = paymentInput.operationContext.type === "INTER_AGENCY_FORWARDING";
     const routeAutorisee =
-      agenceEncaissement === "COO"
+      isInterAgencyForwarding
+        ? paymentInput.operationContext.collectionSiteCode === agenceEncaissement &&
+          paymentInput.operationContext.forwardingDestinationCode === agenceEncaissement &&
+          destinationCode !== agenceEncaissement &&
+          ["FIH", "LSHI", "KLZ"].includes(agenceEncaissement)
+        : agenceEncaissement === "COO"
         ? ["FIH", "LSHI", "KLZ"].includes(destinationCode)
         : agenceEncaissement === destinationCode;
     if (!routeAutorisee) {
@@ -259,7 +276,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     }
 
     const usePaidExitOrchestration = Boolean(
-      paidExitEnabled && cashClient && cashAgency === destinationCode,
+      paidExitEnabled && cashClient && cashAgency === destinationCode && !isInterAgencyForwarding,
     );
     if (usePaidExitOrchestration && cashClient && cashAgency) {
       const begun = await cashClient.rpc("begin_paid_destination_orchestration", {
@@ -326,6 +343,14 @@ Deno.serve(async (request: Request): Promise<Response> => {
         simulation: false,
         apiKey,
       };
+
+      if (isInterAgencyForwarding) {
+        appsScriptPayload.operationType = paymentInput.operationContext.type;
+        appsScriptPayload.sourceDestinationCode = paymentInput.operationContext.sourceDestinationCode;
+        appsScriptPayload.collectionSiteCode = paymentInput.operationContext.collectionSiteCode;
+        appsScriptPayload.forwardingDestinationCode = paymentInput.operationContext.forwardingDestinationCode;
+        appsScriptPayload.forwardingReference = paymentInput.operationContext.forwardingReference;
+      }
 
       appsScriptPayload.paymentRequestId = paymentInput.paymentRequestId;
 
@@ -402,6 +427,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
             paymentType: publicPayment.statutPaiement === "SOLDE" ? "SOLDE" : "FRET",
             paymentResult: publicPayment,
             referencePaiement: paymentInput.referencePaiement,
+            operationContext: paymentInput.operationContext,
           },
           p_occurred_at: new Date().toISOString(),
           p_payment_reference: paymentInput.codeColis,
@@ -497,6 +523,7 @@ async function paymentFingerprint(
     montantPaye: input.montantPaye,
     observation: input.observation,
     referencePaiement: input.referencePaiement,
+    operationContext: input.operationContext,
   }));
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest))
@@ -577,6 +604,8 @@ function hasOnlyAllowedKeys(body: Record<string, unknown>): boolean {
 function parsePaymentInput(
   body: Record<string, unknown>,
   paymentRequestId: string,
+  authenticatedCollectionSite: string,
+  internalForwarding: boolean,
 ): PaymentInput | null {
   const codeColis = normalizeCodeColis(body.codeColis);
   const destinationCode = normalizePaymentDestination(body.destinationCode);
@@ -587,6 +616,12 @@ function parsePaymentInput(
     128,
   );
   const observation = normalizeOptionalText(body.observation, 500);
+  const operationContext = normalizeOperationContext(
+    body.operationContext,
+    destinationCode,
+    authenticatedCollectionSite,
+    internalForwarding,
+  );
 
   if (
     !codeColis ||
@@ -594,7 +629,8 @@ function parsePaymentInput(
     montantPaye === null ||
     modePaiement === null ||
     referencePaiement === null ||
-    observation === null
+    observation === null ||
+    operationContext === null
   ) {
     return null;
   }
@@ -607,7 +643,46 @@ function parsePaymentInput(
     paymentRequestId,
     referencePaiement,
     observation,
+    operationContext,
   };
+}
+
+function normalizeOperationContext(
+  value: unknown,
+  standardDestination: string | null,
+  authenticatedCollectionSite: string,
+  internalForwarding: boolean,
+): PaymentOperationContext | null {
+  if (!internalForwarding) {
+    if (!standardDestination) return null;
+    return { type: "STANDARD_PAYMENT", sourceDestinationCode: standardDestination, collectionSiteCode: authenticatedCollectionSite };
+  }
+  if (!isRecord(value) || value.type !== "INTER_AGENCY_FORWARDING") return null;
+  const source = normalizePaymentDestination(value.sourceDestinationCode);
+  const collection = normalizePaymentDestination(value.collectionSiteCode);
+  const destination = normalizePaymentDestination(value.forwardingDestinationCode);
+  const reference = readText(value.forwardingReference, 96)?.trim().toUpperCase() ?? null;
+  if (!source || !collection || !destination || !reference || collection !== authenticatedCollectionSite || destination !== authenticatedCollectionSite || source === destination || !/^[A-Z0-9][A-Z0-9._/-]{5,95}$/.test(reference)) return null;
+  return { type: "INTER_AGENCY_FORWARDING", sourceDestinationCode: source, collectionSiteCode: collection, forwardingDestinationCode: destination, forwardingReference: reference };
+}
+
+async function verifyInternalOrchestration(request: Request, body: Record<string, unknown>) {
+  const timestamp = request.headers.get("x-ebe-orchestration-timestamp") ?? "";
+  const signature = request.headers.get("x-ebe-orchestration-signature") ?? "";
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim() ?? "";
+  const parsedTimestamp = Number(timestamp);
+  if (!key || !/^[0-9a-f]{64}$/i.test(signature) || !Number.isFinite(parsedTimestamp) || Math.abs(Date.now() - parsedTimestamp) > 300_000) return false;
+  const cryptoKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const expected = await crypto.subtle.sign("HMAC", cryptoKey, new TextEncoder().encode(`${timestamp}.${JSON.stringify(body)}`));
+  const expectedHex = Array.from(new Uint8Array(expected)).map((value) => value.toString(16).padStart(2, "0")).join("");
+  return constantTimeEqual(expectedHex, signature.toLowerCase());
+}
+
+function constantTimeEqual(left: string, right: string) {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  return difference === 0;
 }
 
 function normalizePaymentRequestId(value: unknown): string | null {

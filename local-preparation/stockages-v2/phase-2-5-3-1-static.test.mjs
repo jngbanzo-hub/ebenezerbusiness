@@ -7,10 +7,12 @@ const read = (path) => readFileSync(new URL(path, root), "utf8");
 const workspace = read("src/features/agent/agent-workspace.tsx");
 const route = read("src/app/api/agent/inter-agency-routing/quote/route.ts");
 const routing = read("src/server/inter-agency-routing.ts");
+const errors = read("src/server/stockages-forwarding-errors.ts");
 
 test("la feuille recherchée est l’origine et l’agence authentifiée est la destination", () => {
   assert.match(route, /origin:\s*requireStorageAgency\(url\.searchParams\.get\("sourceAgency"\)/);
-  assert.match(route, /destination:\s*requireStorageAgency\(auth\.identity\.site\)/);
+  assert.match(route, /const destination = requireStorageAgency\(auth\.identity\.site\)/);
+  assert.match(route, /destination\s*\n/);
   assert.match(routing, /row\.sourceSite === input\.origin/);
   assert.match(workspace, /new URLSearchParams\(\{ trackingCode, sourceAgency \}\)/);
   assert.doesNotMatch(route, /url\.searchParams\.get\("destination"\)/);
@@ -33,7 +35,7 @@ test("les erreurs conservent leur code métier et leur statut HTTP", () => {
   assert.match(route, /error instanceof StockagesV2Error/);
   assert.match(route, /fail\(error\.code, error\.status\)/);
   for (const code of ["INVALID_INTER_AGENCY_ROUTE", "STORAGE_AGENCY_NOT_SUPPORTED", "INVALID_TRACKING_CODE", "TRACKING_CODE_NOT_FOUND", "SOURCE_AGENCY_MISMATCH", "AGENT_SERVICE_UNAVAILABLE"]) {
-    assert.ok(route.includes(code));
+    assert.ok((route + errors).includes(code));
   }
   assert.match(workspace, /payload\?\.code.*HTTP_\$\{response\.status\}/s);
   assert.doesNotMatch(route, /L’acheminement ne peut pas être préparé/);

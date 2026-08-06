@@ -30,7 +30,7 @@ test("la finalisation verrouille colis puis compte et empêche le stock négatif
 
 test("les six tarifs et la référence non ambiguë restent serveur", () => {
   for (const fragment of ["'FIH-LSHI' then 12", "'LSHI-FIH' then 13", "'FIH-KLZ' then 14", "'KLZ-FIH' then 16", "'LSHI-KLZ' then 11", "'KLZ-LSHI' then 13"]) assert.ok(sql.includes(fragment));
-  assert.match(sql, /v_code\|\|'-'\|\|v_origin\|\|'-'\|\|v_destination/);
+  assert.match(sql, /original_tracking_code\|\|'-'\|\|v_row\.origin_agency\|\|'-'\|\|v_row\.destination_agency/);
   assert.doesNotMatch(ui, /INTER_AGENCY_RATES|FIH-LSHI|LSHI-FIH/);
   assert.match(server, /resolveInterAgencyQuote/);
   assert.doesNotMatch(routes, /body\.weightKg/);
@@ -38,7 +38,9 @@ test("les six tarifs et la référence non ambiguë restent serveur", () => {
 });
 
 test("l’acheminement est idempotent, manuel à l’arrivée et immutable", () => {
-  assert.match(sql, /record_inter_agency_forwarding/);
+  assert.match(sql, /begin_inter_agency_forwarding/);
+  assert.match(sql, /checkpoint_inter_agency_payment/);
+  assert.match(sql, /finalize_inter_agency_forwarding/);
   assert.match(sql, /record_forwarding_arrival/);
   assert.match(sql, /confirm_forwarding_delivery/);
   assert.match(sql, /creation_request_id uuid not null unique/);

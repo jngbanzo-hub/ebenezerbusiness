@@ -2,11 +2,15 @@
 begin;
 drop function if exists public.confirm_forwarding_delivery(text,text,boolean,date,uuid,uuid);
 drop function if exists public.record_forwarding_arrival(text,text,date,uuid,uuid);
-drop function if exists public.record_inter_agency_forwarding(text,text,text,numeric,numeric,text,text,text,date,uuid,uuid);
+drop function if exists public.finalize_inter_agency_forwarding(uuid,text);
+drop function if exists public.checkpoint_inter_agency_payment(uuid,text,jsonb);
+drop function if exists public.begin_inter_agency_forwarding(text,text,text,numeric,numeric,text,text,text,uuid,text,uuid);
 drop function if exists public.finalize_paid_destination_orchestration(uuid,text,date,text,text,text);
 drop function if exists public.checkpoint_paid_destination_payment(uuid,text,jsonb);
 drop function if exists public.begin_paid_destination_orchestration(uuid,text,text,text,numeric,numeric,uuid);
 drop table if exists public.stockage_forwarding_events;
+drop table if exists public.stockage_forwarding_anomalies;
+drop table if exists public.stockage_forwarding_orchestrations;
 drop table if exists public.stockage_forwardings;
 drop table if exists public.stockage_payment_orchestrations;
 alter table public.stockage_events drop constraint stockage_events_type_check;

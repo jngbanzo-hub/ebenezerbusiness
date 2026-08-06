@@ -16,6 +16,14 @@ export const INTER_AGENCY_RATES = Object.freeze({
 
 export type InterAgencyRoute = keyof typeof INTER_AGENCY_RATES;
 
+export const INTER_AGENCY_ELIGIBLE_SOURCE_STATUSES = Object.freeze([
+  "EN ATTENTE",
+  "ENREGISTRE",
+  "EN VOL",
+  "EN TRANSIT",
+  "ARRIVE"
+] as const);
+
 export function buildInterAgencyReference(trackingCode: string, origin: StorageAgency, destination: StorageAgency) {
   const code = normalizeCode(trackingCode);
   requireDistinctRoute(origin, destination);
@@ -57,7 +65,15 @@ export async function resolveInterAgencyQuote(
   if (weights.some((weight) => weight === null)) throw new StockagesV2Error("PARCEL_WEIGHT_UNAVAILABLE", 422);
   const known = weights.filter((weight): weight is number => weight !== null);
   if (new Set(known.map((weight) => weight.toFixed(3))).size !== 1) throw new StockagesV2Error("PARCEL_WEIGHT_AMBIGUOUS", 422);
-  return quoteInterAgencyRouting({ ...input, trackingCode: code, weightKg: known[0]! });
+  const statuses = rows.map((row) => normalizeSourceStatus(row.statutRaw));
+  if (statuses.some((status) => status === "LIVRE")) throw new StockagesV2Error("PARCEL_ALREADY_DELIVERED", 409);
+  if (statuses.some((status) => !INTER_AGENCY_ELIGIBLE_SOURCE_STATUSES.includes(status as typeof INTER_AGENCY_ELIGIBLE_SOURCE_STATUSES[number]))) {
+    throw new StockagesV2Error("SOURCE_PARCEL_NOT_ELIGIBLE", 422);
+  }
+  return Object.freeze({
+    ...quoteInterAgencyRouting({ ...input, trackingCode: code, weightKg: known[0]! }),
+    sourceStatus: statuses[0]!
+  });
 }
 
 function requireDistinctRoute(origin: StorageAgency, destination: StorageAgency): InterAgencyRoute {
@@ -67,4 +83,13 @@ function requireDistinctRoute(origin: StorageAgency, destination: StorageAgency)
 }
 function normalizeCode(value: unknown) { const code = String(value ?? "").trim().toUpperCase(); if (!/^[A-Z0-9][A-Z0-9._/-]{1,63}$/.test(code)) throw new StockagesV2Error("INVALID_TRACKING_CODE"); return code; }
 function normalizeCandidateCode(value: unknown) { const code = String(value ?? "").trim().toUpperCase(); return /^[A-Z0-9][A-Z0-9._/-]{1,63}$/.test(code) ? code : null; }
+function normalizeSourceStatus(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+}
 function round(value: number) { return Math.round((value + Number.EPSILON) * 100) / 100; }

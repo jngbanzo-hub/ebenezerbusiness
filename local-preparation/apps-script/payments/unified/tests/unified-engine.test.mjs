@@ -471,6 +471,117 @@ test("un doublon paymentRequestId est refusé sans seconde ligne", () => {
   assert.equal(harness.payments.getSheetByName("COO").rows.length, rowsAfterFirst);
 });
 
+const INTER_AGENCY_ROUTES = [
+  ["FIH", "LSHI", 30],
+  ["FIH", "KLZ", 35],
+  ["LSHI", "FIH", 32.5],
+  ["LSHI", "KLZ", 27.5],
+  ["KLZ", "FIH", 40],
+  ["KLZ", "LSHI", 32.5],
+];
+
+for (const [sourceAgency, collectionAgency, amount] of INTER_AGENCY_ROUTES) {
+  test(`l'acheminement ${sourceAgency} vers ${collectionAgency} lit la source et encaisse à destination`, () => {
+    const harness = createHarness();
+    const reference = `FWD-${sourceAgency}-${collectionAgency}-0001`;
+    const response = harness.request(harness.basePayment({
+      destinationCode: sourceAgency,
+      codeColis: `PKG-${sourceAgency}`,
+      agenceEncaissement: collectionAgency,
+      agent: `AGENT-${collectionAgency}`,
+      montantPaye: amount,
+      operationType: "INTER_AGENCY_FORWARDING",
+      sourceDestinationCode: sourceAgency,
+      collectionSiteCode: collectionAgency,
+      forwardingDestinationCode: collectionAgency,
+      forwardingReference: reference,
+    }));
+
+    assert.equal(response.ok, true);
+    assert.equal(response.data.paiement.destinationCode, sourceAgency);
+    assert.equal(response.data.paiement.montantPaye, amount);
+    assert.equal(harness.payments.getSheetByName(collectionAgency).rows.length, 2);
+    assert.equal(harness.payments.getSheetByName(sourceAgency).rows.length, sourceAgency === collectionAgency ? 2 : 1);
+    const audit = JSON.parse(harness.payments.getSheetByName(collectionAgency).rows[1][14]);
+    assert.equal(audit.operationType, "INTER_AGENCY_FORWARDING");
+    assert.equal(audit.sourceDestinationCode, sourceAgency);
+    assert.equal(audit.collectionSiteCode, collectionAgency);
+    assert.equal(audit.forwardingDestinationCode, collectionAgency);
+    assert.equal(audit.forwardingReference, reference);
+    assert.equal(audit.paymentRequestId, PAYMENT_ID);
+  });
+}
+
+test("un rejeu inter-agences après perte de réponse retourne le résultat sans seconde écriture", () => {
+  const harness = createHarness();
+  const command = harness.basePayment({
+    destinationCode: "LSHI",
+    codeColis: "PKG-LSHI",
+    agenceEncaissement: "KLZ",
+    agent: "AGENT-KLZ",
+    montantPaye: 27.5,
+    operationType: "INTER_AGENCY_FORWARDING",
+    sourceDestinationCode: "LSHI",
+    collectionSiteCode: "KLZ",
+    forwardingDestinationCode: "KLZ",
+    forwardingReference: "FWD-LSHI-KLZ-REPLAY",
+  });
+  assert.equal(harness.request(command).ok, true);
+  const rowsAfterFirst = harness.payments.getSheetByName("KLZ").rows.length;
+  const replay = harness.request(command);
+  assert.equal(replay.ok, true);
+  assert.equal(replay.data.replayed, true);
+  assert.equal(replay.data.paymentRequestId, PAYMENT_ID);
+  assert.equal(harness.payments.getSheetByName("KLZ").rows.length, rowsAfterFirst);
+});
+
+test("un requestId inter-agences réutilisé avec un contenu différent est refusé", () => {
+  const harness = createHarness();
+  const command = harness.basePayment({
+    destinationCode: "LSHI",
+    codeColis: "PKG-LSHI",
+    agenceEncaissement: "KLZ",
+    agent: "AGENT-KLZ",
+    montantPaye: 27.5,
+    operationType: "INTER_AGENCY_FORWARDING",
+    sourceDestinationCode: "LSHI",
+    collectionSiteCode: "KLZ",
+    forwardingDestinationCode: "KLZ",
+    forwardingReference: "FWD-LSHI-KLZ-CONFLICT",
+  });
+  assert.equal(harness.request(command).ok, true);
+  const conflict = harness.request({ ...command, montantPaye: 28 });
+  assert.equal(errorCode(conflict), "IDEMPOTENCY_CONFLICT");
+  assert.equal(harness.payments.getSheetByName("KLZ").rows.length, 2);
+});
+
+for (const [label, overrides] of [
+  ["source identique à la destination", {
+    destinationCode: "FIH", sourceDestinationCode: "FIH", agenceEncaissement: "FIH",
+    collectionSiteCode: "FIH", forwardingDestinationCode: "FIH",
+  }],
+  ["COO comme source", {
+    destinationCode: "COO", sourceDestinationCode: "COO", agenceEncaissement: "FIH",
+    collectionSiteCode: "FIH", forwardingDestinationCode: "FIH",
+  }],
+  ["COO comme destination", {
+    destinationCode: "FIH", sourceDestinationCode: "FIH", agenceEncaissement: "COO",
+    collectionSiteCode: "COO", forwardingDestinationCode: "COO",
+  }],
+]) {
+  test(`un acheminement avec ${label} est refusé`, () => {
+    const harness = createHarness();
+    const response = harness.request(harness.basePayment({
+      operationType: "INTER_AGENCY_FORWARDING",
+      forwardingReference: "FWD-ROUTE-REFUSED",
+      montantPaye: 100,
+      ...overrides,
+    }));
+    assert.ok(["AGENCE_INVALIDE", "DESTINATION_INVALIDE"].includes(errorCode(response)));
+    assert.equal(harness.paymentSheets.every((sheet) => sheet.rows.length === 1), true);
+  });
+}
+
 test("l'anti-doublon couvre les quatre feuilles", () => {
   for (const agency of ["COO", "FIH", "LSHI", "KLZ"]) {
     const harness = createHarness();

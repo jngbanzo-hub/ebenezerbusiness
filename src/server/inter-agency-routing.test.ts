@@ -46,7 +46,7 @@ test("le poids de JL111126 est résolu dans la source LSHI et jamais fourni par 
     async () => [
       { sourceSite: "LSHI", rowNumber: 1, dateRaw: "", codeColisRaw: "Code colis", expediteurRaw: "", poidsRaw: "Poids" },
       { sourceSite: "FIH", rowNumber: 2, dateRaw: "", codeColisRaw: "JL111126", expediteurRaw: "", poidsRaw: 99 },
-      { sourceSite: "LSHI", rowNumber: 3, dateRaw: "", codeColisRaw: "jl111126", expediteurRaw: "", poidsRaw: "6 kg" }
+      { sourceSite: "LSHI", rowNumber: 3, dateRaw: "", codeColisRaw: "jl111126", expediteurRaw: "", poidsRaw: "6 kg", statutRaw: "En Attente" }
     ]
   );
   assert.equal(quote.weightKg, 6);
@@ -69,6 +69,18 @@ test("un format invalide, une absence et une mauvaise agence ont des codes disti
 
 test("une véritable panne de source reste une indisponibilité technique", async () => {
   await assert.rejects(resolveInterAgencyQuote({ trackingCode: "JL111126", origin: "LSHI", destination: "KLZ" }, async () => { throw new Error("network"); }), /AGENT_SERVICE_UNAVAILABLE/);
+});
+
+test("les statuts source admissibles sont explicites et LIVRÉ est refusé", async () => {
+  const row = (statutRaw: string) => async () => [{ sourceSite: "LSHI" as const, rowNumber: 2, dateRaw: "", codeColisRaw: "JL111126", expediteurRaw: "", poidsRaw: 6, statutRaw }];
+  for (const status of ["En Attente", "ENREGISTRÉ", "En Vol", "En Transit", "Arrivé"]) {
+    const quote = await resolveInterAgencyQuote({ trackingCode: "JL111126", origin: "LSHI", destination: "KLZ" }, row(status));
+    assert.equal(quote.amountExpectedUsd, 66);
+  }
+  await assert.rejects(resolveInterAgencyQuote({ trackingCode: "JL111126", origin: "LSHI", destination: "KLZ" }, row("LIVRÉ")), /PARCEL_ALREADY_DELIVERED/);
+  for (const status of ["ANNULÉ", "SORTI", "STATUT MYSTERE"]) {
+    await assert.rejects(resolveInterAgencyQuote({ trackingCode: "JL111126", origin: "LSHI", destination: "KLZ" }, row(status)), /SOURCE_PARCEL_NOT_ELIGIBLE/);
+  }
 });
 
 test("une même agence ou un poids invalide sont refusés", () => {

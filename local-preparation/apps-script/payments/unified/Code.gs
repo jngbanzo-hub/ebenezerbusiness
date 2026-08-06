@@ -102,7 +102,12 @@ function doPost(e) {
           "observation",
           "montantPaye",
           "simulation",
-          "paymentRequestId"
+          "paymentRequestId",
+          "operationType",
+          "sourceDestinationCode",
+          "collectionSiteCode",
+          "forwardingDestinationCode",
+          "forwardingReference"
         ]);
         return reponseSucces_(
           enregistrerPaiementUnifie_(
@@ -302,6 +307,21 @@ function construirePaiementValide_(body) {
   var agenceEncaissement = normaliserAgence_(
     body.agenceEncaissement
   );
+  var operationType = body.operationType === undefined
+    ? "STANDARD_PAYMENT"
+    : String(body.operationType || "").trim().toUpperCase();
+  var sourceDestinationCode = body.sourceDestinationCode === undefined
+    ? destinationCode
+    : validerDestination_(body.sourceDestinationCode);
+  var collectionSiteCode = body.collectionSiteCode === undefined
+    ? agenceEncaissement
+    : normaliserAgence_(body.collectionSiteCode);
+  var forwardingDestinationCode = body.forwardingDestinationCode === undefined
+    ? null
+    : validerDestination_(body.forwardingDestinationCode);
+  var forwardingReference = body.forwardingReference === undefined
+    ? ""
+    : validerReferenceAcheminement_(body.forwardingReference);
 
   if (
     AGENCES_ENCAISSEMENT.indexOf(agenceEncaissement) === -1
@@ -312,9 +332,25 @@ function construirePaiementValide_(body) {
     );
   }
 
-  var circuitAutorise =
-    agenceEncaissement === "COO" ||
-    agenceEncaissement === destinationCode;
+  var circuitAutorise;
+  if (operationType === "STANDARD_PAYMENT") {
+    circuitAutorise =
+      sourceDestinationCode === destinationCode &&
+      collectionSiteCode === agenceEncaissement &&
+      forwardingDestinationCode === null &&
+      forwardingReference === "" &&
+      (agenceEncaissement === "COO" || agenceEncaissement === destinationCode);
+  } else if (operationType === "INTER_AGENCY_FORWARDING") {
+    circuitAutorise =
+      ["FIH", "LSHI", "KLZ"].indexOf(sourceDestinationCode) !== -1 &&
+      ["FIH", "LSHI", "KLZ"].indexOf(collectionSiteCode) !== -1 &&
+      collectionSiteCode === agenceEncaissement &&
+      forwardingDestinationCode === agenceEncaissement &&
+      sourceDestinationCode !== forwardingDestinationCode &&
+      forwardingReference !== "";
+  } else {
+    circuitAutorise = false;
+  }
 
   if (!circuitAutorise) {
     throw erreurPublique_(
@@ -391,7 +427,12 @@ function construirePaiementValide_(body) {
       500
     ),
     simulation: body.simulation === true,
-    paymentRequestId: paymentRequestId
+    paymentRequestId: paymentRequestId,
+    operationType: operationType,
+    sourceDestinationCode: sourceDestinationCode,
+    collectionSiteCode: collectionSiteCode,
+    forwardingDestinationCode: forwardingDestinationCode,
+    forwardingReference: forwardingReference
   };
 }
 
@@ -411,12 +452,14 @@ function enregistrerPaiementUnifie_(paiement) {
     var classeur = SpreadsheetApp.getActiveSpreadsheet();
     validerStructurePaiements_(classeur);
 
-    if (
-      trouverPaymentRequestId_(
-        classeur,
-        paiement.paymentRequestId
-      )
-    ) {
+    var paiementExistant = trouverPaiementParRequestId_(
+      classeur,
+      paiement.paymentRequestId
+    );
+    if (paiementExistant) {
+      if (paiement.operationType === "INTER_AGENCY_FORWARDING") {
+        return reconstruireRejeuAcheminement_(paiement, paiementExistant);
+      }
       throw erreurPublique_(
         "PAIEMENT_DEJA_ENREGISTRE",
         "Ce paiement a déjà été enregistré."
@@ -424,7 +467,7 @@ function enregistrerPaiementUnifie_(paiement) {
     }
 
     var colis = rechercherColisSource_(
-      paiement.destinationCode,
+      paiement.sourceDestinationCode,
       paiement.codeColis
     );
     if (!colis) {
@@ -434,9 +477,9 @@ function enregistrerPaiementUnifie_(paiement) {
       );
     }
 
-    var montantAttendu = arrondirMontant_(
-      convertirNombre_(colis.montantAttendu)
-    );
+    var montantAttendu = paiement.operationType === "INTER_AGENCY_FORWARDING"
+      ? paiement.montantPaye
+      : arrondirMontant_(convertirNombre_(colis.montantAttendu));
     if (montantAttendu <= 0) {
       throw erreurPublique_(
         "COLIS_DEJA_SOLDE",
@@ -444,11 +487,9 @@ function enregistrerPaiementUnifie_(paiement) {
       );
     }
 
-    var totalDejaPaye = calculerTotalDejaPaye_(
-      paiement.codeColis,
-      paiement.destinationCode,
-      classeur
-    );
+    var totalDejaPaye = paiement.operationType === "INTER_AGENCY_FORWARDING"
+      ? 0
+      : calculerTotalDejaPaye_(paiement.codeColis, paiement.destinationCode, classeur);
     var soldeAvant = arrondirMontant_(
       montantAttendu - totalDejaPaye
     );
@@ -501,6 +542,13 @@ function enregistrerPaiementUnifie_(paiement) {
             : "PARTIELLEMENT_PAYE",
         datePaiement: new Date().toISOString(),
         paymentRequestId: paiement.paymentRequestId
+      },
+      operationContext: {
+        type: paiement.operationType,
+        sourceDestinationCode: paiement.sourceDestinationCode,
+        collectionSiteCode: paiement.collectionSiteCode,
+        forwardingDestinationCode: paiement.forwardingDestinationCode,
+        forwardingReference: paiement.forwardingReference
       }
     };
 
@@ -533,7 +581,9 @@ function enregistrerPaiementUnifie_(paiement) {
       paiement.referencePaiement,
       valeurPublique_(colis.dateColis),
       valeurPublique_(colis.statutColis),
-      paiement.observation,
+      paiement.operationType === "INTER_AGENCY_FORWARDING"
+        ? construireAuditAcheminement_(paiement)
+        : paiement.observation,
       paiement.paymentRequestId
     ];
 
@@ -556,6 +606,26 @@ function enregistrerPaiementUnifie_(paiement) {
       verrou.releaseLock();
     }
   }
+}
+
+function validerReferenceAcheminement_(value) {
+  var reference = String(value || "").trim().toUpperCase();
+  if (!/^[A-Z0-9][A-Z0-9._\/-]{5,95}$/.test(reference)) {
+    throw erreurPublique_("REQUETE_INVALIDE", "Référence d’acheminement invalide.");
+  }
+  return reference;
+}
+
+function construireAuditAcheminement_(paiement) {
+  return JSON.stringify({
+    operationType: paiement.operationType,
+    sourceDestinationCode: paiement.sourceDestinationCode,
+    collectionSiteCode: paiement.collectionSiteCode,
+    forwardingDestinationCode: paiement.forwardingDestinationCode,
+    forwardingReference: paiement.forwardingReference,
+    paymentRequestId: paiement.paymentRequestId,
+    observation: paiement.observation
+  });
 }
 
 function validerStructurePaiements_(classeur) {
@@ -587,28 +657,79 @@ function validerStructurePaiements_(classeur) {
 }
 
 function trouverPaymentRequestId_(classeur, paymentRequestId) {
-  return AGENCES_ENCAISSEMENT.some(function (nomFeuille) {
+  return trouverPaiementParRequestId_(classeur, paymentRequestId) !== null;
+}
+
+function trouverPaiementParRequestId_(classeur, paymentRequestId) {
+  var paiementTrouve = null;
+  AGENCES_ENCAISSEMENT.some(function (nomFeuille) {
     var feuille = classeur.getSheetByName(nomFeuille);
     var derniereLigne = feuille.getLastRow();
     if (derniereLigne < 2) {
       return false;
     }
 
-    return feuille
-      .getRange(
-        2,
-        PAYMENT_REQUEST_ID_COLUMN,
-        derniereLigne - 1,
-        1
-      )
-      .getDisplayValues()
-      .some(function (ligne) {
-        return (
-          String(ligne[0] || "").trim().toLowerCase() ===
-          paymentRequestId
-        );
-      });
+    var lignes = feuille
+      .getRange(2, 1, derniereLigne - 1, PAYMENT_HEADERS.length)
+      .getValues();
+    return lignes.some(function (ligne) {
+      if (
+        String(ligne[PAYMENT_REQUEST_ID_COLUMN - 1] || "").trim().toLowerCase() !==
+        paymentRequestId
+      ) {
+        return false;
+      }
+      paiementTrouve = { agence: nomFeuille, valeurs: ligne };
+      return true;
+    });
   });
+  return paiementTrouve;
+}
+
+function reconstruireRejeuAcheminement_(paiement, paiementExistant) {
+  var valeurs = paiementExistant.valeurs;
+  var audit;
+  try {
+    audit = JSON.parse(String(valeurs[14] || ""));
+  } catch (error) {
+    audit = null;
+  }
+  if (
+    !audit ||
+    audit.operationType !== "INTER_AGENCY_FORWARDING" ||
+    audit.sourceDestinationCode !== paiement.sourceDestinationCode ||
+    audit.collectionSiteCode !== paiement.collectionSiteCode ||
+    audit.forwardingDestinationCode !== paiement.forwardingDestinationCode ||
+    audit.forwardingReference !== paiement.forwardingReference ||
+    paiementExistant.agence !== paiement.agenceEncaissement ||
+    String(valeurs[1] || "").trim().toUpperCase() !== paiement.codeColis ||
+    arrondirMontant_(convertirNombre_(valeurs[4])) !== paiement.montantPaye
+  ) {
+    throw erreurPublique_(
+      "IDEMPOTENCY_CONFLICT",
+      "Cet identifiant de requête correspond à une autre opération."
+    );
+  }
+
+  var soldeRestant = arrondirMontant_(convertirNombre_(valeurs[5]));
+  return {
+    paymentRequestId: paiement.paymentRequestId,
+    simulation: false,
+    replayed: true,
+    paiement: {
+      codeColis: String(valeurs[1] || "").trim(),
+      destinationCode: paiement.sourceDestinationCode,
+      destinationNom: DESTINATION_NOMS[paiement.sourceDestinationCode],
+      montantAttendu: arrondirMontant_(convertirNombre_(valeurs[3])),
+      montantPaye: arrondirMontant_(convertirNombre_(valeurs[4])),
+      nouveauTotalPaye: arrondirMontant_(convertirNombre_(valeurs[4])),
+      soldeRestant: soldeRestant,
+      statutPaiement: soldeRestant === 0 ? "SOLDE" : "PARTIELLEMENT_PAYE",
+      datePaiement: new Date(valeurs[0]).toISOString(),
+      paymentRequestId: paiement.paymentRequestId
+    },
+    operationContext: audit
+  };
 }
 
 function calculerTotalDejaPaye_(

@@ -233,6 +233,52 @@ function paymentRequest(overrides = {}, token = "valid") {
   });
 }
 
+async function signedForwardingPaymentRequest(overrides = {}) {
+  const body = {
+    destinationCode: "LSHI",
+    codeColis: "COLIS-001",
+    montantPaye: 66,
+    modePaiement: "ESPECES",
+    referencePaiement: "",
+    observation: "",
+    paymentRequestId: validUuid,
+    operationContext: {
+      type: "INTER_AGENCY_FORWARDING",
+      sourceDestinationCode: "LSHI",
+      collectionSiteCode: "KLZ",
+      forwardingDestinationCode: "KLZ",
+      forwardingReference: "JL111126-LSHI-KLZ",
+    },
+    ...overrides,
+  };
+  const serialized = JSON.stringify(body);
+  const timestamp = Date.now().toString();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(globalThis.__edgeRuntime.env.SUPABASE_SERVICE_ROLE_KEY),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signed = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`${timestamp}.${serialized}`)
+  );
+  const signature = Array.from(new Uint8Array(signed))
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+  return new Request("https://edge.test/payment", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer valid",
+      "X-Ebe-Orchestration-Timestamp": timestamp,
+      "X-Ebe-Orchestration-Signature": signature,
+    },
+    body: serialized,
+  });
+}
+
 function searchSuccess(destinationCode = "FIH") {
   return new Response(
     JSON.stringify({
@@ -462,6 +508,40 @@ test("31 clé inattendue refusée selon le contrat strict", async () => {
     (await searchHandler(searchRequest("FIH", { unexpected: true }))).status,
     400
   );
+});
+
+test("31b contexte inter-agences injecté par le navigateur refusé sans appel amont", async () => {
+  reset(agentProfile("KLZ"));
+  const response = await json(await paymentHandler(paymentRequest({
+    destinationCode: "LSHI",
+    montantPaye: 66,
+    operationContext: {
+      type: "INTER_AGENCY_FORWARDING",
+      sourceDestinationCode: "LSHI",
+      collectionSiteCode: "KLZ",
+      forwardingDestinationCode: "KLZ",
+      forwardingReference: "JL111126-LSHI-KLZ",
+    },
+  })));
+  assert.equal(response.status, 403);
+  assert.equal(response.body.error, "ACCES_REFUSE");
+  assert.equal(runtime.fetchCalls.length, 0);
+});
+
+test("31c contexte inter-agences signé conserve la source et l'agence authentifiée", async () => {
+  reset(agentProfile("KLZ"));
+  runtime.upstream = paymentSuccess("LSHI", 66);
+  const response = await json(await paymentHandler(await signedForwardingPaymentRequest()));
+  assert.equal(response.status, 200);
+  assert.equal(runtime.fetchCalls.length, 1);
+  const upstream = JSON.parse(runtime.fetchCalls[0].init.body);
+  assert.equal(upstream.destinationCode, "LSHI");
+  assert.equal(upstream.agenceEncaissement, "KLZ");
+  assert.equal(upstream.operationType, "INTER_AGENCY_FORWARDING");
+  assert.equal(upstream.sourceDestinationCode, "LSHI");
+  assert.equal(upstream.collectionSiteCode, "KLZ");
+  assert.equal(upstream.forwardingDestinationCode, "KLZ");
+  assert.equal(upstream.paymentRequestId, validUuid.toLowerCase());
 });
 
 test("32 code colis invalide refusé", async () => {
