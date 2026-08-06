@@ -8,7 +8,7 @@ import { createOpeningBalancePostHandler } from "./opening-balance-handler";
 
 const authorized: AdminAuthorizationResult = { authorized: true, userId: "admin-001", email: "admin@example.test", role: "ADMIN", agency: "COO" };
 const input = { agency: "FIH", amount: 10, businessDate: "2026-08-01", requestId: "opening-route-001", confirmationFinal: true };
-function service() { const events: any[] = []; const repository: OpeningBalanceRepository = { async findAccount(){ return { id: "account-fih", agency: "FIH", currency: "USD", status: "SUSPENDED", version: 1 }; }, async findByRequestId(){ return null; }, async findByAccountId(){ return null; }, async insertOpeningBalance(record){ events.push(record); }, async activateAccount(){ return "ACTIVATED"; } }; return new OpeningBalanceCommandService(repository); }
+function service() { const repository: OpeningBalanceRepository = { async openCashAccount(command){ return { state:"SUCCESS",replayed:false,eventId:"event-fih",agency:command.agency,amount:command.amount,currency:"USD",businessDate:command.businessDate,accountStatus:"ACTIVE" }; } }; return new OpeningBalanceCommandService(repository); }
 function request(body: unknown) { return new Request("http://localhost/api/admin/cash/opening-balance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
 
 test("Admin actif obtient 201", async () => { const response = await createOpeningBalancePostHandler(async()=>authorized,service())(request(input)); assert.equal(response.status,201); assert.equal((await response.json()).agency,"FIH"); });

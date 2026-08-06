@@ -16,7 +16,7 @@ export function createOpeningBalancePostHandler(authorize: Authorize, serviceOrF
       return Response.json(result, { status: result.replayed ? 200 : 201, headers: noStore });
     } catch (error) {
       if (!(error instanceof OpeningBalanceError)) return responseError("SERVICE_UNAVAILABLE", "Service Caisse indisponible.", 503);
-      const status = { INVALID_COMMAND: 400, ACCOUNT_NOT_READY: 409, OPENING_BALANCE_ALREADY_DEFINED: 409, IDEMPOTENCY_CONFLICT: 409, SERVICE_UNAVAILABLE: 503 }[error.code];
+      const status = { INVALID_COMMAND: 400, ACCOUNT_NOT_READY: 409, OPENING_BALANCE_ALREADY_DEFINED: 409, SECOND_OPENING_NOT_ALLOWED: 409, IDEMPOTENCY_CONFLICT: 409, SERVICE_UNAVAILABLE: 503 }[error.code];
       return responseError(error.code, error.message, status);
     }
   };
