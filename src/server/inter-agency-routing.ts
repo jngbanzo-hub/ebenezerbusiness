@@ -6,8 +6,8 @@ import { readCanonicalPaymentManifestRows } from "@/server/admin-manifest-sheets
 import { StockagesV2Error, type StorageAgency } from "@/server/stockages-v2";
 
 export const INTER_AGENCY_RATES = Object.freeze({
-  "FIH-LSHI": 13,
-  "LSHI-FIH": 12,
+  "FIH-LSHI": 12,
+  "LSHI-FIH": 13,
   "FIH-KLZ": 14,
   "KLZ-FIH": 16,
   "LSHI-KLZ": 11,

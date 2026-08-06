@@ -28,9 +28,9 @@ test("la situation physique et financière est déterminée côté serveur", () 
 });
 
 test("les tarifs et références inter-agences restent exclusivement serveur", () => {
-  assert.match(routing, /"FIH-LSHI": 13/); assert.match(routing, /"KLZ-LSHI": 13/);
+  assert.match(routing, /"FIH-LSHI": 12/); assert.match(routing, /"LSHI-FIH": 13/); assert.match(routing, /"KLZ-LSHI": 13/);
   assert.match(routing, /return `\$\{code\}-\$\{origin\}-\$\{destination\}`/);
-  assert.doesNotMatch(paymentsUi, /"FIH-LSHI": 12|"LSHI-FIH": 13/);
+  assert.doesNotMatch(paymentsUi, /INTER_AGENCY_RATES|"FIH-LSHI"|"LSHI-FIH"/);
 });
 
 test("Transferts reste isolé", () => { assert.doesNotMatch(stockUi + paymentsUi + actionRoute + routing, /features\/transferts|api\/agent\/transferts|TRANSFER_/i); });

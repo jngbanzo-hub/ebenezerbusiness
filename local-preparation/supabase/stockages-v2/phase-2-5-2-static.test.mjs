@@ -29,9 +29,9 @@ test("la finalisation verrouille colis puis compte et empêche le stock négatif
 });
 
 test("les six tarifs et la référence non ambiguë restent serveur", () => {
-  for (const fragment of ["'FIH-LSHI' then 13", "'LSHI-FIH' then 12", "'FIH-KLZ' then 14", "'KLZ-FIH' then 16", "'LSHI-KLZ' then 11", "'KLZ-LSHI' then 13"]) assert.ok(sql.includes(fragment));
+  for (const fragment of ["'FIH-LSHI' then 12", "'LSHI-FIH' then 13", "'FIH-KLZ' then 14", "'KLZ-FIH' then 16", "'LSHI-KLZ' then 11", "'KLZ-LSHI' then 13"]) assert.ok(sql.includes(fragment));
   assert.match(sql, /v_code\|\|'-'\|\|v_origin\|\|'-'\|\|v_destination/);
-  assert.doesNotMatch(ui, /FIH-LSHI.*12|LSHI-FIH.*13/);
+  assert.doesNotMatch(ui, /INTER_AGENCY_RATES|FIH-LSHI|LSHI-FIH/);
   assert.match(server, /resolveInterAgencyQuote/);
   assert.doesNotMatch(routes, /body\.weightKg/);
   assert.doesNotMatch(ui, /weightKg:\s*routingQuote\.weightKg/);

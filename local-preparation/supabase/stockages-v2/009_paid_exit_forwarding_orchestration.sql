@@ -150,7 +150,7 @@ begin
  select * into v_agent from public.agents where id=p_actor_id;
  if not found or v_agent.actif is not true or upper(btrim(v_agent.role))<>'AGENT' then raise exception 'ACTIVE_AGENT_REQUIRED'; end if;
  if upper(btrim(v_agent.agence))<>v_destination then raise exception 'WRONG_AGENCY'; end if;
- v_rate:=case v_origin||'-'||v_destination when 'FIH-LSHI' then 13 when 'LSHI-FIH' then 12 when 'FIH-KLZ' then 14 when 'KLZ-FIH' then 16 when 'LSHI-KLZ' then 11 when 'KLZ-LSHI' then 13 else null end;
+ v_rate:=case v_origin||'-'||v_destination when 'FIH-LSHI' then 12 when 'LSHI-FIH' then 13 when 'FIH-KLZ' then 14 when 'KLZ-FIH' then 16 when 'LSHI-KLZ' then 11 when 'KLZ-LSHI' then 13 else null end;
  if v_rate is null then raise exception 'FORWARDING_ROUTE_NOT_ALLOWED'; end if;
  v_reference:=v_code||'-'||v_origin||'-'||v_destination; v_expected:=round(p_canonical_weight_kg*v_rate,2);
  if p_amount_paid<>v_expected or p_business_date is null or p_request_id is null then raise exception 'INVALID_FORWARDING_PAYMENT'; end if;

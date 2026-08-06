@@ -22,7 +22,7 @@ test("le devis inter-agences est authentifié et calculé côté serveur", () =>
   assert.match(route, /requireStorageAgency\(auth\.identity\.site\)/);
   assert.match(routing, /INTER_AGENCY_RATES/);
   assert.match(routing, /amountExpectedUsd: round\(input\.weightKg \* rateUsdPerKg\)/);
-  assert.doesNotMatch(workspace, /FIH-LSHI.*12|LSHI-FIH.*13/);
+  assert.doesNotMatch(workspace, /INTER_AGENCY_RATES|FIH-LSHI|LSHI-FIH/);
 });
 
 test("l’arrivage détaillé est idempotent, transactionnel et serveur uniquement", () => {

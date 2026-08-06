@@ -4,7 +4,7 @@ import test from "node:test";
 import { buildInterAgencyReference, INTER_AGENCY_RATES, quoteInterAgencyRouting, resolveInterAgencyQuote } from "./inter-agency-routing";
 
 test("les six tarifs inter-agences sont configurés côté serveur", () => {
-  assert.deepEqual(INTER_AGENCY_RATES, { "FIH-LSHI": 13, "LSHI-FIH": 12, "FIH-KLZ": 14, "KLZ-FIH": 16, "LSHI-KLZ": 11, "KLZ-LSHI": 13 });
+  assert.deepEqual(INTER_AGENCY_RATES, { "FIH-LSHI": 12, "LSHI-FIH": 13, "FIH-KLZ": 14, "KLZ-FIH": 16, "LSHI-KLZ": 11, "KLZ-LSHI": 13 });
   for (const [route, rate] of Object.entries(INTER_AGENCY_RATES)) {
     const [origin, destination] = route.split("-") as ["FIH" | "LSHI" | "KLZ", "FIH" | "LSHI" | "KLZ"];
     const quote = quoteInterAgencyRouting({ trackingCode: "JLTEST26", origin, destination, weightKg: 2 });
