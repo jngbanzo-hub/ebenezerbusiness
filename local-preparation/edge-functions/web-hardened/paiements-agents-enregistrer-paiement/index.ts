@@ -669,7 +669,7 @@ function normalizeOperationContext(
 async function verifyInternalOrchestration(request: Request, body: Record<string, unknown>) {
   const timestamp = request.headers.get("x-ebe-orchestration-timestamp") ?? "";
   const signature = request.headers.get("x-ebe-orchestration-signature") ?? "";
-  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim() ?? "";
+  const key = Deno.env.get("PAYMENTS_ORCHESTRATION_HMAC_SECRET")?.trim() ?? "";
   const parsedTimestamp = Number(timestamp);
   if (!key || !/^[0-9a-f]{64}$/i.test(signature) || !Number.isFinite(parsedTimestamp) || Math.abs(Date.now() - parsedTimestamp) > 300_000) return false;
   const cryptoKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);

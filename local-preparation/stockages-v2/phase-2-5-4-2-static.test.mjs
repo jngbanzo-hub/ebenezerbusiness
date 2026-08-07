@@ -19,6 +19,10 @@ test("le navigateur ne peut fournir aucun contexte dérivé", () => {
 });
 
 test("le contexte interne est signé et vérifié avant d'être accepté", () => {
+  assert.match(server, /PAYMENTS_ORCHESTRATION_HMAC_SECRET/);
+  assert.match(edge, /PAYMENTS_ORCHESTRATION_HMAC_SECRET/);
+  assert.doesNotMatch(server, /orchestrationKey = process\.env\.SUPABASE_SERVICE_ROLE_KEY/);
+  assert.doesNotMatch(edge, /const key = Deno\.env\.get\("SUPABASE_SERVICE_ROLE_KEY"\)/);
   assert.match(server, /createHmac\("sha256", orchestrationKey\)/);
   assert.match(server, /X-Ebe-Orchestration-Timestamp/);
   assert.match(server, /X-Ebe-Orchestration-Signature/);

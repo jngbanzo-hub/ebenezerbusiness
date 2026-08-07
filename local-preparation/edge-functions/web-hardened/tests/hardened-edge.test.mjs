@@ -130,6 +130,7 @@ globalThis.__edgeRuntime = {
     SUPABASE_URL: "https://example.supabase.co",
     SUPABASE_ANON_KEY: "public-test-key",
     SUPABASE_SERVICE_ROLE_KEY: "local-service-role",
+    PAYMENTS_ORCHESTRATION_HMAC_SECRET: "local-orchestration-hmac-secret",
     CASH_PAYMENT_CREDITS_ENABLED: "false",
     PAIEMENTS_AGENTS_APPS_SCRIPT_URL: "https://script.google.test/exec",
     PAIEMENTS_AGENTS_API_KEY: "local-test-key",
@@ -255,7 +256,7 @@ async function signedForwardingPaymentRequest(overrides = {}) {
   const timestamp = Date.now().toString();
   const key = await crypto.subtle.importKey(
     "raw",
-    new TextEncoder().encode(globalThis.__edgeRuntime.env.SUPABASE_SERVICE_ROLE_KEY),
+    new TextEncoder().encode(globalThis.__edgeRuntime.env.PAYMENTS_ORCHESTRATION_HMAC_SECRET),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"]

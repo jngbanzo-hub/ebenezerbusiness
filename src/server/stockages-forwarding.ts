@@ -176,7 +176,7 @@ async function invokeCanonicalPaymentEngine(input: {
   };
 }) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
-  const orchestrationKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const orchestrationKey = process.env.PAYMENTS_ORCHESTRATION_HMAC_SECRET?.trim();
   if (!url || !input.accessToken || !orchestrationKey) throw new StockagesV2Error("AGENT_SERVICE_UNAVAILABLE", 503);
   const body = JSON.stringify({
     codeColis: input.trackingCode,
