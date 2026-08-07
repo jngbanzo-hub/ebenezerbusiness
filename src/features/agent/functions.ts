@@ -118,6 +118,27 @@ export function searchParcel(payload: { destinationCode: string; codeColis: stri
   return invokeAgentFunction<Record<string, unknown>>(FUNCTION_NAMES.search, payload);
 }
 
+export async function searchDestinationParcel(trackingCode: string) {
+  const {
+    data: { session }
+  } = await getSupabaseBrowserClient().auth.getSession();
+  if (!session?.access_token) throw new Error("Votre session a expiré. Veuillez vous reconnecter.");
+  const response = await fetch(
+    `/api/agent/encaissements/parcel?trackingCode=${encodeURIComponent(trackingCode)}`,
+    {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+      cache: "no-store"
+    }
+  );
+  const payload = await response.json().catch(() => null) as
+    | { parcel?: Record<string, unknown>; message?: string }
+    | null;
+  if (!response.ok || !payload?.parcel) {
+    throw new Error(payload?.message ?? "Recherche Encaissements indisponible.");
+  }
+  return payload.parcel;
+}
+
 export function savePayment(payload: {
   codeColis: string;
   destinationCode: string;
@@ -130,6 +151,25 @@ export function savePayment(payload: {
   return invokeAgentFunction<Record<string, unknown>>(FUNCTION_NAMES.payment, payload).then(
     parsePaymentResult
   );
+}
+
+export async function saveDestinationPayment(payload: {
+  trackingCode: string;
+  paymentMode: PaymentMode;
+  paymentReference: string;
+  observation: string;
+  paymentRequestId: string;
+}) {
+  const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
+  if (!session?.access_token) throw new Error("Votre session a expiré. Veuillez vous reconnecter.");
+  const response = await fetch("/api/agent/encaissements/payment", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const raw = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || !raw) throw createResponseError(raw, "Le paiement a échoué.");
+  return parsePaymentResult(raw);
 }
 
 function parsePaymentResult(response: Record<string, unknown>): PaymentResult {

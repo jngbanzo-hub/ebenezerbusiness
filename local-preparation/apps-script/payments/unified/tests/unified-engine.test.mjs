@@ -110,7 +110,17 @@ function createHarness(options = {}) {
     (agency) =>
       new SheetMock(agency, [
         ["Date", "Code", "Nom", "Téléphone", "Poids", "Montant", "", "", "Statut"],
-        ["30/07/2026", `PKG-${agency}`, "PRIVÉ", "PRIVÉ", 2.5, 100, "", "", "ARRIVÉ"],
+        [
+          "30/07/2026",
+          `PKG-${agency}`,
+          "PRIVÉ",
+          "PRIVÉ",
+          2.5,
+          100,
+          "",
+          "",
+          options.sourceStatus ?? "ARRIVÉ",
+        ],
       ])
   );
   const payments = new SpreadsheetMock(paymentSheets);
@@ -361,6 +371,47 @@ test("COO peut effectuer un paiement partiel", () => {
   const response = harness.request(harness.basePayment());
   assert.equal(response.ok, true);
   assert.equal(response.data.paiement.soldeRestant, 60);
+});
+
+test("le statut source affiché Arrivé est normalisé avant écriture", () => {
+  const harness = createHarness({ sourceStatus: "Arrivé" });
+  const response = harness.request(harness.basePayment());
+  assert.equal(response.ok, true);
+  assert.equal(harness.payments.getSheetByName("COO").rows[1][13], "ARRIVÉ");
+});
+
+for (const sourceStatus of [
+  "EN ATTENTE",
+  "ENREGISTRÉ",
+  "EN VOL",
+  "EN TRANSIT",
+  "ARRIVÉ",
+]) {
+  test(`le statut admissible ${sourceStatus} est accepté`, () => {
+    const harness = createHarness({ sourceStatus });
+    const response = harness.request(harness.basePayment());
+    assert.equal(response.ok, true);
+    assert.equal(
+      harness.payments.getSheetByName("COO").rows[1][13],
+      sourceStatus
+    );
+  });
+}
+
+for (const sourceStatus of ["LIVRÉ", "SORTI", "ANNULÉ", "INCONNU"]) {
+  test(`le statut non admissible ${sourceStatus} est refusé`, () => {
+    const harness = createHarness({ sourceStatus });
+    const response = harness.request(harness.basePayment());
+    assert.equal(errorCode(response), "STATUT_COLIS_INVALIDE");
+    assert.equal(harness.payments.getSheetByName("COO").rows.length, 1);
+  });
+}
+
+test("un statut source incompatible est refusé avant écriture", () => {
+  const harness = createHarness({ sourceStatus: "INCONNU" });
+  const response = harness.request(harness.basePayment());
+  assert.equal(errorCode(response), "STATUT_COLIS_INVALIDE");
+  assert.equal(harness.payments.getSheetByName("COO").rows.length, 1);
 });
 
 for (const agency of ["FIH", "LSHI", "KLZ"]) {
@@ -819,5 +870,24 @@ test("le statut LIVRÉ ne transforme pas un colis soldé en paiement autorisé",
   ]);
   const response = harness.request(harness.basePayment());
   assert.equal(errorCode(response), "COLIS_DEJA_SOLDE");
+  assert.equal(harness.sourceSheets.every((sheet) => sheet.writeCount === 0), true);
+});
+
+test("un paiement destination Stockage ne lit pas le Manifeste Public", () => {
+  const harness = createHarness();
+  harness.sourceSheets.forEach((sheet) => { sheet.rows = []; });
+  const response = harness.request(harness.basePayment({
+    agenceEncaissement: "FIH",
+    montantPaye: 60,
+    operationType: "STORAGE_DESTINATION_PAYMENT",
+    sourceDestinationCode: "FIH",
+    collectionSiteCode: "FIH",
+    canonicalWeightKg: 2.5,
+    canonicalExpectedAmount: 100,
+    canonicalTotalPaid: 40
+  }));
+  assert.equal(response.success, true);
+  assert.equal(response.paiement.montantPaye, 60);
+  assert.equal(response.paiement.nouveauSolde, 0);
   assert.equal(harness.sourceSheets.every((sheet) => sheet.writeCount === 0), true);
 });

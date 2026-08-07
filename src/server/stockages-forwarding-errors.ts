@@ -15,6 +15,8 @@ export const FORWARDING_AGENT_MESSAGES = Object.freeze({
   PARCEL_ALREADY_DELIVERED: "Ce colis est déjà livré.",
   PAYMENT_ALREADY_RECORDED: "Ce paiement a déjà été enregistré.",
   FORWARDING_ALREADY_EXISTS: "Un acheminement actif existe déjà pour ce colis.",
+  FORWARDING_RESUME_FORBIDDEN: "Cette opération en cours appartient à un autre Agent.",
+  FORWARDING_RESUME_AMBIGUOUS: "Plusieurs opérations actives incompatibles ont été détectées.",
   IDEMPOTENCY_CONFLICT: "Cette demande correspond déjà à une autre opération.",
   NETWORK_RESULT_UNKNOWN: "Résultat en cours de vérification. Ne recommencez pas avec une nouvelle demande.",
   TRACKING_CODE_NOT_FOUND: "Aucun colis correspondant n’a été trouvé dans l’agence d’origine.",
@@ -22,6 +24,7 @@ export const FORWARDING_AGENT_MESSAGES = Object.freeze({
   PARCEL_WEIGHT_UNAVAILABLE: "Le poids canonique du colis est indisponible.",
   PARCEL_WEIGHT_AMBIGUOUS: "Le poids canonique du colis doit être vérifié.",
   INVALID_FORWARDING_COMMAND: "La demande d’acheminement est invalide.",
+  STATUT_COLIS_INVALIDE: "Le statut du colis est incompatible avec la feuille de paiement.",
   AGENT_SERVICE_UNAVAILABLE: "Le service Agent est indisponible. Veuillez réessayer.",
   FORWARDING_SERVICE_UNAVAILABLE: "Le service d’acheminement est indisponible. Veuillez réessayer."
 } as const);

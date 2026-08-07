@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { GlassPanel } from "@/components/design-system";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { formatStockageAnomalies, formatStockageWeight } from "@/features/stockages/presentation";
+import { summarizeArrivalDetails } from "@/features/stockages/arrival-details";
 
 type Account = { agency: string; status: "SUSPENDED" | "ACTIVE"; current_parcel_count: number; current_weight_kg: number; version: number; opened_business_date: string | null };
 type EventRow = { event_id: string; event_type: string; agency?: string; business_date: string; occurred_at: string; parcel_count_delta: number; weight_kg_delta: number; tracking_code?: string | null; arrival_reference?: string | null; actor_name: string };
@@ -119,14 +120,17 @@ export function AdminStockagesV2Page() {
 
 function AgentCommandForm({ title, endpoint, disabled, fields, onDone }: { title: string; endpoint: string; disabled: boolean; fields: "arrival" | "delivery"; onDone: () => Promise<void> }) {
   const [result, setResult] = useState("");
+  const [arrivalDetails, setArrivalDetails] = useState("");
+  const arrivalSummary = useMemo(() => summarizeArrivalDetails(arrivalDetails), [arrivalDetails]);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = event.currentTarget; const values = new FormData(form);
     if (!window.confirm(`Confirmer : ${title} ?`)) return;
-    const payload = fields === "arrival" ? { parcels: parseArrivalLines(String(values.get("parcels") ?? "")), reference: values.get("reference"), observation: values.get("observation"), requestId: crypto.randomUUID() } : { trackingCode: values.get("trackingCode"), physicalDeliveryConfirmed: true, requestId: crypto.randomUUID() };
-    try { const response = await request<{ replayed?: boolean }>(endpoint, payload); setResult(response.replayed ? "Commande déjà enregistrée : rejeu idempotent." : "Commande enregistrée avec succès."); form.reset(); await onDone(); } catch (error) { setResult(error instanceof Error ? error.message : "Commande refusée."); }
+    if (fields === "arrival" && (arrivalSummary.error || !arrivalSummary.parcels.length)) { setResult(arrivalSummary.error || "Ajoutez au moins un colis."); return; }
+    const payload = fields === "arrival" ? { parcels: arrivalSummary.parcels, reference: values.get("reference"), observation: values.get("observation"), requestId: crypto.randomUUID() } : { trackingCode: values.get("trackingCode"), physicalDeliveryConfirmed: true, requestId: crypto.randomUUID() };
+    try { const response = await request<{ replayed?: boolean }>(endpoint, payload); setResult(response.replayed ? "Commande déjà enregistrée : rejeu idempotent." : "Commande enregistrée avec succès."); form.reset(); setArrivalDetails(""); await onDone(); } catch (error) { setResult(error instanceof Error ? error.message : "Commande refusée."); }
   }
   return <Panel title={title}><form className="space-y-3" onSubmit={submit}>
-    {fields === "arrival" ? <><label className="block text-sm">Colis arrivés — un par ligne au format CODE:POIDS<textarea name="parcels" required rows={6} placeholder={"JL00126:2.5\nJL00226:1"} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><Input name="reference" label="Référence d’arrivage" /><Input name="observation" label="Observation" /></> : <><Input name="trackingCode" label="Code colis" required /><p className="text-xs text-slate-400">La présence physique et le poids sont contrôlés côté serveur dans le Stockage de l’agence.</p></>}
+    {fields === "arrival" ? <><label className="block text-sm">Détails de Codes<textarea name="parcels" required rows={8} value={arrivalDetails} onChange={(event)=>setArrivalDetails(event.target.value)} placeholder={"JL73926:8KGs\nJL96426:5KG"} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><div className="grid gap-3 sm:grid-cols-2"><label className="text-sm">Nombre de Codes Reçus<input readOnly value={arrivalSummary.count} className="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 p-2 text-slate-300" /></label><label className="text-sm">Poids Total Entrés<input readOnly value={`${arrivalSummary.totalWeightKg} kg`} className="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 p-2 text-slate-300" /></label></div>{arrivalSummary.error&&<p className="text-sm text-red-200">{arrivalSummary.error}</p>}<Input name="reference" label="Référence d’arrivage" /><Input name="observation" label="Observation" /></> : <><Input name="trackingCode" label="Code colis" required /><p className="text-xs text-slate-400">La présence physique et le poids sont contrôlés côté serveur dans le Stockage de l’agence.</p></>}
     <Button disabled={disabled} className="w-full bg-lime-400 text-slate-950 hover:bg-lime-300 focus-visible:ring-lime-300 disabled:bg-slate-800 disabled:text-slate-400">{disabled ? "Solde initial requis" : title}</Button>{result && <p className="text-sm text-slate-300">{result}</p>}
   </form></Panel>;
 }
@@ -182,7 +186,6 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
 function Notice({ text }: { text: string }) { return <div className="flex items-center gap-3 rounded-xl border border-amber-400/25 bg-amber-400/10 p-4 text-sm"><ShieldCheck className="h-5 w-5" />{text}</div>; }
 function Input(props: { name: string; label: string; type?: string; min?: string; step?: string; required?: boolean }) { return <label className="block text-sm">{props.label}<input {...props} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label>; }
 function CollectionLink({ item, label }: { item: QueueItem; label: string }) { return <Link href={`/agent/encaissement?code=${encodeURIComponent(item.trackingCode)}`} className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-lime-400 px-4 py-2 font-medium text-slate-950 hover:bg-lime-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300">{label}</Link>; }
-function parseArrivalLines(value: string) { return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => { const [trackingCode, weight] = line.split(":"); return { trackingCode: trackingCode?.trim(), weightKg: Number(weight?.trim().replace(",", ".")) }; }); }
 function queueStatusLabel(status: QueueItem["deliveryStatus"]) { return status === "DELIVERED" ? "Livré" : status === "READY" ? "Paiement terminé — colis à remettre" : status === "TO_COLLECT" ? "À encaisser" : status === "PARTIAL_PAYMENT_REMAINING" ? "Solde restant" : "Vérification nécessaire"; }
 function money(value: number | null) { return value === null ? "Non disponible" : `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(value)} $`; }
 function DataList({ rows, empty }: { rows: string[]; empty: string }) { return rows.length ? <div className="space-y-2">{rows.map((row, index) => <p key={`${row}-${index}`} className="rounded-lg border border-white/10 p-3 text-sm">{row}</p>)}</div> : <p className="text-slate-400">{empty}</p>; }

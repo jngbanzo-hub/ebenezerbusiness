@@ -107,7 +107,10 @@ function doPost(e) {
           "sourceDestinationCode",
           "collectionSiteCode",
           "forwardingDestinationCode",
-          "forwardingReference"
+          "forwardingReference",
+          "canonicalWeightKg",
+          "canonicalExpectedAmount",
+          "canonicalTotalPaid"
         ]);
         return reponseSucces_(
           enregistrerPaiementUnifie_(
@@ -348,6 +351,13 @@ function construirePaiementValide_(body) {
       forwardingDestinationCode === agenceEncaissement &&
       sourceDestinationCode !== forwardingDestinationCode &&
       forwardingReference !== "";
+  } else if (operationType === "STORAGE_DESTINATION_PAYMENT") {
+    circuitAutorise =
+      sourceDestinationCode === destinationCode &&
+      collectionSiteCode === agenceEncaissement &&
+      agenceEncaissement === destinationCode &&
+      forwardingDestinationCode === null &&
+      forwardingReference === "";
   } else {
     circuitAutorise = false;
   }
@@ -357,6 +367,19 @@ function construirePaiementValide_(body) {
       "AGENCE_INVALIDE",
       "Agence d’encaissement invalide."
     );
+  }
+
+  if (
+    operationType === "STORAGE_DESTINATION_PAYMENT" &&
+    (
+      convertirNombre_(body.canonicalWeightKg) <= 0 ||
+      convertirNombre_(body.canonicalExpectedAmount) <= 0 ||
+      convertirNombre_(body.canonicalTotalPaid) < 0 ||
+      convertirNombre_(body.canonicalTotalPaid) >= convertirNombre_(body.canonicalExpectedAmount) ||
+      arrondirMontant_(body.montantPaye) !== arrondirMontant_(convertirNombre_(body.canonicalExpectedAmount) - convertirNombre_(body.canonicalTotalPaid))
+    )
+  ) {
+    throw erreurPublique_("MONTANT_INVALIDE", "Montant Stockage invalide.");
   }
 
   if (
@@ -432,7 +455,10 @@ function construirePaiementValide_(body) {
     sourceDestinationCode: sourceDestinationCode,
     collectionSiteCode: collectionSiteCode,
     forwardingDestinationCode: forwardingDestinationCode,
-    forwardingReference: forwardingReference
+    forwardingReference: forwardingReference,
+    canonicalWeightKg: operationType === "STORAGE_DESTINATION_PAYMENT" ? convertirNombre_(body.canonicalWeightKg) : null,
+    canonicalExpectedAmount: operationType === "STORAGE_DESTINATION_PAYMENT" ? arrondirMontant_(convertirNombre_(body.canonicalExpectedAmount)) : null,
+    canonicalTotalPaid: operationType === "STORAGE_DESTINATION_PAYMENT" ? arrondirMontant_(convertirNombre_(body.canonicalTotalPaid)) : null
   };
 }
 
@@ -466,10 +492,15 @@ function enregistrerPaiementUnifie_(paiement) {
       );
     }
 
-    var colis = rechercherColisSource_(
-      paiement.sourceDestinationCode,
-      paiement.codeColis
-    );
+    var colis = paiement.operationType === "STORAGE_DESTINATION_PAYMENT"
+      ? {
+          codeColis: paiement.codeColis,
+          poidsKg: paiement.canonicalWeightKg,
+          montantAttendu: paiement.canonicalExpectedAmount,
+          dateColis: "",
+          statutColis: "ARRIVÉ"
+        }
+      : rechercherColisSource_(paiement.sourceDestinationCode, paiement.codeColis);
     if (!colis) {
       throw erreurPublique_(
         "COLIS_INTROUVABLE",
@@ -479,6 +510,8 @@ function enregistrerPaiementUnifie_(paiement) {
 
     var montantAttendu = paiement.operationType === "INTER_AGENCY_FORWARDING"
       ? paiement.montantPaye
+      : paiement.operationType === "STORAGE_DESTINATION_PAYMENT"
+      ? paiement.canonicalExpectedAmount
       : arrondirMontant_(convertirNombre_(colis.montantAttendu));
     if (montantAttendu <= 0) {
       throw erreurPublique_(
@@ -489,6 +522,8 @@ function enregistrerPaiementUnifie_(paiement) {
 
     var totalDejaPaye = paiement.operationType === "INTER_AGENCY_FORWARDING"
       ? 0
+      : paiement.operationType === "STORAGE_DESTINATION_PAYMENT"
+      ? paiement.canonicalTotalPaid
       : calculerTotalDejaPaye_(paiement.codeColis, paiement.destinationCode, classeur);
     var soldeAvant = arrondirMontant_(
       montantAttendu - totalDejaPaye
@@ -580,7 +615,7 @@ function enregistrerPaiementUnifie_(paiement) {
         : paiement.modePaiement,
       paiement.referencePaiement,
       valeurPublique_(colis.dateColis),
-      valeurPublique_(colis.statutColis),
+      normaliserStatutColisPourPaiement_(colis.statutColis),
       paiement.operationType === "INTER_AGENCY_FORWARDING"
         ? construireAuditAcheminement_(paiement)
         : paiement.observation,
@@ -614,6 +649,26 @@ function validerReferenceAcheminement_(value) {
     throw erreurPublique_("REQUETE_INVALIDE", "Référence d’acheminement invalide.");
   }
   return reference;
+}
+
+function normaliserStatutColisPourPaiement_(value) {
+  var statut = String(value || "").trim().toUpperCase();
+  var statutsAutorises = [
+    "EN ATTENTE",
+    "ENREGISTRÉ",
+    "EN VOL",
+    "EN TRANSIT",
+    "ARRIVÉ"
+  ];
+
+  if (statutsAutorises.indexOf(statut) === -1) {
+    throw erreurPublique_(
+      "STATUT_COLIS_INVALIDE",
+      "Le statut du colis est incompatible avec la feuille de paiement."
+    );
+  }
+
+  return statut;
 }
 
 function construireAuditAcheminement_(paiement) {

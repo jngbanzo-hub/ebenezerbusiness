@@ -1,10 +1,16 @@
 import "server-only";
 
-import { createHash, createHmac } from "crypto";
+import { createHmac } from "crypto";
 
 import { createClient } from "@supabase/supabase-js";
 
 import { resolveInterAgencyQuote } from "@/server/inter-agency-routing";
+import {
+  buildForwardingFingerprint,
+  selectForwardingResume,
+  type ForwardingResume,
+  type ForwardingResumeRow
+} from "@/server/stockages-forwarding-resume";
 import {
   businessDatePortoNovo,
   requireStorageAgency,
@@ -44,6 +50,37 @@ export async function readForwardingReadiness(destination: StorageAgency): Promi
   return Object.freeze({ ready: true, code: null });
 }
 
+export async function readForwardingResume(input: {
+  trackingCode: string;
+  origin: StorageAgency;
+  destination: StorageAgency;
+  amountExpectedUsd: number;
+  paymentMode: string;
+  optionalReference: string;
+  optionalObservation: string;
+  actorId: string;
+}): Promise<ForwardingResume | null> {
+  const expectedFingerprint = buildForwardingFingerprint({
+    trackingCode: input.trackingCode,
+    origin: input.origin,
+    destination: input.destination,
+    paymentMode: requiredText(input.paymentMode),
+    optionalReference: clean(input.optionalReference),
+    optionalObservation: clean(input.optionalObservation),
+    amountExpectedUsd: input.amountExpectedUsd
+  });
+  const { data, error } = await serviceClient()
+    .from("stockage_forwarding_orchestrations")
+    .select("request_id,command_fingerprint,actor_id,state")
+    .eq("original_tracking_code", input.trackingCode)
+    .eq("origin_agency", input.origin)
+    .eq("destination_agency", input.destination)
+    .in("state", ["PAYMENT_IN_PROGRESS", "PAID_AWAITING_ARRIVAL", "READY_FOR_DELIVERY", "DELIVERED", "ANOMALY_REQUIRES_ADMIN"])
+    .limit(2);
+  if (error) throw new StockagesV2Error("FORWARDING_SERVICE_UNAVAILABLE", 503);
+  return selectForwardingResume((data ?? []) as ForwardingResumeRow[], { actorId: input.actorId, expectedFingerprint });
+}
+
 export async function createInterAgencyForwarding(input: {
   trackingCode: string;
   origin: StorageAgency;
@@ -64,7 +101,7 @@ export async function createInterAgencyForwarding(input: {
   const paymentMode = requiredText(input.paymentMode);
   const optionalReference = clean(input.optionalReference);
   const optionalObservation = clean(input.optionalObservation);
-  const fingerprint = commandFingerprint({
+  const fingerprint = buildForwardingFingerprint({
     trackingCode: quote.trackingCode,
     origin: quote.origin,
     destination: quote.destination,
@@ -225,10 +262,6 @@ function serviceClient() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new StockagesV2Error("STORAGE_SERVICE_NOT_CONFIGURED", 503);
   return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } }).schema("public");
-}
-
-function commandFingerprint(value: Record<string, unknown>) {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 function mapError(message: string) {

@@ -9,10 +9,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getAllowedDestinations } from "@/features/agent/agencies";
 import { getAgentProfile, signOutAgent } from "@/features/agent/auth";
-import { AgentApiError, savePayment, searchParcel } from "@/features/agent/functions";
+import { AgentApiError, saveDestinationPayment, savePayment, searchDestinationParcel, searchParcel } from "@/features/agent/functions";
+import { AgentManifestControl } from "@/features/agent/agent-manifest-page";
 import {
+  acquireForwardingSubmissionLock,
   fingerprintForwardingIntent,
   getOrCreateForwardingAttempt,
+  restoreForwardingAttempt,
   transitionForwardingAttempt,
   type ForwardingAttempt,
   type ForwardingAttemptState
@@ -48,7 +51,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
       : ""
   );
   const [parcel, setParcel] = useState<Parcel | null>(null);
-  const [routingQuote, setRoutingQuote] = useState<{ trackingCode: string; routingReference: string; origin: string; destination: string; weightKg: number; rateUsdPerKg: number; amountExpectedUsd: number; readiness: { ready: boolean; code: string | null; message: string | null } } | null>(null);
+  const [routingQuote, setRoutingQuote] = useState<{ trackingCode: string; routingReference: string; origin: string; destination: string; weightKg: number; rateUsdPerKg: number; amountExpectedUsd: number; readiness: { ready: boolean; code: string | null; message: string | null }; resume: { state: string; resumable: boolean; paymentRequestId?: string } | null } | null>(null);
   const [parcelAction, setParcelAction] = useState<{ totalPaid: number; paymentSites: string[]; physicallyPresent: boolean; delivered: boolean; fullyPaidAtCooOnly: boolean } | null>(null);
   const [montantPaye, setMontantPaye] = useState("");
   const [modePaiement, setModePaiement] = useState<PaymentMode>("ESPECES");
@@ -66,6 +69,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
   const activeSearchIdRef = useRef(0);
   const paymentAttemptRef = useRef<PaymentAttempt | null>(null);
   const forwardingAttemptRef = useRef<ForwardingAttempt | null>(null);
+  const forwardingLockRef = useRef(false);
   const [forwardingState, setForwardingState] = useState<ForwardingAttemptState>("idle");
 
   const allowedPaymentAgencies = useMemo(
@@ -144,32 +148,23 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
 
     try {
       const normalizedCode = codeColis.trim().toUpperCase();
-      const response = await searchParcel({
-        destinationCode: sourceAgency,
-        codeColis: normalizedCode
-      });
+      const destinationAgency = profile.agence === "COTONOU" ? sourceAgency : profile.agence;
+      const response = profile.agence === "COTONOU"
+        ? await searchParcel({ destinationCode: sourceAgency, codeColis: normalizedCode })
+        : await searchDestinationParcel(normalizedCode);
       const foundParcel = parseParcelResponse(response);
       if (searchId !== activeSearchIdRef.current) return;
       if (
         foundParcel.codeColis.toUpperCase() !== normalizedCode ||
-        foundParcel.destinationCode !== sourceAgency
+        foundParcel.destinationCode !== destinationAgency
       ) {
         throw new Error("La réponse de recherche ne correspond pas au colis demandé.");
       }
       setParcel(foundParcel);
-      if (profile.agence !== "COTONOU" && sourceAgency !== profile.agence) {
-        try {
-          const quote = await loadInterAgencyQuote(foundParcel.codeColis, sourceAgency);
-          if (searchId !== activeSearchIdRef.current) return;
-          setRoutingQuote(quote);
-        } catch (error) {
-          setParcel(null);
-          throw error;
-        }
-      } else if (profile.agence !== "COTONOU") {
+      if (profile.agence !== "COTONOU") {
         setParcelAction(await loadParcelAction(foundParcel.codeColis));
       }
-      setMontantPaye("");
+      setMontantPaye(profile.agence === "COTONOU" ? "" : String(foundParcel.soldeRestant));
     } catch (error) {
       if (searchId === activeSearchIdRef.current) {
         setMessage({
@@ -237,10 +232,15 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
       paymentAttemptRef.current = attempt;
 
       setMessage(null);
-      const result = await savePayment({
-        ...paymentIntent,
-        paymentRequestId: attempt.paymentRequestId
-      });
+      const result = profile.agence === "COTONOU"
+        ? await savePayment({ ...paymentIntent, paymentRequestId: attempt.paymentRequestId })
+        : await saveDestinationPayment({
+            trackingCode: paymentIntent.codeColis,
+            paymentMode: paymentIntent.modePaiement,
+            paymentReference: paymentIntent.referencePaiement,
+            observation: paymentIntent.observation,
+            paymentRequestId: attempt.paymentRequestId
+          });
       paymentAttemptRef.current = null;
       setMessage({
         type: "success",
@@ -281,17 +281,31 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
 
   async function handleForwarding(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!routingQuote || !profile || !window.confirm(`Créer et encaisser l’acheminement ${routingQuote.routingReference} ?`)) return;
+    if (forwardingLockRef.current || !routingQuote || !profile || !window.confirm(`Créer et encaisser l’acheminement ${routingQuote.routingReference} ?`)) return;
     if (!routingQuote.readiness.ready) {
       setMessage({ type: "error", text: routingQuote.readiness.message ?? "L’acheminement ne peut pas être créé." });
       return;
     }
-    const fingerprint = fingerprintForwardingIntent({ trackingCode: routingQuote.trackingCode, sourceAgency: routingQuote.origin, paymentMode: modePaiement, optionalReference: referencePaiement, optionalObservation: observation });
-    const attempt = getOrCreateForwardingAttempt(forwardingAttemptRef.current, fingerprint);
-    forwardingAttemptRef.current = transitionForwardingAttempt(attempt, "submitting");
-    setForwardingState("submitting");
+    if (!acquireForwardingSubmissionLock(forwardingLockRef)) return;
     setIsSaving(true); setMessage(null);
+    let attempt: ForwardingAttempt | null = null;
     try {
+      const verifiedQuote = await loadInterAgencyQuote(routingQuote.trackingCode, routingQuote.origin as DestinationCode, {
+        paymentMode: modePaiement,
+        optionalReference: referencePaiement,
+        optionalObservation: observation
+      });
+      const fingerprint = fingerprintForwardingIntent({ trackingCode: verifiedQuote.trackingCode, sourceAgency: verifiedQuote.origin, paymentMode: modePaiement, optionalReference: referencePaiement, optionalObservation: observation });
+      if (verifiedQuote.resume && !verifiedQuote.resume.resumable) {
+        setForwardingState("success");
+        setMessage({ type: "success", text: `Cette opération est déjà au statut ${verifiedQuote.resume.state}. Aucun nouveau paiement n’a été créé.` });
+        return;
+      }
+      attempt = verifiedQuote.resume?.paymentRequestId
+        ? restoreForwardingAttempt(verifiedQuote.resume.paymentRequestId, fingerprint)
+        : getOrCreateForwardingAttempt(forwardingAttemptRef.current, fingerprint);
+      forwardingAttemptRef.current = transitionForwardingAttempt(attempt, "submitting");
+      setForwardingState("submitting");
       const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
       if (!session?.access_token) throw new Error("Session expirée.");
       const response = await fetch("/api/agent/stockages/forwardings", { method: "POST", headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" }, body: JSON.stringify({ trackingCode: routingQuote.trackingCode, sourceAgency: routingQuote.origin, paymentMode: modePaiement, optionalReference: referencePaiement, optionalObservation: observation, paymentRequestId: attempt.paymentRequestId }) });
@@ -307,13 +321,13 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
       setMessage({ type: "success", text: payload?.replayed ? "Acheminement déjà enregistré : rejeu idempotent." : `Acheminement ${payload?.forwardingReference ?? routingQuote.routingReference} créé. Son arrivage à destination reste à confirmer dans Stockages.` });
       setParcel(null); setRoutingQuote(null); setCodeColis(""); setReferencePaiement(""); setObservation("");
     } catch (error) {
-      if (forwardingAttemptRef.current?.state === "submitting") {
+      if (attempt && forwardingAttemptRef.current?.state === "submitting") {
         forwardingAttemptRef.current = transitionForwardingAttempt(attempt, "result_unknown_retry_same_id");
         setForwardingState("result_unknown_retry_same_id");
       }
       setMessage({ type: "error", text: error instanceof Error ? error.message : "Acheminement refusé." });
     }
-    finally { setIsSaving(false); }
+    finally { forwardingLockRef.current = false; setIsSaving(false); }
   }
 
   const parsedAmount = Number(montantPaye.replace(",", "."));
@@ -462,7 +476,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
 
               {!routingQuote ? <p className="mt-5 rounded-lg border border-accent/25 bg-accent/10 p-3 font-semibold text-accent">Statut : {parcelStatus(parcel, parcelAction)}</p> : null}
 
-              {routingQuote ? <form onSubmit={handleForwarding} className="mt-7 rounded-xl border border-accent/30 bg-accent/10 p-5"><h3 className="font-semibold text-accent">ACHEMINEMENT INTER-AGENCES</h3><p className="mt-2 text-sm">Référence : {routingQuote.routingReference}</p><p className="text-sm">Circuit : {routingQuote.origin} → {routingQuote.destination}</p><p className="text-sm">Poids canonique : {routingQuote.weightKg} kg · Tarif : {formatAmount(routingQuote.rateUsdPerKg)}/kg</p><p className="text-sm font-semibold">Montant attendu : {formatAmount(routingQuote.amountExpectedUsd)}</p>{!routingQuote.readiness.ready ? <p className="mt-3 rounded-md border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-200">{routingQuote.readiness.message}</p> : null}<div className="mt-4 grid gap-4 sm:grid-cols-2"><label className="text-sm font-medium">Mode de paiement<select value={modePaiement} onChange={(event)=>setModePaiement(event.target.value as PaymentMode)} className={fieldClassName}>{PAYMENT_MODES.map((mode)=><option key={mode} value={mode} className="bg-ebe-navy">{formatPaymentMode(mode)}</option>)}</select></label><label className="text-sm font-medium">Référence (facultative)<input value={referencePaiement} onChange={(event)=>setReferencePaiement(event.target.value)} className={fieldClassName}/></label><label className="text-sm font-medium sm:col-span-2">Observation (facultative)<input value={observation} onChange={(event)=>setObservation(event.target.value)} className={fieldClassName}/></label></div><Button type="submit" variant="growth" className="mt-4 w-full" disabled={isSaving || !routingQuote.readiness.ready}>{isSaving?"Enregistrement…":forwardingState==="result_unknown_retry_same_id"?"Vérifier le résultat avec la même demande":"Créer et encaisser l’acheminement"}</Button><p className="mt-3 text-xs text-muted-foreground">L’arrivage physique à destination reste manuel dans Stockages.</p></form> : parcel.soldeRestant > 0 ? <form onSubmit={handlePayment} className="mt-7 grid gap-5">
+              {routingQuote ? <form onSubmit={handleForwarding} className="mt-7 rounded-xl border border-accent/30 bg-accent/10 p-5"><h3 className="font-semibold text-accent">ACHEMINEMENT INTER-AGENCES</h3><p className="mt-2 text-sm">Référence : {routingQuote.routingReference}</p><p className="text-sm">Circuit : {routingQuote.origin} → {routingQuote.destination}</p><p className="text-sm">Poids canonique : {routingQuote.weightKg} kg · Tarif : {formatAmount(routingQuote.rateUsdPerKg)}/kg</p><p className="text-sm font-semibold">Montant attendu : {formatAmount(routingQuote.amountExpectedUsd)}</p>{routingQuote.resume?.resumable ? <p className="mt-3 rounded-md border border-accent/30 bg-accent/10 p-3 text-sm text-accent">Une opération interrompue a été retrouvée. La reprise utilisera automatiquement la demande existante.</p> : null}{routingQuote.resume && !routingQuote.resume.resumable ? <p className="mt-3 rounded-md border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-200">Cette opération est déjà au statut {routingQuote.resume.state}. Aucun nouveau paiement n’est autorisé.</p> : null}{!routingQuote.readiness.ready ? <p className="mt-3 rounded-md border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-200">{routingQuote.readiness.message}</p> : null}<div className="mt-4 grid gap-4 sm:grid-cols-2"><label className="text-sm font-medium">Mode de paiement<select value={modePaiement} onChange={(event)=>setModePaiement(event.target.value as PaymentMode)} className={fieldClassName}>{PAYMENT_MODES.map((mode)=><option key={mode} value={mode} className="bg-ebe-navy">{formatPaymentMode(mode)}</option>)}</select></label><label className="text-sm font-medium">Référence (facultative)<input value={referencePaiement} onChange={(event)=>setReferencePaiement(event.target.value)} className={fieldClassName}/></label><label className="text-sm font-medium sm:col-span-2">Observation (facultative)<input value={observation} onChange={(event)=>setObservation(event.target.value)} className={fieldClassName}/></label></div><Button type="submit" variant="growth" className="mt-4 w-full" disabled={isSaving || !routingQuote.readiness.ready || Boolean(routingQuote.resume && !routingQuote.resume.resumable)}>{isSaving?"Enregistrement…":forwardingState==="result_unknown_retry_same_id"?"Reprendre avec la même demande":"Créer et encaisser l’acheminement"}</Button><p className="mt-3 text-xs text-muted-foreground">L’arrivage physique à destination reste manuel dans Stockages.</p></form> : parcel.soldeRestant > 0 ? <form onSubmit={handlePayment} className="mt-7 grid gap-5">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className="text-sm font-medium">
                     Montant payé
@@ -474,6 +488,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
                       step="0.01"
                       required
                       disabled={parcel.soldeRestant <= 0}
+                      readOnly={profile?.agence !== "COTONOU"}
                       value={montantPaye}
                       onChange={(event) => setMontantPaye(event.target.value)}
                       className={fieldClassName}
@@ -523,6 +538,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
             </GlassPanel>
           ) : null}
         </div>
+        <AgentManifestControl />
       </Container>
     </main>
   );
@@ -542,14 +558,14 @@ function getExactBalance(parcel: Parcel): number | null {
     : null;
 }
 
-async function loadInterAgencyQuote(trackingCode: string, sourceAgency: DestinationCode) {
+async function loadInterAgencyQuote(trackingCode: string, sourceAgency: DestinationCode, intent: { paymentMode: PaymentMode; optionalReference: string; optionalObservation: string }) {
   const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
   if (!session?.access_token) throw new Error("Session expirée.");
-  const params = new URLSearchParams({ trackingCode, sourceAgency });
+  const params = new URLSearchParams({ trackingCode, sourceAgency, paymentMode: intent.paymentMode, optionalReference: intent.optionalReference.trim(), optionalObservation: intent.optionalObservation.trim() });
   const response = await fetch(`/api/agent/inter-agency-routing/quote?${params}`, { headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store" });
-  const payload = await response.json().catch(() => null) as { quote?: { trackingCode: string; routingReference: string; origin: string; destination: string; weightKg: number; rateUsdPerKg: number; amountExpectedUsd: number }; readiness?: { ready: boolean; code: string | null; message: string | null }; code?: string; message?: string } | null;
+  const payload = await response.json().catch(() => null) as { quote?: { trackingCode: string; routingReference: string; origin: string; destination: string; weightKg: number; rateUsdPerKg: number; amountExpectedUsd: number }; resume?: { state: string; resumable: boolean; paymentRequestId?: string } | null; readiness?: { ready: boolean; code: string | null; message: string | null }; code?: string; message?: string } | null;
   if (!response.ok || !payload?.quote) throw new Error(`${payload?.code ?? `HTTP_${response.status}`} — ${payload?.message ?? "Acheminement indisponible."}`);
-  return { ...payload.quote, readiness: payload.readiness ?? { ready: false, code: "FORWARDING_SERVICE_UNAVAILABLE", message: "Le service d’acheminement est indisponible." } };
+  return { ...payload.quote, resume: payload.resume ?? null, readiness: payload.readiness ?? { ready: false, code: "FORWARDING_SERVICE_UNAVAILABLE", message: "Le service d’acheminement est indisponible." } };
 }
 
 async function loadParcelAction(trackingCode: string) { const { data: { session } } = await getSupabaseBrowserClient().auth.getSession(); if (!session?.access_token) throw new Error("Session expirée."); const response=await fetch(`/api/agent/stockages/payment-action?trackingCode=${encodeURIComponent(trackingCode)}`,{headers:{Authorization:`Bearer ${session.access_token}`},cache:"no-store"}); const payload=await response.json().catch(()=>null) as {action?:{totalPaid:number;paymentSites:string[];physicallyPresent:boolean;delivered:boolean;fullyPaidAtCooOnly:boolean};message?:string}|null; if(!response.ok||!payload?.action)throw new Error(payload?.message??"Situation indisponible."); return payload.action; }

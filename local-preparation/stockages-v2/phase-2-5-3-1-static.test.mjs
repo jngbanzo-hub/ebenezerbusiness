@@ -14,7 +14,7 @@ test("la feuille recherchée est l’origine et l’agence authentifiée est la 
   assert.match(route, /const destination = requireStorageAgency\(auth\.identity\.site\)/);
   assert.match(route, /destination\s*\n/);
   assert.match(routing, /row\.sourceSite === input\.origin/);
-  assert.match(workspace, /new URLSearchParams\(\{ trackingCode, sourceAgency \}\)/);
+  assert.match(workspace, /new URLSearchParams\(\{ trackingCode, sourceAgency, paymentMode:/);
   assert.doesNotMatch(route, /url\.searchParams\.get\("destination"\)/);
 });
 
@@ -48,8 +48,9 @@ test("une seule recherche active et une seule réponse courante peuvent modifier
   assert.match(workspace, /searchId !== activeSearchIdRef\.current/);
 });
 
-test("un échec de devis retire le colis source et empêche le formulaire normal", () => {
-  assert.match(workspace, /const quote = await loadInterAgencyQuote[\s\S]*setRoutingQuote\(quote\)[\s\S]*catch \(error\) \{\s*setParcel\(null\)/);
+test("un échec de recherche Stockage retire le colis et empêche le formulaire de paiement", () => {
+  assert.match(workspace, /setParcel\(null\)[\s\S]*try \{[\s\S]*await searchDestinationParcel/);
+  assert.match(workspace, /\{parcel \? \([\s\S]*Enregistrer le paiement/);
 });
 
 test("le succès affiche uniquement les données propres à l’acheminement", () => {

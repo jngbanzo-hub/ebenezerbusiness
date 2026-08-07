@@ -20,6 +20,10 @@ test("le paiement total utilise un registre durable avant Apps Script et reprend
 });
 
 test("la finalisation verrouille colis puis compte et empêche le stock négatif", () => {
+  const begin = sql.slice(sql.indexOf("create or replace function public.begin_paid_destination_orchestration"), sql.indexOf("create or replace function public.checkpoint_paid_destination_payment"));
+  assert.match(begin, /stockage_parcels where tracking_code=v_code and agency=v_agency for update/);
+  assert.match(begin, /delivery_status<>'AVAILABLE'.*PARCEL_NOT_IN_STOCK/s);
+  assert.ok(begin.indexOf("PARCEL_NOT_IN_STOCK") < edge.indexOf("fetch(appsScriptUrl"));
   assert.match(sql, /stockage_parcels where tracking_code=v_row\.tracking_code for update/);
   assert.match(sql, /stockage_accounts where agency=v_row\.agency for update/);
   assert.match(sql, /current_parcel_count>=1 and current_weight_kg>=v_parcel\.canonical_weight_kg/);

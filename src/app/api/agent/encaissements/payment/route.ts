@@ -1,0 +1,31 @@
+import { NextResponse } from "next/server";
+
+import { authorizeAgentRequest } from "@/server/agent-authorization";
+import { recordDestinationPayment } from "@/server/destination-payment-parcel";
+import { requireStorageAgency, StockagesV2Error } from "@/server/stockages-v2";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+const ALLOWED = new Set(["trackingCode", "paymentMode", "paymentReference", "observation", "paymentRequestId"]);
+
+export async function POST(request: Request) {
+  try {
+    const auth = await authorizeAgentRequest(request);
+    if (!auth.authorized) return fail("ACCESS_DENIED", auth.status);
+    const body = await request.json() as Record<string, unknown>;
+    if (Object.keys(body).some((key) => !ALLOWED.has(key))) return fail("INVALID_PAYMENT_COMMAND", 400);
+    const result = await recordDestinationPayment({
+      trackingCode: String(body.trackingCode ?? ""),
+      agency: requireStorageAgency(auth.identity.site),
+      paymentMode: String(body.paymentMode ?? ""),
+      paymentReference: String(body.paymentReference ?? ""),
+      observation: String(body.observation ?? ""),
+      paymentRequestId: String(body.paymentRequestId ?? ""),
+      agentAccessToken: (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "")
+    });
+    return NextResponse.json(result, { status: 200 });
+  } catch (cause) {
+    return cause instanceof StockagesV2Error ? fail(cause.code, cause.status) : fail("AGENT_SERVICE_UNAVAILABLE", 503);
+  }
+}
+function fail(code: string, status: number) { return NextResponse.json({ success: false, code, message: code === "PARCEL_NOT_IN_AGENCY_STORAGE" ? "Ce colis n’est pas présent dans le Stockage de votre agence." : "Paiement refusé." }, { status }); }

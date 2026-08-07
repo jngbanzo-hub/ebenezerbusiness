@@ -109,7 +109,7 @@ alter table public.stockage_anomalies add constraint stockage_anomalies_type_che
  'PARCEL_NOT_IN_STOCK','PAYMENT_ORCHESTRATION_INCOMPLETE'));
 
 create or replace function public.begin_paid_destination_orchestration(p_request_id uuid,p_command_fingerprint text,p_tracking_code text,p_agency text,p_expected_amount numeric,p_paid_amount numeric,p_actor_id uuid) returns jsonb language plpgsql security definer set search_path=pg_catalog,public,extensions as $$
-declare v_agent public.agents%rowtype; v_existing public.stockage_payment_orchestrations%rowtype; v_agency text:=upper(btrim(p_agency)); v_code text:=upper(btrim(p_tracking_code));
+declare v_agent public.agents%rowtype; v_existing public.stockage_payment_orchestrations%rowtype; v_parcel public.stockage_parcels%rowtype; v_account public.stockage_accounts%rowtype; v_agency text:=upper(btrim(p_agency)); v_code text:=upper(btrim(p_tracking_code));
 begin
  select * into v_agent from public.agents where id=p_actor_id;
  if not found or v_agent.actif is not true or upper(btrim(v_agent.role))<>'AGENT' then raise exception 'ACTIVE_AGENT_REQUIRED'; end if;
@@ -117,7 +117,12 @@ begin
  if p_request_id is null or p_command_fingerprint !~ '^[0-9a-f]{64}$' or v_code !~ '^[A-Z0-9][A-Z0-9._/-]{1,63}$' or p_expected_amount<=0 or p_paid_amount<>p_expected_amount then raise exception 'INVALID_PAID_EXIT_COMMAND'; end if;
  select * into v_existing from public.stockage_payment_orchestrations where request_id=p_request_id for update;
  if found then update public.stockage_payment_orchestrations set attempt_count=attempt_count+1,updated_at=clock_timestamp() where request_id=p_request_id; if v_existing.command_fingerprint<>p_command_fingerprint then raise exception 'IDEMPOTENCY_CONFLICT'; end if; return jsonb_build_object('state',v_existing.state,'paymentCreated',v_existing.payment_created,'paymentResponse',v_existing.payment_response,'replayed',v_existing.state='COMPLETED','eventId',v_existing.stockage_event_id); end if;
- if not exists(select 1 from public.stockage_accounts where agency=v_agency and status='ACTIVE') then raise exception 'STORAGE_ACCOUNT_NOT_ACTIVE'; end if;
+ select * into v_parcel from public.stockage_parcels where tracking_code=v_code and agency=v_agency for update;
+ if not found or v_parcel.delivery_status<>'AVAILABLE' then raise exception 'PARCEL_NOT_IN_STOCK'; end if;
+ if v_parcel.canonical_weight_kg is null or v_parcel.canonical_weight_kg<=0 then raise exception 'INVALID_CANONICAL_WEIGHT'; end if;
+ select * into v_account from public.stockage_accounts where agency=v_agency for update;
+ if not found or v_account.status<>'ACTIVE' then raise exception 'STORAGE_ACCOUNT_NOT_ACTIVE'; end if;
+ if v_account.current_parcel_count<1 or v_account.current_weight_kg<v_parcel.canonical_weight_kg then raise exception 'STOCK_INSUFFICIENT'; end if;
  if not exists(select 1 from public.cash_accounts where agency=v_agency and status='ACTIVE') then raise exception 'CASH_ACCOUNT_NOT_ACTIVE'; end if;
  insert into public.stockage_payment_orchestrations(request_id,command_fingerprint,tracking_code,agency,actor_id,actor_name,expected_amount,paid_amount) values(p_request_id,p_command_fingerprint,v_code,v_agency,p_actor_id,btrim(v_agent.nom),p_expected_amount,p_paid_amount);
  return jsonb_build_object('state','PENDING','paymentCreated',false,'replayed',false);

@@ -16,6 +16,7 @@ type ErrorCode =
   | "MONTANT_SUPERIEUR_SOLDE"
   | "PAIEMENT_PARTIEL_INTERDIT"
   | "PAIEMENT_REFUSE"
+  | "STATUT_COLIS_INVALIDE"
   | "IDEMPOTENCY_CONFLICT"
   | "PARCEL_NOT_IN_STOCK"
   | "STOCK_INSUFFICIENT"
@@ -43,6 +44,7 @@ type PaymentInput = {
 
 type PaymentOperationContext =
   | { type: "STANDARD_PAYMENT"; sourceDestinationCode: string; collectionSiteCode: string }
+  | { type: "STORAGE_DESTINATION_PAYMENT"; sourceDestinationCode: string; collectionSiteCode: string; canonicalWeightKg: number; canonicalExpectedAmount: number; canonicalTotalPaid: number }
   | { type: "INTER_AGENCY_FORWARDING"; sourceDestinationCode: string; collectionSiteCode: string; forwardingDestinationCode: string; forwardingReference: string };
 
 type PublicPaymentResponse = {
@@ -157,6 +159,11 @@ const PUBLIC_UPSTREAM_ERRORS: Readonly<
     status: 400,
     defaultMessage: "Le paiement a été refusé.",
   },
+  STATUT_COLIS_INVALIDE: {
+    status: 400,
+    defaultMessage:
+      "Le statut du colis est incompatible avec la feuille de paiement.",
+  },
 };
 
 Deno.serve(async (request: Request): Promise<Response> => {
@@ -240,12 +247,15 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
     const destinationCode = paymentInput.operationContext.sourceDestinationCode;
     const isInterAgencyForwarding = paymentInput.operationContext.type === "INTER_AGENCY_FORWARDING";
+    const isStorageDestinationPayment = paymentInput.operationContext.type === "STORAGE_DESTINATION_PAYMENT";
     const routeAutorisee =
       isInterAgencyForwarding
         ? paymentInput.operationContext.collectionSiteCode === agenceEncaissement &&
           paymentInput.operationContext.forwardingDestinationCode === agenceEncaissement &&
           destinationCode !== agenceEncaissement &&
           ["FIH", "LSHI", "KLZ"].includes(agenceEncaissement)
+        : isStorageDestinationPayment
+        ? agenceEncaissement === destinationCode && ["FIH", "LSHI", "KLZ"].includes(agenceEncaissement)
         : agenceEncaissement === "COO"
         ? ["FIH", "LSHI", "KLZ"].includes(destinationCode)
         : agenceEncaissement === destinationCode;
@@ -350,6 +360,14 @@ Deno.serve(async (request: Request): Promise<Response> => {
         appsScriptPayload.collectionSiteCode = paymentInput.operationContext.collectionSiteCode;
         appsScriptPayload.forwardingDestinationCode = paymentInput.operationContext.forwardingDestinationCode;
         appsScriptPayload.forwardingReference = paymentInput.operationContext.forwardingReference;
+      }
+      if (isStorageDestinationPayment) {
+        appsScriptPayload.operationType = paymentInput.operationContext.type;
+        appsScriptPayload.sourceDestinationCode = paymentInput.operationContext.sourceDestinationCode;
+        appsScriptPayload.collectionSiteCode = paymentInput.operationContext.collectionSiteCode;
+        appsScriptPayload.canonicalWeightKg = paymentInput.operationContext.canonicalWeightKg;
+        appsScriptPayload.canonicalExpectedAmount = paymentInput.operationContext.canonicalExpectedAmount;
+        appsScriptPayload.canonicalTotalPaid = paymentInput.operationContext.canonicalTotalPaid;
       }
 
       appsScriptPayload.paymentRequestId = paymentInput.paymentRequestId;
@@ -657,7 +675,17 @@ function normalizeOperationContext(
     if (!standardDestination) return null;
     return { type: "STANDARD_PAYMENT", sourceDestinationCode: standardDestination, collectionSiteCode: authenticatedCollectionSite };
   }
-  if (!isRecord(value) || value.type !== "INTER_AGENCY_FORWARDING") return null;
+  if (!isRecord(value)) return null;
+  if (value.type === "STORAGE_DESTINATION_PAYMENT") {
+    const source = normalizePaymentDestination(value.sourceDestinationCode);
+    const collection = normalizePaymentDestination(value.collectionSiteCode);
+    const canonicalWeightKg = normalizeAmount(value.canonicalWeightKg);
+    const canonicalExpectedAmount = normalizeAmount(value.canonicalExpectedAmount);
+    const canonicalTotalPaid = normalizeNonNegativeAmount(value.canonicalTotalPaid);
+    if (!source || !collection || source !== collection || collection !== authenticatedCollectionSite || canonicalWeightKg === null || canonicalExpectedAmount === null || canonicalTotalPaid === null || canonicalTotalPaid >= canonicalExpectedAmount) return null;
+    return { type: "STORAGE_DESTINATION_PAYMENT", sourceDestinationCode: source, collectionSiteCode: collection, canonicalWeightKg, canonicalExpectedAmount, canonicalTotalPaid };
+  }
+  if (value.type !== "INTER_AGENCY_FORWARDING") return null;
   const source = normalizePaymentDestination(value.sourceDestinationCode);
   const collection = normalizePaymentDestination(value.collectionSiteCode);
   const destination = normalizePaymentDestination(value.forwardingDestinationCode);
@@ -729,6 +757,10 @@ function normalizeAmount(value: unknown): number | null {
   if (value <= 0 || value > 1_000_000_000) return null;
   const rounded = Math.round(value * 100) / 100;
   return Math.abs(value - rounded) < 1e-9 ? rounded : null;
+}
+
+function normalizeNonNegativeAmount(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && Math.round(value * 100) === value * 100 ? value : null;
 }
 
 function normalizeOptionalText(

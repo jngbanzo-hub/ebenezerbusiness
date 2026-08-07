@@ -596,6 +596,26 @@ test("36 message Apps Script non sûr non exposé", async () => {
   );
 });
 
+test("36b statut colis invalide propagé sans refus générique", async () => {
+  reset();
+  runtime.upstream = new Response(
+    JSON.stringify({
+      success: false,
+      code: "STATUT_COLIS_INVALIDE",
+      message: "détail amont non exposable",
+    }),
+    { status: 200 }
+  );
+  const result = await json(await paymentHandler(paymentRequest()));
+  assert.equal(result.status, 400);
+  assert.equal(result.body.error, "STATUT_COLIS_INVALIDE");
+  assert.equal(
+    result.body.message,
+    "Le statut du colis est incompatible avec la feuille de paiement."
+  );
+  assert.equal(JSON.stringify(result.body).includes("détail amont"), false);
+});
+
 test("37 expiration de session correctement signalée", async () => {
   reset();
   runtime.authInvalid = true;
