@@ -14,6 +14,7 @@ import {
 import { GlassPanel } from "@/components/design-system";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { formatWeight } from "@/lib/format-weight";
 import {
   AdminShippersApiError,
   hasVisibleShipperAnomalies,
@@ -593,12 +594,6 @@ function ShipperTableCell({
       {children}
     </td>
   );
-}
-
-function formatWeight(value: number) {
-  return `${new Intl.NumberFormat("fr-FR", {
-    maximumFractionDigits: 2
-  }).format(value)} kg`;
 }
 
 function formatDateKey(dateKey: string) {

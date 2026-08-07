@@ -182,9 +182,7 @@ export function formatAdminAmount(value: number) {
 }
 
 export function formatAdminWeight(value: number) {
-  return `${new Intl.NumberFormat("fr-FR", {
-    maximumFractionDigits: 2
-  }).format(value)} kg`;
+  return formatWeight(value);
 }
 
 export function formatAdminDateTime(value: string) {
@@ -338,3 +336,4 @@ function roundAmount(value: number) {
 function roundWeight(value: number) {
   return Math.round((value + Number.EPSILON) * 1000) / 1000;
 }
+import { formatWeight } from "@/lib/format-weight";

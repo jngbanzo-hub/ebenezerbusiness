@@ -17,6 +17,7 @@ import {
 import { Container, GlassPanel } from "@/components/design-system";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { formatWeight } from "@/lib/format-weight";
 import { getAdminProfile, signOutAgent } from "@/features/agent/auth";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import {
@@ -238,7 +239,7 @@ function InitialBalancesSection({ status }: { status: AdminStockagesStatusRespon
       <div className="overflow-x-auto">
         <table className="w-full min-w-[900px] text-left text-sm">
           <thead className="text-muted-foreground"><tr>{["Agence", "Statut", "Activation", "Colis initiaux", "Kg initiaux", "Validé par", "Validation"].map((value) => <th key={value} className="pb-3 pr-4">{value}</th>)}</tr></thead>
-          <tbody>{status.initialBalances.map((row) => <tr key={row.site} className="border-t border-white/10"><td className="py-3 pr-4 font-medium">{SITE_LABELS[row.site]}</td><td className="pr-4">{row.status ?? UNAVAILABLE}</td><td className="pr-4">{row.activationDate ?? UNAVAILABLE}</td><td className="pr-4">{row.initialParcels ?? UNAVAILABLE}</td><td className="pr-4">{row.initialKilograms ?? UNAVAILABLE}</td><td className="pr-4">{row.validatedBy ?? "—"}</td><td>{row.validatedAt ?? "—"}</td></tr>)}</tbody>
+          <tbody>{status.initialBalances.map((row) => <tr key={row.site} className="border-t border-white/10"><td className="py-3 pr-4 font-medium">{SITE_LABELS[row.site]}</td><td className="pr-4">{row.status ?? UNAVAILABLE}</td><td className="pr-4">{row.activationDate ?? UNAVAILABLE}</td><td className="pr-4">{row.initialParcels ?? UNAVAILABLE}</td><td className="pr-4">{row.initialKilograms === null ? UNAVAILABLE : formatWeight(row.initialKilograms)}</td><td className="pr-4">{row.validatedBy ?? "—"}</td><td>{row.validatedAt ?? "—"}</td></tr>)}</tbody>
         </table>
       </div>
     </Section>
@@ -252,7 +253,7 @@ function AgencyStocksSection({ status }: { status: AdminStockagesStatusResponse 
         {status.agencyStocks.map((stock) => (
           <div key={stock.site} className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
             <h3 className="font-semibold">{SITE_LABELS[stock.site]}</h3>
-            {!stock.available ? <p className="mt-3 text-sm text-muted-foreground">{UNAVAILABLE}</p> : <dl className="mt-3 grid grid-cols-2 gap-2 text-sm"><Metric label="Initial" value={`${stock.initialParcels ?? "—"} colis · ${stock.initialKilograms ?? "—"} kg`} /><Metric label="Entrées" value={`${stock.inboundParcels ?? "—"} colis · ${stock.inboundKilograms ?? "—"} kg`} /><Metric label="Sorties" value={`${stock.outboundParcels ?? "—"} colis · ${stock.outboundKilograms ?? "—"} kg`} /><Metric label="Ajustements" value={`${stock.adjustmentParcels ?? "—"} colis · ${stock.adjustmentKilograms ?? "—"} kg`} /><Metric label="Final" value={`${stock.finalParcels ?? "—"} colis · ${stock.finalKilograms ?? "—"} kg`} /><Metric label="Statut" value={stock.status ?? "—"} /></dl>}
+            {!stock.available ? <p className="mt-3 text-sm text-muted-foreground">{UNAVAILABLE}</p> : <dl className="mt-3 grid grid-cols-2 gap-2 text-sm"><Metric label="Initial" value={`${stock.initialParcels ?? "—"} colis · ${weightOrDash(stock.initialKilograms)}`} /><Metric label="Entrées" value={`${stock.inboundParcels ?? "—"} colis · ${weightOrDash(stock.inboundKilograms)}`} /><Metric label="Sorties" value={`${stock.outboundParcels ?? "—"} colis · ${weightOrDash(stock.outboundKilograms)}`} /><Metric label="Ajustements" value={`${stock.adjustmentParcels ?? "—"} colis · ${weightOrDash(stock.adjustmentKilograms)}`} /><Metric label="Final" value={`${stock.finalParcels ?? "—"} colis · ${weightOrDash(stock.finalKilograms)}`} /><Metric label="Statut" value={stock.status ?? "—"} /></dl>}
           </div>
         ))}
       </div>
@@ -310,6 +311,10 @@ function Section({ title, icon: Icon, children }: { title: string; icon: typeof 
 
 function Metric({ label, value }: { label: string; value: string }) {
   return <div><dt className="text-muted-foreground">{label}</dt><dd className="font-medium">{value}</dd></div>;
+}
+
+function weightOrDash(value: number | null) {
+  return value === null ? "—" : formatWeight(value);
 }
 
 function DataList({ rows, empty }: { rows: string[]; empty: string }) {

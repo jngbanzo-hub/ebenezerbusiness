@@ -12,10 +12,10 @@ const ANOMALY_LABELS: Readonly<Record<string, string>> = Object.freeze({
 });
 
 export function formatStockageWeight(value: number): string {
-  if (!Number.isFinite(value)) return "Poids indisponible";
-  return `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 3 }).format(value)} kg`;
+  return formatWeight(value);
 }
 
 export function formatStockageAnomalies(codes: readonly string[]): string[] {
   return codes.map((code) => ANOMALY_LABELS[code] ?? "Vérification métier nécessaire");
 }
+import { formatWeight } from "@/lib/format-weight";

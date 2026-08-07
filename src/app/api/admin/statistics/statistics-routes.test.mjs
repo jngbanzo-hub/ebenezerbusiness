@@ -19,5 +19,6 @@ test("les validations serveur couvrent tous les filtres et la pagination", () =>
   assert.doesNotMatch(manifest, /month\s*&&\s*!year/);
   assert.match(manifest, /month:\s*month\s*\|\|\s*undefined/);
   for (const field of ["from", "to", "year", "month", "company", "destination", "status", "arrival", "search", "page", "pageSize"]) assert.match(shipments, new RegExp(field));
+  assert.match(shipments, /resolveShipmentDateRange/);
   assert.match(manifest, /readParcelStatusRows/); assert.match(shipments, /Page invalide/);
 });

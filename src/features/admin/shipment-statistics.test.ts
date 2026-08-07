@@ -19,3 +19,20 @@ test("filtre arrivée, recherche et période avec des totaux cohérents", () => 
   assert.equal(arrived.shipments.length, 1); assert.equal(arrived.totals.weightKg, 10); assert.equal(arrived.totals.parcels, 2);
   assert.equal(filterShipmentStatistics(parsed.shipments, { arrival: "NOT_ARRIVED" }).shipments.length, 1);
 });
+
+test("combine mois, destination, compagnie, statut et arrivée", () => {
+  const parsed = parseShipmentStatistics([
+    ["Date"],
+    ["15/04/2026", "ASKY", "KLZ", 1, 8.5, "APR-KLZ", 5, 42.5, "8.5", "1 COLIS", "Arrivé", "16/04/2026", "APR-KLZ"],
+    ["18/04/2026", "DHL", "FIH", 1, 3.25, "APR-FIH", 5, 16.25, "3.25", "1 COLIS", "En Attente", "", ""],
+    ["15/06/2026", "ASKY", "KLZ", 1, 10, "JUN-KLZ", 5, 50, "10", "1 COLIS", "Arrivé", "16/06/2026", "JUN-KLZ"]
+  ]);
+
+  const april = filterShipmentStatistics(parsed.shipments, { from: "2026-04-01", to: "2026-04-30" });
+  assert.equal(april.shipments.length, 2);
+  assert.equal(filterShipmentStatistics(parsed.shipments, { from: "2026-04-01", to: "2026-04-30", destination: "KLZ" }).shipments.length, 1);
+  assert.equal(filterShipmentStatistics(parsed.shipments, { from: "2026-04-01", to: "2026-04-30", company: "ASKY" }).shipments.length, 1);
+  assert.equal(filterShipmentStatistics(parsed.shipments, { from: "2026-04-01", to: "2026-04-30", status: "ARRIVE" }).shipments.length, 1);
+  assert.equal(filterShipmentStatistics(parsed.shipments, { from: "2026-04-01", to: "2026-04-30", arrival: "ARRIVED" }).shipments.length, 1);
+  assert.equal(filterShipmentStatistics(parsed.shipments, { from: "2026-04-01", to: "2026-04-30", destination: "KLZ", company: "ASKY", status: "ARRIVE", arrival: "ARRIVED" }).shipments.length, 1);
+});
