@@ -171,17 +171,26 @@ Deno.serve(async (request: Request): Promise<Response> => {
         return errorResponse("COLIS_INTROUVABLE", 404);
       }
       if (!upstreamResponse.ok || upstreamPayload === null) {
+        console.error("SEARCH_UPSTREAM_UNAVAILABLE", {
+          status: upstreamResponse.status,
+        });
         return errorResponse("SERVICE_INDISPONIBLE", 503);
       }
 
       const colis = sanitizeColis(upstreamPayload, destinationCode, codeColis);
       if (!colis) {
+        console.error("SEARCH_UPSTREAM_CONTRACT_INVALID", {
+          status: upstreamResponse.status,
+        });
         return errorResponse("SERVICE_INDISPONIBLE", 503);
       }
 
       // Seule cette projection explicitement autorisée quitte la fonction.
       return jsonResponse(colis, 200);
-    } catch {
+    } catch (error) {
+      console.error("SEARCH_UPSTREAM_REQUEST_FAILED", {
+        errorType: error instanceof Error ? error.name : "UnknownError",
+      });
       return errorResponse("SERVICE_INDISPONIBLE", 503);
     } finally {
       clearTimeout(timeout);
@@ -276,8 +285,13 @@ function sanitizeColis(
     readText(candidate.destinationNom) ?? DESTINATION_NOM[authorizedDestination];
   const poidsKg = readNumber(candidate.poidsKg);
   const montantAttendu = readNumber(candidate.montantAttendu);
-  const montantDejaPaye = readNumber(candidate.montantDejaPaye);
-  const soldeRestant = readNumber(candidate.soldeRestant);
+  // Apps Script V14 utilisait montantDejaPaye/soldeRestant. Le contrat V15
+  // expose montantPaye/solde. Les deux formes sont normalisées vers le contrat
+  // public historique du site sans modifier les règles métier.
+  const montantDejaPaye = readNumber(
+    candidate.montantDejaPaye ?? candidate.montantPaye,
+  );
+  const soldeRestant = readNumber(candidate.soldeRestant ?? candidate.solde);
   const statutColis = readText(candidate.statutColis);
 
   // Empêche une réponse amont de substituer un autre colis ou une autre destination.

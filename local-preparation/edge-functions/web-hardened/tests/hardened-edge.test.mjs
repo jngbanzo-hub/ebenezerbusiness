@@ -637,6 +637,33 @@ test("44 réponse de recherche interprétable par le site actuel", async () => {
   }
 });
 
+test("44b réponse Apps Script V15 normalisée vers le contrat historique du site", async () => {
+  reset(agentProfile("KLZ"));
+  runtime.upstream = new Response(
+    JSON.stringify({
+      ok: true,
+      data: {
+        codeColis: "COLIS-001",
+        dateColis: "2026-08-07",
+        destinationCode: "FIH",
+        destinationNom: "Kinshasa",
+        poidsKg: 1,
+        montantAttendu: 9,
+        montantPaye: 0,
+        solde: 9,
+        statutColis: "EN ATTENTE"
+      }
+    }),
+    { status: 200 }
+  );
+  const result = await json(await searchHandler(searchRequest("FIH")));
+  assert.equal(result.status, 200);
+  assert.equal(result.body.montantDejaPaye, 0);
+  assert.equal(result.body.soldeRestant, 9);
+  assert.equal(result.body.poidsKg, 1);
+  assert.equal(result.body.statutColis, "EN ATTENTE");
+});
+
 test("45 colis introuvable interprétable par le site actuel", async () => {
   reset();
   runtime.upstream = new Response(
