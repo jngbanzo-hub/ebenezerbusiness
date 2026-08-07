@@ -49,6 +49,25 @@ test("respecte destination, statut et période d'enregistrement", () => {
   assert.equal(buildParcelStatusSituation(rows, { fromMonth: "2027-01" }).rows.length, 0);
 });
 
+test("le mois est autonome et se combine avec les autres filtres", () => {
+  const monthlyRows: RawParcelStatusRow[] = [
+    { destination: "FIH", rowNumber: 2, dateRaw: "2026-01-10", codeRaw: "JAN", weightRaw: 1, statusRaw: "En attente" },
+    { destination: "FIH", rowNumber: 3, dateRaw: "2026-04-10", codeRaw: "APR-FIH", weightRaw: 2, statusRaw: "En vol" },
+    { destination: "KLZ", rowNumber: 2, dateRaw: "2026-04-11", codeRaw: "APR-KLZ", weightRaw: 3, statusRaw: "Arrivé" },
+    { destination: "KLZ", rowNumber: 3, dateRaw: "2025-04-11", codeRaw: "APR-2025", weightRaw: 4, statusRaw: "Arrivé" },
+    { destination: "LSHI", rowNumber: 2, dateRaw: "2026-12-10", codeRaw: "DEC", weightRaw: 5, statusRaw: "Livré" }
+  ];
+
+  assert.equal(buildParcelStatusSituation(monthlyRows).rows.length, 5);
+  assert.equal(buildParcelStatusSituation(monthlyRows, { month: 1 }).rows.length, 1);
+  assert.equal(buildParcelStatusSituation(monthlyRows, { month: 4 }).rows.length, 3);
+  assert.equal(buildParcelStatusSituation(monthlyRows, { month: 12 }).rows.length, 1);
+  assert.equal(buildParcelStatusSituation(monthlyRows, { month: 4, fromMonth: "2026-04", toMonth: "2026-04" }).rows.length, 2);
+  assert.equal(buildParcelStatusSituation(monthlyRows, { month: 4, destination: "KLZ" }).rows.length, 2);
+  assert.equal(buildParcelStatusSituation(monthlyRows, { month: 4, status: "ARRIVED" }).rows.length, 2);
+  assert.equal(buildParcelStatusSituation(monthlyRows, { month: 4, fromMonth: "2026-04", toMonth: "2026-04", destination: "KLZ", status: "ARRIVED" }).rows.length, 1);
+});
+
 test("le total global égale la somme des trois destinations", () => {
   const result = buildParcelStatusSituation(rows);
   assert.equal(result.global.total.parcels, result.destinations.FIH.total.parcels + result.destinations.LSHI.total.parcels + result.destinations.KLZ.total.parcels);

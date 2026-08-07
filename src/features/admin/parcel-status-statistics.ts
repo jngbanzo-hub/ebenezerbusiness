@@ -29,6 +29,7 @@ export type ParcelStatusRow = {
 };
 
 export type ParcelStatusFilters = {
+  month?: number;
   fromMonth?: string;
   toMonth?: string;
   destination?: ParcelDestination | "ALL";
@@ -98,6 +99,7 @@ export function buildParcelStatusSituation(rawRows: RawParcelStatusRow[], filter
   }
 
   const rows = Array.from(byCode.values()).filter((row) =>
+    (!filters.month || Number(row.date.slice(5, 7)) === filters.month) &&
     (!filters.fromMonth || row.date.slice(0, 7) >= filters.fromMonth) &&
     (!filters.toMonth || row.date.slice(0, 7) <= filters.toMonth) &&
     (!filters.destination || filters.destination === "ALL" || row.destination === filters.destination) &&
