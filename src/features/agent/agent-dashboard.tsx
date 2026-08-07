@@ -38,6 +38,15 @@ const AGENCY_LABELS: Record<Agency, string> = {
 
 const OPERATIONS = [
   {
+    key: "rapport-journalier",
+    title: "Rapport synthèse du jour",
+    description: "Consulter les opérations quotidiennes consolidées de votre agence",
+    icon: ReceiptText,
+    available: true,
+    href: "/agent/rapport-journalier",
+    actionLabel: "Ouvrir le rapport"
+  },
+  {
     key: "encaissement",
     title: "Encaissement",
     description: "Rechercher les colis et enregistrer leurs paiements",

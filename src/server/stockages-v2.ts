@@ -59,6 +59,18 @@ export async function readAdminStorage() {
   return { mode: "V2" as const, accounts: accounts.data ?? [], events: events.data ?? [], activity: activity.data ?? [], anomalies: anomalies.data ?? [], audit: audit.data ?? [] };
 }
 
+export async function readStorageReportEvents(businessDate: string, agency?: string) {
+  let query = serviceClient()
+    .from("stockage_events")
+    .select("event_id,event_type,agency,business_date,occurred_at,parcel_count_delta,weight_kg_delta,tracking_code,actor_name,metadata")
+    .eq("business_date", businessDate)
+    .order("occurred_at", { ascending: true });
+  if (agency) query = query.eq("agency", agency);
+  const { data, error } = await query;
+  if (error) throw new StockagesV2Error("STORAGE_REPORT_READ_FAILED", 503);
+  return data ?? [];
+}
+
 export type ArrivalParcel = Readonly<{ trackingCode: string; weightKg: number }>;
 
 export function validateArrivalParcels(value: unknown): readonly ArrivalParcel[] {
