@@ -74,21 +74,17 @@ export function normalizeParcelStatus(value: unknown): ParcelStatus | null {
 }
 
 export function buildParcelStatusSituation(rawRows: RawParcelStatusRow[], filters: ParcelStatusFilters = {}): ParcelStatusSituation {
-  let invalidDates = 0;
-  let emptyCodes = 0;
-  let invalidWeights = 0;
   const rowsBySource: ParcelStatusRow[] = [];
-  const seenCodes = new Set<string>();
-  const duplicateCodes = new Set<string>();
-  const excludedRows: ParcelStatusSituation["anomalies"]["excludedRows"] = [];
+  const allExcludedRows: Array<ParcelStatusSituation["anomalies"]["excludedRows"][number] & { date: string | null }> = [];
 
   for (const raw of rawRows) {
+    if (![raw.dateRaw, raw.codeRaw, raw.weightRaw, raw.statusRaw].some((value) => String(value ?? "").trim())) continue;
     const date = normalizeDate(raw.dateRaw);
-    if (!date) { invalidDates += 1; excludedRows.push({ destination: raw.destination, rowNumber: raw.rowNumber, reason: "INVALID_DATE" }); continue; }
+    if (!date) { allExcludedRows.push({ destination: raw.destination, rowNumber: raw.rowNumber, reason: "INVALID_DATE", date: null }); continue; }
     const code = normalizeCode(raw.codeRaw);
-    if (!code || code === "CODE COLIS") { if (!code) emptyCodes += 1; excludedRows.push({ destination: raw.destination, rowNumber: raw.rowNumber, reason: "EMPTY_CODE" }); continue; }
+    if (!code || code === "CODE COLIS") { allExcludedRows.push({ destination: raw.destination, rowNumber: raw.rowNumber, reason: "EMPTY_CODE", date }); continue; }
     const weightKg = normalizeWeight(raw.weightRaw);
-    if (weightKg === null) { invalidWeights += 1; excludedRows.push({ destination: raw.destination, rowNumber: raw.rowNumber, reason: "INVALID_WEIGHT" }); continue; }
+    if (weightKg === null) { allExcludedRows.push({ destination: raw.destination, rowNumber: raw.rowNumber, reason: "INVALID_WEIGHT", date }); continue; }
     const candidate: ParcelStatusRow = {
       destination: raw.destination,
       rowNumber: raw.rowNumber,
@@ -98,8 +94,6 @@ export function buildParcelStatusSituation(rawRows: RawParcelStatusRow[], filter
       status: normalizeParcelStatus(raw.statusRaw),
       rawStatus: String(raw.statusRaw ?? "").trim()
     };
-    if (seenCodes.has(code)) duplicateCodes.add(code);
-    seenCodes.add(code);
     rowsBySource.push(candidate);
   }
 
@@ -110,6 +104,16 @@ export function buildParcelStatusSituation(rawRows: RawParcelStatusRow[], filter
     (!filters.destination || filters.destination === "ALL" || row.destination === filters.destination) &&
     (!filters.status || filters.status === "ALL" || row.status === filters.status)
   );
+  const excludedRows = allExcludedRows.filter((row) =>
+    (!filters.destination || filters.destination === "ALL" || row.destination === filters.destination) &&
+    (row.date === null ? !filters.month && !filters.fromMonth && !filters.toMonth :
+      (!filters.month || Number(row.date.slice(5, 7)) === filters.month) &&
+      (!filters.fromMonth || row.date.slice(0, 7) >= filters.fromMonth) &&
+      (!filters.toMonth || row.date.slice(0, 7) <= filters.toMonth))
+  ).map(({ date: _date, ...row }) => row);
+  const seenCodes = new Set<string>();
+  const duplicateCodes = new Set<string>();
+  for (const row of rows) { if (seenCodes.has(row.code)) duplicateCodes.add(row.code); seenCodes.add(row.code); }
   const unknowns = new Map<string, { destination: ParcelDestination; value: string; count: number }>();
   for (const row of rows) if (!row.status) {
     const value = row.rawStatus || "(vide)"; const key = `${row.destination}:${value}`;
@@ -130,7 +134,7 @@ export function buildParcelStatusSituation(rawRows: RawParcelStatusRow[], filter
     rows,
     destinations,
     global,
-    anomalies: { invalidDates, emptyCodes, duplicateCodes: duplicateCodes.size, invalidWeights, unknownStatuses: Array.from(unknowns.values()).reduce((sum, row) => sum + row.count, 0), unknownStatusValues: Array.from(unknowns.values()).sort((a, b) => a.destination.localeCompare(b.destination) || a.value.localeCompare(b.value)), excludedRows }
+    anomalies: { invalidDates: excludedRows.filter((row) => row.reason === "INVALID_DATE").length, emptyCodes: excludedRows.filter((row) => row.reason === "EMPTY_CODE").length, duplicateCodes: duplicateCodes.size, invalidWeights: excludedRows.filter((row) => row.reason === "INVALID_WEIGHT").length, unknownStatuses: Array.from(unknowns.values()).reduce((sum, row) => sum + row.count, 0), unknownStatusValues: Array.from(unknowns.values()).sort((a, b) => a.destination.localeCompare(b.destination) || a.value.localeCompare(b.value)), excludedRows }
   };
 }
 

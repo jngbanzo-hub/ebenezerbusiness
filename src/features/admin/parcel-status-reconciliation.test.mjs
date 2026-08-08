@@ -47,3 +47,19 @@ test("juillet et la période personnalisée restent inclusifs et séparés par d
   assert.equal(july.destinations.LSHI.total.weightKg, 3);
   assert.equal(july.destinations.KLZ.total.weightKg, 0);
 });
+
+test("les exclusions affichées sont limitées à la période et ignorent les lignes entièrement vides", () => {
+  const situation = buildParcelStatusSituation([
+    row(2, "OK", "2 kg", "EN VOL", "01/08/2026", "FIH"),
+    row(3, "", "3 kg", "EN VOL", "02/08/2026", "FIH"),
+    row(4, "BAD-WEIGHT", "0 kg", "EN VOL", "03/08/2026", "LSHI"),
+    row(5, "OLD-BAD", "0 kg", "EN VOL", "03/07/2026", "KLZ"),
+    row(6, "", "", "", "", "FIH")
+  ], { fromMonth: "2026-08", toMonth: "2026-08", status: "ALL" });
+
+  assert.equal(situation.global.total.parcels, 1);
+  assert.equal(situation.anomalies.emptyCodes, 1);
+  assert.equal(situation.anomalies.invalidWeights, 1);
+  assert.equal(situation.anomalies.invalidDates, 0);
+  assert.deepEqual(situation.anomalies.excludedRows.map((item) => item.reason).sort(), ["EMPTY_CODE", "INVALID_WEIGHT"]);
+});
