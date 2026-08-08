@@ -43,7 +43,7 @@ const OPERATIONS = [
     icon: ReceiptText,
     available: true,
     href: "/agent/rapport-journalier",
-    actionLabel: "Ouvrir le rapport"
+    actionLabel: "OUVRIR"
   },
   {
     key: "encaissement",
@@ -52,7 +52,7 @@ const OPERATIONS = [
     icon: Banknote,
     available: true,
     href: "/agent/encaissement",
-    actionLabel: "Ouvrir les encaissements"
+    actionLabel: "OUVRIR"
   },
   {
     key: "depenses",
@@ -61,7 +61,7 @@ const OPERATIONS = [
     icon: ReceiptText,
     available: true,
     href: "/agent/depenses",
-    actionLabel: "Enregistrer une dépense"
+    actionLabel: "ENREGISTRER"
   },
   {
     key: "stockage",
@@ -70,7 +70,7 @@ const OPERATIONS = [
     icon: Boxes,
     available: true,
     href: "/agent/stockages",
-    actionLabel: "Ouvrir les Stockages"
+    actionLabel: "OUVRIR"
   },
   {
     key: "transferts",
@@ -79,7 +79,7 @@ const OPERATIONS = [
     icon: ArrowRightLeft,
     available: true,
     href: "/agent/transferts",
-    actionLabel: "Consulter les transferts"
+    actionLabel: "CONSULTER"
   },
   {
     key: "caisse",
@@ -88,7 +88,7 @@ const OPERATIONS = [
     icon: Banknote,
     available: true,
     href: "/agent/caisse",
-    actionLabel: "Ouvrir la caisse"
+    actionLabel: "OUVRIR"
   },
   {
     key: "rapport-coo",
@@ -97,7 +97,7 @@ const OPERATIONS = [
     icon: ReceiptText,
     available: true,
     href: "/agent/rapport-coo",
-    actionLabel: "Ouvrir le rapport COO"
+    actionLabel: "CONSULTER"
   }
 ] as const;
 
@@ -228,7 +228,7 @@ export function AgentDashboard() {
           description: "Consulter les manifestes FIH, LSHI et KLZ en lecture seule",
           icon: FileSearch,
           href: "/agent/manifeste",
-          actionLabel: "Consulter le Manifeste"
+          actionLabel: "CONSULTER"
         }
       : operation);
 
