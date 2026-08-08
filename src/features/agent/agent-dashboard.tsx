@@ -7,6 +7,7 @@ import {
   Banknote,
   ArrowRightLeft,
   Boxes,
+  FileSearch,
   LoaderCircle,
   LogOut,
   ReceiptText,
@@ -209,6 +210,19 @@ export function AgentDashboard() {
     );
   }
 
+  const operations = OPERATIONS
+    .filter((operation) => !(profile.agence === "COTONOU" && operation.key === "caisse"))
+    .map((operation) => profile.agence === "COTONOU" && operation.key === "stockage"
+      ? {
+          ...operation,
+          title: "Manifeste",
+          description: "Consulter les manifestes FIH, LSHI et KLZ en lecture seule",
+          icon: FileSearch,
+          href: "/agent/manifeste",
+          actionLabel: "Consulter le Manifeste"
+        }
+      : operation);
+
   return (
     <main className="min-h-screen bg-ebe-night py-8 text-white sm:py-12">
       <Container>
@@ -236,7 +250,7 @@ export function AgentDashboard() {
           </div>
 
           <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-            {OPERATIONS.map((operation) => {
+            {operations.map((operation) => {
               const Icon = operation.icon;
 
               if (operation.available) {

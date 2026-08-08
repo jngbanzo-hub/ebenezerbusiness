@@ -15,6 +15,7 @@ export type AgentManifestAgency = "COO" | StorageAgency;
 
 export async function readAgentManifest(input: {
   agency: AgentManifestAgency;
+  compareStorage?: boolean;
   code?: string;
   status?: string;
   from?: string;
@@ -33,7 +34,7 @@ export async function readAgentManifest(input: {
     .map(toManifestItem)
     .filter((row) => matchesManifestFilters(row, { code, status, from, to }));
 
-  const storage = input.agency === "COO"
+  const storage = input.agency === "COO" || input.compareStorage === false
     ? new Map<string, { weightKg: number; status: string }>()
     : await readStorageComparison(input.agency, rows.map((row) => row.trackingCode));
   const enriched = rows.map((row) => {
