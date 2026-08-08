@@ -127,6 +127,33 @@ export function calculateAdminPaymentsSummary(
   };
 }
 
+export function summarizeAdminPaymentsByAgent(payments: AdminPayment[]) {
+  const rows = new Map<
+    string,
+    { agency: AdminSite; name: string; count: number; amount: number }
+  >();
+
+  for (const payment of payments) {
+    const name = payment.agent || "Agent non renseigné";
+    const key = `${payment.agenceEncaissement}:${name}`;
+    const current = rows.get(key) ?? {
+      agency: payment.agenceEncaissement,
+      name,
+      count: 0,
+      amount: 0
+    };
+
+    current.count += 1;
+    current.amount = roundAmount(current.amount + payment.montantPaye);
+    rows.set(key, current);
+  }
+
+  return Array.from(rows.values()).sort(
+    (left, right) =>
+      left.agency.localeCompare(right.agency) || left.name.localeCompare(right.name)
+  );
+}
+
 export function parseAdminPaymentRow(
   row: unknown[],
   sourceSite: AdminSite,

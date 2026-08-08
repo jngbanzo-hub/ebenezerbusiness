@@ -1,4 +1,8 @@
 import type { AdminPayment } from "@/features/admin/types";
+import {
+  calculateAdminPaymentsSummary,
+  summarizeAdminPaymentsByAgent
+} from "@/features/admin/payments";
 import type { AdminExpenseListResponse } from "@/server/agent-expenses-apps-script";
 
 export const REPORT_AGENCIES = ["COO", "FIH", "LSHI", "KLZ"] as const;
@@ -31,8 +35,11 @@ export function buildDailyAgencyReport(input: { agency: ReportAgency; payments: 
   const payments = input.payments.filter((row) => row.agenceEncaissement === input.agency);
   const expenses = input.expenses.filter((row) => row.agence === input.agency && !row.annulee);
   const events = input.storageEvents.filter((row) => row.agency === input.agency);
-  const agents = aggregate(payments, (row) => row.agent || "Agent non renseigné");
+  const agents = summarizeAdminPaymentsByAgent(payments).map(
+    ({ name, count, amount }) => ({ name, count, amount })
+  );
   const modes = aggregate(payments, (row) => row.modePaiement || "Non renseigné");
+  const paymentSummary = calculateAdminPaymentsSummary(payments).sites[input.agency];
   const arrivals = events.filter((row) => ARRIVALS.has(String(row.event_type))).flatMap(arrivalDetails);
   const departures = events.filter((row) => DEPARTURES.has(String(row.event_type))).map((row) => ({ code: String(row.tracking_code ?? "—"), weightKg: Math.abs(Number(row.weight_kg_delta ?? 0)), actor: String(row.actor_name ?? "—"), occurredAt: String(row.occurred_at ?? "") }));
   const expensesByCurrency: Record<string, number> = {};
@@ -40,8 +47,8 @@ export function buildDailyAgencyReport(input: { agency: ReportAgency; payments: 
   const operationAgents = new Set([...agents.map((row) => row.name), ...arrivals.map((row) => row.actor), ...departures.map((row) => row.actor)].filter((name) => name && name !== "—"));
   return Object.freeze({
     agency: input.agency,
-    paymentCount: payments.length,
-    paymentsTotal: cents(payments.reduce((sum, row) => sum + row.montantPaye, 0)),
+    paymentCount: paymentSummary.nombrePaiements,
+    paymentsTotal: paymentSummary.montantTotal,
     paymentModes: Object.freeze(modes),
     byAgent: Object.freeze(agents),
     expenses: Object.freeze(expenses.map((row) => Object.freeze({ id: row.id, category: row.categorie, amount: row.montant, currency: row.devise, description: row.description || row.observation, agent: row.agent, reference: row.reference }))),

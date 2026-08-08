@@ -31,7 +31,8 @@ import {
   formatAdminAmount,
   formatAdminDateTime,
   formatAdminWeight,
-  loadAdminPayments
+  loadAdminPayments,
+  summarizeAdminPaymentsByAgent
 } from "@/features/admin/payments";
 import {
   getAdminPeriodRange,
@@ -135,7 +136,10 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
     () => calculateAdminPaymentsSummary(filteredPayments),
     [filteredPayments]
   );
-  const agentSummary = useMemo(() => summarizePaymentsByAgent(filteredPayments), [filteredPayments]);
+  const agentSummary = useMemo(
+    () => summarizeAdminPaymentsByAgent(filteredPayments),
+    [filteredPayments]
+  );
 
   useEffect(() => {
     let active = true;
@@ -568,19 +572,6 @@ const ADMIN_MODULES = [
 
 function AdminModuleGrid() {
   return <section className="mt-8"><div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{ADMIN_MODULES.map(({title,description,href,icon:Icon}) => <GlassPanel key={href} className="flex min-h-56 flex-col p-6"><div className="grid h-12 w-12 place-items-center rounded-xl border border-accent/25 bg-accent/15 text-accent"><Icon className="h-6 w-6" /></div><h2 className="mt-5 text-xl font-semibold">{title}</h2><p className="mt-2 flex-1 text-sm text-muted-foreground">{description}</p><Button asChild variant="growth" className="mt-6 w-full sm:w-auto"><Link href={href}>Accéder au module</Link></Button></GlassPanel>)}</div></section>;
-}
-
-function summarizePaymentsByAgent(payments: AdminPayment[]) {
-  const rows = new Map<string, { agency: AdminSite; name: string; count: number; amount: number }>();
-  for (const payment of payments) {
-    const name = payment.agent || "Agent non renseigné";
-    const key = `${payment.agenceEncaissement}:${name}`;
-    const current = rows.get(key) ?? { agency: payment.agenceEncaissement, name, count: 0, amount: 0 };
-    current.count += 1;
-    current.amount = Math.round((current.amount + payment.montantPaye) * 100) / 100;
-    rows.set(key, current);
-  }
-  return Array.from(rows.values()).sort((left, right) => left.agency.localeCompare(right.agency) || left.name.localeCompare(right.name));
 }
 
 function StatsCard({
