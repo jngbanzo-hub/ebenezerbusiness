@@ -44,11 +44,13 @@ export type ParcelStatusSituation = {
   destinations: Record<ParcelDestination, DestinationSituation>;
   global: DestinationSituation;
   anomalies: {
+    invalidDates: number;
     emptyCodes: number;
     duplicateCodes: number;
     invalidWeights: number;
     unknownStatuses: number;
     unknownStatusValues: Array<{ destination: ParcelDestination; value: string; count: number }>;
+    excludedRows: Array<{ destination: ParcelDestination; rowNumber: number; reason: "INVALID_DATE" | "EMPTY_CODE" | "INVALID_WEIGHT" }>;
   };
 };
 
@@ -72,18 +74,21 @@ export function normalizeParcelStatus(value: unknown): ParcelStatus | null {
 }
 
 export function buildParcelStatusSituation(rawRows: RawParcelStatusRow[], filters: ParcelStatusFilters = {}): ParcelStatusSituation {
+  let invalidDates = 0;
   let emptyCodes = 0;
   let invalidWeights = 0;
-  const byCode = new Map<string, ParcelStatusRow>();
+  const rowsBySource: ParcelStatusRow[] = [];
+  const seenCodes = new Set<string>();
   const duplicateCodes = new Set<string>();
+  const excludedRows: ParcelStatusSituation["anomalies"]["excludedRows"] = [];
 
   for (const raw of rawRows) {
     const date = normalizeDate(raw.dateRaw);
-    if (!date) continue;
+    if (!date) { invalidDates += 1; excludedRows.push({ destination: raw.destination, rowNumber: raw.rowNumber, reason: "INVALID_DATE" }); continue; }
     const code = normalizeCode(raw.codeRaw);
-    if (!code || code === "CODE COLIS") { if (!code) emptyCodes += 1; continue; }
+    if (!code || code === "CODE COLIS") { if (!code) emptyCodes += 1; excludedRows.push({ destination: raw.destination, rowNumber: raw.rowNumber, reason: "EMPTY_CODE" }); continue; }
     const weightKg = normalizeWeight(raw.weightRaw);
-    if (weightKg === null && String(raw.weightRaw ?? "").trim()) invalidWeights += 1;
+    if (weightKg === null) { invalidWeights += 1; excludedRows.push({ destination: raw.destination, rowNumber: raw.rowNumber, reason: "INVALID_WEIGHT" }); continue; }
     const candidate: ParcelStatusRow = {
       destination: raw.destination,
       rowNumber: raw.rowNumber,
@@ -93,12 +98,12 @@ export function buildParcelStatusSituation(rawRows: RawParcelStatusRow[], filter
       status: normalizeParcelStatus(raw.statusRaw),
       rawStatus: String(raw.statusRaw ?? "").trim()
     };
-    const previous = byCode.get(code);
-    if (previous) duplicateCodes.add(code);
-    if (!previous || candidate.date > previous.date || (candidate.date === previous.date && candidate.rowNumber > previous.rowNumber)) byCode.set(code, candidate);
+    if (seenCodes.has(code)) duplicateCodes.add(code);
+    seenCodes.add(code);
+    rowsBySource.push(candidate);
   }
 
-  const rows = Array.from(byCode.values()).filter((row) =>
+  const rows = rowsBySource.filter((row) =>
     (!filters.month || Number(row.date.slice(5, 7)) === filters.month) &&
     (!filters.fromMonth || row.date.slice(0, 7) >= filters.fromMonth) &&
     (!filters.toMonth || row.date.slice(0, 7) <= filters.toMonth) &&
@@ -112,28 +117,34 @@ export function buildParcelStatusSituation(rawRows: RawParcelStatusRow[], filter
   }
   const destinations: Record<ParcelDestination, DestinationSituation> = { FIH: emptySituation(), LSHI: emptySituation(), KLZ: emptySituation() };
   const global = emptySituation();
-  for (const row of rows) if (row.status) { addMetric(destinations[row.destination], row.status, row.weightKg); addMetric(global, row.status, row.weightKg); }
+  for (const row of rows) {
+    if (row.weightKg === null) continue;
+    addTotalMetric(destinations[row.destination], row.weightKg);
+    addTotalMetric(global, row.weightKg);
+    if (row.status) {
+      addStatusMetric(destinations[row.destination], row.status, row.weightKg);
+      addStatusMetric(global, row.status, row.weightKg);
+    }
+  }
   return {
     rows,
     destinations,
     global,
-    anomalies: { emptyCodes, duplicateCodes: duplicateCodes.size, invalidWeights, unknownStatuses: Array.from(unknowns.values()).reduce((sum, row) => sum + row.count, 0), unknownStatusValues: Array.from(unknowns.values()).sort((a, b) => a.destination.localeCompare(b.destination) || a.value.localeCompare(b.value)) }
+    anomalies: { invalidDates, emptyCodes, duplicateCodes: duplicateCodes.size, invalidWeights, unknownStatuses: Array.from(unknowns.values()).reduce((sum, row) => sum + row.count, 0), unknownStatusValues: Array.from(unknowns.values()).sort((a, b) => a.destination.localeCompare(b.destination) || a.value.localeCompare(b.value)), excludedRows }
   };
 }
 
 export function buildManifestStatisticsFromParcelRows(rows: ParcelStatusRow[]) {
   const monthly = new Map<string, { kilograms: ParcelMonthlyStatistics; parcels: ParcelMonthlyStatistics }>();
   for (const row of rows) {
-    if (!row.status) continue;
+    if (row.weightKg === null) continue;
     const month = row.date.slice(0, 7);
     const current = monthly.get(month) ?? { kilograms: emptyMonthly(month), parcels: emptyMonthly(month) };
     const key = row.destination.toLowerCase() as "fih" | "lshi" | "klz";
     current.parcels[key] += 1;
     current.parcels.total += 1;
-    if (row.weightKg !== null) {
-      current.kilograms[key] += row.weightKg;
-      current.kilograms.total += row.weightKg;
-    }
+    current.kilograms[key] += row.weightKg;
+    current.kilograms.total += row.weightKg;
     monthly.set(month, current);
   }
   const ordered = Array.from(monthly.entries()).sort(([left], [right]) => left.localeCompare(right));
@@ -146,8 +157,10 @@ function emptyMetric(): StatusMetric { return { parcels: 0, weightKg: 0 }; }
 function emptyMonthly(month: string): ParcelMonthlyStatistics { return { month, year: Number(month.slice(0, 4)), fih: 0, lshi: 0, klz: 0, total: 0 }; }
 function sumMonthly(rows: ParcelMonthlyStatistics[]): ParcelMonthlyStatistics | null { if (!rows.length) return null; return rows.reduce((total, row) => ({ month: "TOTAL FILTRÉ", year: row.year, fih: total.fih + row.fih, lshi: total.lshi + row.lshi, klz: total.klz + row.klz, total: total.total + row.total }), { month: "TOTAL FILTRÉ", year: rows[0].year, fih: 0, lshi: 0, klz: 0, total: 0 }); }
 function emptySituation(): DestinationSituation { return { WAITING_COO: emptyMetric(), IN_FLIGHT: emptyMetric(), IN_TRANSIT: emptyMetric(), ARRIVED: emptyMetric(), DELIVERED: emptyMetric(), total: emptyMetric() }; }
-function addMetric(target: DestinationSituation, status: ParcelStatus, weight: number | null) { target[status].parcels += 1; target.total.parcels += 1; if (weight !== null) { target[status].weightKg += weight; target.total.weightKg += weight; } }
+function addTotalMetric(target: DestinationSituation, weight: number) { target.total.parcels += 1; target.total.weightKg += weight; }
+function addStatusMetric(target: DestinationSituation, status: ParcelStatus, weight: number) { target[status].parcels += 1; target[status].weightKg += weight; }
 function normalizeText(value: unknown) { return String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim().replace(/\s+/g, " "); }
 function normalizeCode(value: unknown) { return String(value ?? "").trim().toUpperCase().replace(/\s+/g, ""); }
-function normalizeWeight(value: unknown) { const normalized = String(value ?? "").replace(/KGS?/gi, "").replace(/\s/g, "").replace(",", "."); if (!normalized) return null; const parsed = Number(normalized); return Number.isFinite(parsed) && parsed >= 0 ? parsed : null; }
-function normalizeDate(value: unknown) { if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10); const raw = String(value ?? "").trim(); if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10); const match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/); if (!match) return null; return `${match[3].length === 2 ? `20${match[3]}` : match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`; }
+function normalizeWeight(value: unknown) { const normalized = String(value ?? "").replace(/KGS?/gi, "").replace(/\s/g, "").replace(",", "."); if (!normalized) return null; const parsed = Number(normalized); return Number.isFinite(parsed) && parsed > 0 ? parsed : null; }
+function normalizeDate(value: unknown) { if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10); const raw = String(value ?? "").trim(); const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw); if (iso) return validDate(Number(iso[1]), Number(iso[2]), Number(iso[3])); const match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/); if (!match) return null; return validDate(Number(match[3].length === 2 ? `20${match[3]}` : match[3]), Number(match[2]), Number(match[1])); }
+function validDate(year: number, month: number, day: number) { const date = new Date(Date.UTC(year, month - 1, day)); return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}` : null; }

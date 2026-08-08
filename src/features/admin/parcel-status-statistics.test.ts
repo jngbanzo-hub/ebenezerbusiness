@@ -23,28 +23,28 @@ test("normalise accents, casse, emojis et variantes contrôlées", () => {
   assert.equal(normalizeParcelStatus("autre"), null);
 });
 
-test("déduplique un code en conservant la ligne actuelle la plus récente", () => {
+test("conserve chaque ligne valide tout en signalant les codes dupliqués", () => {
   const result = buildParcelStatusSituation(rows);
   assert.equal(result.anomalies.duplicateCodes, 1);
   assert.equal(result.destinations.LSHI.DELIVERED.parcels, 1);
-  assert.equal(result.destinations.LSHI.ARRIVED.parcels, 0);
-  assert.equal(result.global.total.parcels, 4);
+  assert.equal(result.destinations.LSHI.ARRIVED.parcels, 1);
+  assert.equal(result.global.total.parcels, 5);
 });
 
-test("compte le colis malgré un poids invalide et expose les anomalies", () => {
+test("exclut seulement les lignes sans date code ou poids positif et expose les raisons", () => {
   const result = buildParcelStatusSituation(rows);
-  assert.equal(result.destinations.FIH.IN_FLIGHT.parcels, 1);
-  assert.equal(result.destinations.FIH.IN_FLIGHT.weightKg, 0);
+  assert.equal(result.destinations.FIH.IN_FLIGHT.parcels, 0);
   assert.equal(result.anomalies.invalidWeights, 1);
   assert.equal(result.anomalies.emptyCodes, 1);
   assert.equal(result.anomalies.unknownStatuses, 1);
   assert.equal(result.anomalies.unknownStatusValues[0].destination, "KLZ");
+  assert.deepEqual(result.anomalies.excludedRows.map((row) => row.reason).sort(), ["EMPTY_CODE", "INVALID_WEIGHT"]);
 });
 
 test("respecte destination, statut et période d'enregistrement", () => {
-  assert.equal(buildParcelStatusSituation(rows, { destination: "FIH" }).global.total.parcels, 2);
+  assert.equal(buildParcelStatusSituation(rows, { destination: "FIH" }).global.total.parcels, 1);
   assert.equal(buildParcelStatusSituation(rows, { status: "DELIVERED" }).global.total.parcels, 1);
-  assert.equal(buildParcelStatusSituation(rows, { fromMonth: "2026-08", toMonth: "2026-08" }).global.total.parcels, 1);
+  assert.equal(buildParcelStatusSituation(rows, { fromMonth: "2026-08", toMonth: "2026-08" }).global.total.parcels, 2);
   assert.equal(buildParcelStatusSituation(rows, { destination: "LSHI", status: "IN_FLIGHT" }).global.total.parcels, 0);
   assert.equal(buildParcelStatusSituation(rows, { fromMonth: "2027-01" }).rows.length, 0);
 });
@@ -81,4 +81,25 @@ test("les cartes et séries mensuelles utilisent exactement les lignes filtrées
   assert.equal(statistics.annualKilograms?.total, situation.global.total.weightKg);
   assert.equal(statistics.annualParcels?.fih, 1);
   assert.equal(statistics.annualParcels?.lshi, 0);
+});
+
+test("accepte KG et KGS avec espaces casse virgule ou point et refuse zéro", () => {
+  const weightRows: RawParcelStatusRow[] = [
+    ["3 Kgs", "W1"], ["8 Kgs", "W2"], ["10 kg", "W3"], ["5KG", "W4"], ["3.5 KG", "W5"], ["3,5 kgs", "W6"], ["0 kg", "ZERO"]
+  ].map(([weightRaw, codeRaw], index) => ({ destination: "FIH", rowNumber: index + 2, dateRaw: "08/08/2026", codeRaw, weightRaw, statusRaw: "" }));
+  const result = buildParcelStatusSituation(weightRows, { fromMonth: "2026-08", toMonth: "2026-08", status: "ALL" });
+  assert.equal(result.global.total.parcels, 6);
+  assert.equal(result.global.total.weightKg, 33);
+  assert.equal(result.anomalies.invalidWeights, 1);
+  assert.equal(buildManifestStatisticsFromParcelRows(result.rows).annualParcels?.total, 6);
+});
+
+test("Statut Tous compte aussi les statuts vides ou inconnus", () => {
+  const result = buildParcelStatusSituation([
+    { destination: "FIH", rowNumber: 2, dateRaw: "2026-08-01", codeRaw: "EMPTY", weightRaw: "2 kg", statusRaw: "" },
+    { destination: "LSHI", rowNumber: 2, dateRaw: "2026-08-02", codeRaw: "UNKNOWN", weightRaw: "3 kg", statusRaw: "Statut spécial" }
+  ], { status: "ALL" });
+  assert.equal(result.global.total.parcels, 2);
+  assert.equal(result.global.total.weightKg, 5);
+  assert.equal(buildManifestStatisticsFromParcelRows(result.rows).annualParcels?.total, 2);
 });
