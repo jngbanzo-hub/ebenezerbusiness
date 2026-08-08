@@ -18,8 +18,6 @@ import { Container, GlassPanel } from "@/components/design-system";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { signOutAgent } from "@/features/agent/auth";
-import { CooDepositAgentAction } from "@/features/agent/coo-deposit-agent-action";
-import { canAccessCooDepositAction } from "@/features/agent/coo-deposit-client";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import type { Agency } from "@/features/agent/types";
 
@@ -211,7 +209,7 @@ export function AgentDashboard() {
   }
 
   const operations = OPERATIONS
-    .filter((operation) => !(profile.agence === "COTONOU" && operation.key === "caisse"))
+    .filter((operation) => !(profile.agence === "COTONOU" && ["caisse", "rapport-journalier"].includes(operation.key)))
     .map((operation) => profile.agence === "COTONOU" && operation.key === "stockage"
       ? {
           ...operation,
@@ -300,8 +298,6 @@ export function AgentDashboard() {
             })}
           </div>
         </section>
-
-        {canAccessCooDepositAction(profile) ? <CooDepositAgentAction /> : null}
       </Container>
     </main>
   );
