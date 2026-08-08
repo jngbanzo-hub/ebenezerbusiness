@@ -89,6 +89,15 @@ const OPERATIONS = [
     available: true,
     href: "/agent/caisse",
     actionLabel: "Ouvrir la caisse"
+  },
+  {
+    key: "rapport-coo",
+    title: "Rapport COO",
+    description: "Consulter les Encaissements et Dépenses de l’agence COO",
+    icon: ReceiptText,
+    available: true,
+    href: "/agent/rapport-coo",
+    actionLabel: "Ouvrir le rapport COO"
   }
 ] as const;
 
@@ -209,7 +218,9 @@ export function AgentDashboard() {
   }
 
   const operations = OPERATIONS
-    .filter((operation) => !(profile.agence === "COTONOU" && ["caisse", "rapport-journalier"].includes(operation.key)))
+    .filter((operation) => profile.agence === "COTONOU"
+      ? !["caisse", "rapport-journalier"].includes(operation.key)
+      : operation.key !== "rapport-coo")
     .map((operation) => profile.agence === "COTONOU" && operation.key === "stockage"
       ? {
           ...operation,

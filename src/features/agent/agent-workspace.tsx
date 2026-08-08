@@ -539,7 +539,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
             </GlassPanel>
           ) : null}
         </div>
-        <AgentManifestControl />
+        {profile.agence !== "COTONOU" ? <AgentManifestControl /> : null}
       </Container>
     </main>
   );

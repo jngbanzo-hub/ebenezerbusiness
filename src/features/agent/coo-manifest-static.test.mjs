@@ -6,10 +6,11 @@ const dashboard = readFileSync(new URL("./agent-dashboard.tsx", import.meta.url)
 const manifest = readFileSync(new URL("./agent-manifest-page.tsx", import.meta.url), "utf8");
 const route = readFileSync(new URL("../../app/api/agent/manifest/route.ts", import.meta.url), "utf8");
 
-test("COO voit uniquement Encaissement Dépenses Manifeste et Transferts", () => {
+test("COO voit uniquement Encaissement Dépenses Manifeste Transferts et Rapport COO", () => {
   assert.match(dashboard, /profile\.agence === "COTONOU" && operation\.key === "stockage"/);
   assert.match(dashboard, /href: "\/agent\/manifeste"/);
   assert.match(dashboard, /\["caisse", "rapport-journalier"\]\.includes\(operation\.key\)/);
+  assert.match(dashboard, /key: "rapport-coo"/);
   assert.doesNotMatch(dashboard, /CooDepositAgentAction/);
   assert.doesNotMatch(dashboard, /canAccessCooDepositAction/);
 });
