@@ -103,6 +103,35 @@ export function createServerCashDashboardSource() {
   return new CashDashboardSource(createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } }));
 }
 
+export async function readCashReportMetadata(from: string, to: string) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new CashDashboardSourceError("CASH_SOURCE_NOT_CONFIGURED");
+  const client = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+  const [events, audit] = await Promise.all([
+    client.schema("public").from("cash_events")
+      .select("event_id,agency,direction,amount,reason,actor_name_snapshot,occurred_at,business_date")
+      .eq("event_type", "ADMIN_ADJUSTMENT_RECORDED").gte("business_date", from).lte("business_date", to),
+    client.schema("public").from("cash_admin_audit")
+      .select("audit_id,agency,action,new_value,admin_name_snapshot,occurred_at,metadata")
+      .eq("action", "DAILY_REPORT_NOTE")
+  ]);
+  if (events.error || audit.error) throw new CashDashboardSourceError("CASH_READ_FAILED");
+  return Object.freeze({
+    adjustments: Object.freeze((events.data ?? []).map((row) => Object.freeze({
+      eventId: text(row.event_id), agency: cashAgency(row.agency),
+      direction: row.direction === "DEBIT" ? "DEBIT" as const : "CREDIT" as const,
+      amount: money(row.amount), reason: text(row.reason), admin: text(row.actor_name_snapshot),
+      occurredAt: text(row.occurred_at)
+    }))),
+    notes: Object.freeze((audit.data ?? []).map((row) => {
+      const value = row.new_value && typeof row.new_value === "object" ? row.new_value as Record<string, unknown> : {};
+      const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata as Record<string, unknown> : {};
+      return Object.freeze({ auditId: text(row.audit_id), agency: cashAgency(row.agency), content: text(value.content), admin: text(row.admin_name_snapshot), occurredAt: text(row.occurred_at), visibleToAgents: metadata.visibleToAgents === true, reportFrom: text(metadata.from), reportTo: text(metadata.to) });
+    }))
+  });
+}
+
 function decodeHistory(row: Record<string, unknown>): CashHistoryEntry { return Object.freeze({ businessDate: text(row.business_date), openingBalance: money(row.opening_balance), paymentsTotal: money(row.payments_total), expensesTotal: money(row.expenses_total), correctionsNet: money(row.corrections_net), closingBalance: money(row.closing_balance), status: row.status === "REOPENED" ? "REOPENED" : "CLOSED", version: integer(row.version), closedAt: text(row.closed_at), reopenedAt: row.reopened_at === null ? null : text(row.reopened_at) }); }
 function cashAgency(value: unknown): CashAgency { if (!CASH_AGENCIES.includes(value as CashAgency)) throw new CashDashboardSourceError("CASH_ROW_INVALID"); return value as CashAgency; }
 function accountStatus(value: unknown) { if (!["ACTIVE", "SUSPENDED", "CLOSED"].includes(String(value))) throw new CashDashboardSourceError("CASH_ROW_INVALID"); return value as "ACTIVE" | "SUSPENDED" | "CLOSED"; }

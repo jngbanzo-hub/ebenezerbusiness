@@ -59,11 +59,12 @@ export async function readAdminStorage() {
   return { mode: "V2" as const, accounts: accounts.data ?? [], events: events.data ?? [], activity: activity.data ?? [], anomalies: anomalies.data ?? [], audit: audit.data ?? [] };
 }
 
-export async function readStorageReportEvents(businessDate: string, agency?: string) {
+export async function readStorageReportEvents(from: string, to = from, agency?: string) {
   let query = serviceClient()
     .from("stockage_events")
     .select("event_id,event_type,agency,business_date,occurred_at,parcel_count_delta,weight_kg_delta,tracking_code,actor_name,metadata")
-    .eq("business_date", businessDate)
+    .gte("business_date", from)
+    .lte("business_date", to)
     .order("occurred_at", { ascending: true });
   if (agency) query = query.eq("agency", agency);
   const { data, error } = await query;

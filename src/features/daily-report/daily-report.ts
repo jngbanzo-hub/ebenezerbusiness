@@ -26,12 +26,14 @@ export type DailyAgencyReport = Readonly<{
   departureWeightKg: number;
   activeAgents: number;
   cash: null | Readonly<{ status: string; openingBalance: number; paymentsTotal: number; expensesTotal: number; correctionsNet: number; currentBalance: number }>;
+  adjustments: readonly Readonly<{ eventId: string; amount: number; direction: "CREDIT" | "DEBIT"; reason: string; admin: string; occurredAt: string }>[];
+  notes: readonly Readonly<{ auditId: string; content: string; admin: string; occurredAt: string; visibleToAgents: boolean }>[];
 }>;
 
 const ARRIVALS = new Set(["MANUAL_ARRIVAL_RECORDED", "ARRIVAGE_ACHEMINEMENT"]);
 const DEPARTURES = new Set(["CONFIRMED_DELIVERY_RECORDED", "SORTIE_APRES_PAIEMENT_TOTAL_DESTINATION", "SORTIE_APRES_REMISE_COLIS_PAYE_COO", "SORTIE_APRES_REMISE_ACHEMINEMENT"]);
 
-export function buildDailyAgencyReport(input: { agency: ReportAgency; payments: AdminPayment[]; expenses: AdminExpenseListResponse["depenses"]; storageEvents: StorageReportEvent[]; cash: DailyAgencyReport["cash"] }): DailyAgencyReport {
+export function buildDailyAgencyReport(input: { agency: ReportAgency; payments: AdminPayment[]; expenses: AdminExpenseListResponse["depenses"]; storageEvents: StorageReportEvent[]; cash: DailyAgencyReport["cash"]; adjustments?: DailyAgencyReport["adjustments"]; notes?: DailyAgencyReport["notes"] }): DailyAgencyReport {
   const payments = input.payments.filter((row) => row.agenceEncaissement === input.agency);
   const expenses = input.expenses.filter((row) => row.agence === input.agency && !row.annulee);
   const events = input.storageEvents.filter((row) => row.agency === input.agency);
@@ -57,7 +59,9 @@ export function buildDailyAgencyReport(input: { agency: ReportAgency; payments: 
     arrivals: Object.freeze(arrivals), arrivalCount: arrivals.length, arrivalWeightKg: cents(arrivals.reduce((sum, row) => sum + row.weightKg, 0)),
     departures: Object.freeze(departures), departureCount: departures.length, departureWeightKg: cents(departures.reduce((sum, row) => sum + row.weightKg, 0)),
     activeAgents: operationAgents.size,
-    cash: input.cash
+    cash: input.cash,
+    adjustments: Object.freeze(input.adjustments ?? []),
+    notes: Object.freeze(input.notes ?? [])
   });
 }
 
