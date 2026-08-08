@@ -3,6 +3,7 @@ import "server-only";
 import { createClient } from "@supabase/supabase-js";
 
 import type { ManifestShipperRow } from "@/features/admin/types";
+import { normalizeManifestStatus, normalizeManifestStatusFilter } from "@/lib/manifest-status";
 import { readAdminManifestRows } from "@/server/admin-manifest-sheets";
 import {
   matchesManifestFilters,
@@ -26,7 +27,7 @@ export async function readAgentManifest(input: {
   const page = positiveInteger(input.page ?? 1, 1, 10_000);
   const pageSize = positiveInteger(input.pageSize ?? 25, 1, 100);
   const code = normalizeCodeFilter(input.code);
-  const status = normalizeManifestStatus(input.status);
+  const status = normalizeManifestStatusFilter(input.status);
   const from = normalizeManifestDateFilter(input.from);
   const to = normalizeManifestDateFilter(input.to);
   const rows = (await readAdminManifestRows())
@@ -54,20 +55,6 @@ export async function readAgentManifest(input: {
     rows: Object.freeze(enriched.slice((safePage - 1) * pageSize, safePage * pageSize)),
     pagination: Object.freeze({ page: safePage, pageSize, total, totalPages })
   });
-}
-
-export function normalizeManifestStatus(value: unknown): string {
-  const normalized = stripDecorations(String(value ?? ""));
-  const aliases: Record<string, string> = {
-    "": "",
-    "EN ATTENTE": "EN ATTENTE",
-    ENREGISTRE: "ENREGISTRÉ",
-    "EN VOL": "EN VOL",
-    "EN TRANSIT": "EN TRANSIT",
-    ARRIVE: "ARRIVÉ",
-    LIVRE: "LIVRÉ"
-  };
-  return aliases[normalized] ?? "INCONNU";
 }
 
 function toManifestItem(row: ManifestShipperRow) {
@@ -105,9 +92,6 @@ function serviceClient() {
   return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } }).schema("public");
 }
 
-function stripDecorations(value: string) {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Z ]/gi, " ").replace(/\s+/g, " ").trim().toUpperCase();
-}
 function normalizeCodeFilter(value: unknown) { const code = String(value ?? "").trim().toUpperCase(); return code && /^[A-Z0-9._/-]{1,64}$/.test(code) ? code : ""; }
 function normalizeRequiredCode(value: unknown) { const code = normalizeCodeFilter(value); return code || "CODE_INVALIDE"; }
 function parseWeight(value: unknown) { const parsed = Number(String(value ?? "").replace(",", ".").replace(/[^0-9.-]/g, "")); return Number.isFinite(parsed) && parsed > 0 ? parsed : 0; }
