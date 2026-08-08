@@ -10,6 +10,7 @@ import {
   type ManifestShipperRow,
   type ManifestSite
 } from "@/features/admin/types";
+import { detectManifestHeaderMap } from "@/server/manifest-header-map";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_SHEETS_SCOPE =
@@ -80,8 +81,20 @@ async function readManifestRows(config: ManifestGoogleSheetsConfig): Promise<Man
       (candidate) => getSiteFromRange(candidate.range) === site
     );
 
-    (valueRange?.values ?? []).forEach((row, index) => {
-      if (index === 0 || isManifestHeaderRow(row) || isEmptyRow(row)) {
+    const values = valueRange?.values ?? [];
+    const headerMap = detectManifestHeaderMap(values);
+    const sampleStatus = headerMap.statusIndex >= 0
+      ? getCell(values.slice(headerMap.headerRowIndex + 1).find((row) => getCell(row, headerMap.statusIndex)) ?? [], headerMap.statusIndex)
+      : "";
+    console.info("[manifest-status-mapping]", JSON.stringify({
+      site,
+      headers: headerMap.headers,
+      statusIndex: headerMap.statusIndex,
+      sampleStatus
+    }));
+
+    values.forEach((row, index) => {
+      if (index === headerMap.headerRowIndex || isManifestHeaderRow(row) || isEmptyRow(row)) {
         return;
       }
 
@@ -93,7 +106,7 @@ async function readManifestRows(config: ManifestGoogleSheetsConfig): Promise<Man
         expediteurRaw: getCell(row, 2),
         poidsRaw: getCell(row, 4),
         montantAttenduRaw: getCell(row, 5),
-        statutRaw: getCell(row, 8)
+        statutRaw: headerMap.statusIndex >= 0 ? getCell(row, headerMap.statusIndex) : ""
       });
     });
   }
@@ -180,7 +193,7 @@ async function readManifestRanges(config: ManifestGoogleSheetsConfig) {
   });
 
   for (const site of MANIFEST_SITES) {
-    searchParams.append("ranges", `${site}!A:J`);
+    searchParams.append("ranges", `${site}!A:Z`);
   }
 
   const response = await fetch(
