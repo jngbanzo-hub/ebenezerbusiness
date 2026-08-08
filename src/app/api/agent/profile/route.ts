@@ -17,9 +17,9 @@ export async function GET(request: Request) {
       );
     }
 
-    const { nom, role, agence, site } = authorization.identity;
+    const { userId, email, nom, role, agence, site, lastSignInAt } = authorization.identity;
     return NextResponse.json(
-      { nom, role, agence, site },
+      { id: userId, email, nom, role, agence, site, actif: true, lastSignInAt },
       { headers: privateNoStoreHeaders() }
     );
   } catch {

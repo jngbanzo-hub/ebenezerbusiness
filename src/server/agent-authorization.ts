@@ -16,6 +16,7 @@ type RawAgentProfile = {
 type ResolvedAgentIdentity = {
   userId: string;
   email: string;
+  lastSignInAt?: string | null;
   profile: RawAgentProfile | null;
 };
 
@@ -26,6 +27,7 @@ export type AuthorizedAgentIdentity = {
   role: "AGENT";
   agence: Agency;
   site: "COO" | "FIH" | "LSHI" | "KLZ";
+  lastSignInAt?: string | null;
 };
 
 export type AgentAuthorizationResult =
@@ -66,7 +68,8 @@ export async function authorizeAgentRequest(
   const identity = validateAgentIdentity(
     resolved.profile,
     resolved.userId,
-    resolved.email
+    resolved.email,
+    resolved.lastSignInAt
   );
   return identity
     ? { authorized: true, identity }
@@ -76,7 +79,8 @@ export async function authorizeAgentRequest(
 export function validateAgentIdentity(
   profile: RawAgentProfile | null,
   authenticatedUserId: string,
-  authenticatedEmail = ""
+  authenticatedEmail = "",
+  lastSignInAt: string | null = null
 ): AuthorizedAgentIdentity | null {
   if (
     profile === null ||
@@ -105,7 +109,8 @@ export function validateAgentIdentity(
     nom: profile.nom.trim(),
     role: "AGENT",
     agence,
-    site: SITE_BY_AGENCY[agence]
+    site: SITE_BY_AGENCY[agence],
+    lastSignInAt
   };
 }
 
@@ -153,6 +158,7 @@ async function resolveSupabaseIdentity(
   return {
     userId: user.id,
     email: user.email ?? "",
+    lastSignInAt: user.last_sign_in_at ?? null,
     profile
   };
 }

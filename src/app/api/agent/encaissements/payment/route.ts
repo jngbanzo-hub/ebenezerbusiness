@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { authorizeAgentRequest } from "@/server/agent-authorization";
 import { recordDestinationPayment } from "@/server/destination-payment-parcel";
 import { requireStorageAgency, StockagesV2Error } from "@/server/stockages-v2";
+import { recordInternalNotification } from "@/server/internal-notifications";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,6 +24,8 @@ export async function POST(request: Request) {
       paymentRequestId: String(body.paymentRequestId ?? ""),
       agentAccessToken: (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "")
     });
+    const row = result as Record<string, unknown>;
+    if (row.replayed !== true) await recordInternalNotification({ eventKey: `PAYMENT:${String(body.paymentRequestId)}`, agency: auth.identity.site, type: "PAYMENT", title: "Paiement enregistré", message: `${String(row.codeColis ?? body.trackingCode)} — ${Number(row.montantPaye ?? 0).toFixed(2)} USD — ${auth.identity.nom}`, actorUserId: auth.identity.userId, actorName: auth.identity.nom }).catch(() => undefined);
     return NextResponse.json(result, { status: 200 });
   } catch (cause) {
     return cause instanceof StockagesV2Error ? fail(cause.code, cause.status) : fail("AGENT_SERVICE_UNAVAILABLE", 503);

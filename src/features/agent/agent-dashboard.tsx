@@ -11,7 +11,8 @@ import {
   LoaderCircle,
   LogOut,
   ReceiptText,
-  ShieldX
+  ShieldX,
+  UserRound
 } from "lucide-react";
 
 import { Container, GlassPanel } from "@/components/design-system";
@@ -20,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { signOutAgent } from "@/features/agent/auth";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import type { Agency } from "@/features/agent/types";
+import { NotificationBell } from "@/features/notifications/notification-center";
 
 type AgentDashboardProfile = {
   nom: string;
@@ -244,10 +246,7 @@ export function AgentDashboard() {
               <span>Rôle : Agent</span>
             </div>
           </div>
-          <Button type="button" variant="outline" onClick={handleSignOut}>
-            <LogOut className="h-4 w-4" />
-            Se déconnecter
-          </Button>
+          <div className="flex flex-wrap gap-3"><NotificationBell href="/agent/notifications"/><Button asChild type="button" variant="outline"><Link href="/agent/profil"><UserRound className="h-4 w-4"/>Mon profil</Link></Button><Button type="button" variant="outline" onClick={handleSignOut}><LogOut className="h-4 w-4" />Se déconnecter</Button></div>
         </header>
 
         <section className="mt-8">

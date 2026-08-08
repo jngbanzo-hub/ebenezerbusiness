@@ -148,10 +148,14 @@ export function savePayment(payload: {
   observation: string;
   paymentRequestId: string;
 }) {
-  return invokeAgentFunction<Record<string, unknown>>(FUNCTION_NAMES.payment, payload).then(
-    parsePaymentResult
-  );
+  return invokeAgentFunction<Record<string, unknown>>(FUNCTION_NAMES.payment, payload).then(async (response) => {
+    const result = parsePaymentResult(response);
+    if (!result.replayed) await syncPaymentNotification(payload.paymentRequestId).catch(() => undefined);
+    return result;
+  });
 }
+
+async function syncPaymentNotification(paymentRequestId: string) { const { data: { session } } = await getSupabaseBrowserClient().auth.getSession(); if (!session?.access_token) return; await fetch("/api/agent/notifications/payment-sync", { method: "POST", headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" }, body: JSON.stringify({ paymentRequestId }) }); }
 
 export async function saveDestinationPayment(payload: {
   trackingCode: string;

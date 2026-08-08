@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { authorizeAgentRequest } from "@/server/agent-authorization";
 import { resolvePaidPhysicalParcel } from "@/server/encaissements-remittance";
 import { confirmDelivery, isStockagesV2Enabled, requireStorageAgency, StockagesV2Error } from "@/server/stockages-v2";
+import { recordInternalNotification } from "@/server/internal-notifications";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -15,6 +16,7 @@ export async function POST(request: Request) {
     const agency = requireStorageAgency(auth.identity.site);
     const parcel = await resolvePaidPhysicalParcel(String(body.trackingCode ?? ""), agency);
     const result = await confirmDelivery({ ...parcel, requestId: String(body.requestId ?? ""), physicalConfirmed: body.physicalDeliveryConfirmed === true, actorId: auth.identity.userId, agency });
+    if (!result.replayed) await recordInternalNotification({ eventKey: `STORAGE_EXIT:${String(body.requestId)}`, agency, type: "STORAGE_EXIT", title: "Sortie Stockage", message: `${parcel.trackingCode} — ${parcel.weightKg} kg`, actorUserId: auth.identity.userId, actorName: auth.identity.nom }).catch(() => undefined);
     return NextResponse.json({ state: "SUCCESS", ...result }, { status: result.replayed ? 200 : 201 });
   } catch (cause) { return cause instanceof StockagesV2Error ? fail(cause.code, cause.status) : fail("STORAGE_SERVICE_UNAVAILABLE", 503); }
 }

@@ -44,6 +44,8 @@ import { CashOpeningBalanceSection } from "@/features/admin/cash-opening-balance
 import { AdminCashDashboardView } from "@/features/cash/cash-dashboard-view";
 import { CashAdminControls } from "@/features/admin/cash-admin-controls";
 import { AdminExpensesModule } from "@/features/admin/admin-expenses-module";
+import { AdminSystemStatus } from "@/features/admin/admin-system-status";
+import { NotificationBell } from "@/features/notifications/notification-center";
 import {
   ADMIN_DESTINATIONS,
   ADMIN_SITES,
@@ -297,6 +299,7 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
           </div>
           <div className="flex flex-wrap gap-3">
             {module !== "home" ? <Button asChild type="button" variant="outline"><Link href="/admin">Retour au tableau de bord Admin</Link></Button> : null}
+            <NotificationBell href="/admin/notifications" />
             <Button type="button" variant="outline" onClick={handleSignOut}>
               <LogOut className="h-4 w-4" />
               Se déconnecter
@@ -304,7 +307,7 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
           </div>
         </header>
 
-        {module === "home" ? <AdminModuleGrid /> : null}
+        {module === "home" ? <><AdminModuleGrid /><AdminSystemStatus accessToken={accessTokenRef.current} /></> : null}
         {module === "cash" ? <><CashOpeningBalanceSection accessToken={accessTokenRef.current} /><AdminCashDashboardView accessToken={accessTokenRef.current} /><CashAdminControls accessToken={accessTokenRef.current} /></> : null}
         {module === "shippers" ? <ShipperStatisticsSection accessToken={accessTokenRef.current} /> : null}
         {module === "expenses" ? <AdminExpensesModule accessToken={accessTokenRef.current} /> : null}
