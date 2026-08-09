@@ -9,6 +9,7 @@ import { GlassPanel } from "@/components/design-system";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { formatStockageAnomalies, formatStockageWeight } from "@/features/stockages/presentation";
 import { summarizeArrivalDetails } from "@/features/stockages/arrival-details";
+import { buildAuditPresentation } from "@/features/stockages/audit-presentation";
 
 type Account = { agency: string; status: "SUSPENDED" | "ACTIVE"; current_parcel_count: number; current_weight_kg: number; version: number; opened_business_date: string | null };
 type EventRow = { event_id: string; event_type: string; agency?: string; business_date: string; occurred_at: string; parcel_count_delta: number; weight_kg_delta: number; tracking_code?: string | null; arrival_reference?: string | null; actor_name: string };
@@ -113,7 +114,7 @@ export function AdminStockagesV2Page() {
     <ActivityTable rows={data.activity} />
     <PhysicalStatistics events={data.events} />
     <JsonList title="Anomalies" rows={data.anomalies} />
-    <JsonList title="Audit immutable" rows={data.audit} />
+    <AuditCards rows={data.audit} />
     {message && <Notice text={message} />}
   </Shell>;
 }
@@ -182,6 +183,45 @@ function PhysicalStatistics({ events }: { events: EventRow[] }) {
 }
 function Metric({ label, value }: { label: string; value: string | number }) { return <div className="rounded-xl border border-lime-400/20 bg-slate-950/60 p-4"><p className="text-xs uppercase tracking-wide text-slate-400">{label}</p><p className="mt-2 text-2xl font-semibold text-lime-300">{value}</p></div>; }
 function JsonList({ title, rows }: { title: string; rows: Array<Record<string, unknown>> }) { return <Panel title={title}>{rows.length ? <div className="space-y-2">{rows.map((row, i) => <pre key={i} className="overflow-x-auto rounded-lg bg-slate-950 p-3 text-xs">{JSON.stringify(row, null, 2)}</pre>)}</div> : <p className="text-slate-400">Aucune donnée.</p>}</Panel>; }
+function AuditCards({ rows }: { rows: Array<Record<string, unknown>> }) {
+  const [agency, setAgency] = useState("ALL");
+  const [action, setAction] = useState("ALL");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const actions = useMemo(() => Array.from(new Set(rows.map((row) => String(row.action ?? "")).filter(Boolean))).sort(), [rows]);
+  const filtered = useMemo(() => rows.filter((row) => {
+    const view = buildAuditPresentation(row);
+    return (agency === "ALL" || view.agency === agency)
+      && (action === "ALL" || view.actionCode === action)
+      && (!from || view.dateKey >= from)
+      && (!to || view.dateKey <= to);
+  }), [action, agency, from, rows, to]);
+  return <Panel title="Audit immuable">
+    <p className="mb-4 text-sm text-slate-300">Historique administratif en lecture seule. Chaque modification conserve ses états, son motif et son auteur.</p>
+    <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <label className="text-sm">Agence<select value={agency} onChange={(event) => setAgency(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2"><option value="ALL">Toutes</option><option>COO</option><option>FIH</option><option>LSHI</option><option>KLZ</option></select></label>
+      <label className="text-sm">Action<select value={action} onChange={(event) => setAction(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2"><option value="ALL">Toutes</option>{actions.map((code) => <option key={code} value={code}>{buildAuditPresentation({ action: code }).action}</option>)}</select></label>
+      <label className="text-sm">Du<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label>
+      <label className="text-sm">Au<input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label>
+    </div>
+    {filtered.length ? <div className="grid gap-4 lg:grid-cols-2">{filtered.map((row, index) => {
+      const view = buildAuditPresentation(row);
+      return <article key={String(row.audit_id ?? index)} className="rounded-2xl border border-lime-400/20 bg-slate-950/65 p-4 shadow-sm sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs uppercase tracking-[0.16em] text-lime-300">{view.agency}</p><h3 className="mt-1 text-lg font-semibold text-white">{view.action}</h3></div><span className="rounded-full border border-lime-400/20 bg-lime-400/10 px-3 py-1 font-mono text-xs text-lime-200">{view.auditId}</span></div>
+        <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+          <AuditField label="Admin" value={view.admin} />
+          <AuditField label="Date et heure" value={view.occurredAt} />
+          <AuditField label="Ancien état" value={view.oldState} />
+          <AuditField label="Nouvel état" value={view.newState} />
+          {view.adjustment && <AuditField label="Mouvement" value={view.adjustment} accent />}
+          <div className="sm:col-span-2"><AuditField label="Motif" value={view.reason} /></div>
+        </dl>
+        <details className="mt-4 rounded-xl border border-white/10 bg-slate-950/80"><summary className="cursor-pointer px-4 py-3 text-sm font-medium text-lime-300">Voir les détails techniques</summary><pre className="max-h-80 overflow-auto border-t border-white/10 p-4 text-xs text-slate-300">{JSON.stringify(row, null, 2)}</pre></details>
+      </article>;
+    })}</div> : <p className="rounded-xl border border-white/10 p-5 text-slate-400">Aucun audit ne correspond aux filtres sélectionnés.</p>}
+  </Panel>;
+}
+function AuditField({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) { return <div className="rounded-xl border border-white/10 bg-slate-900/70 p-3"><dt className="text-xs uppercase tracking-wide text-slate-400">{label}</dt><dd className={`mt-1 break-words text-sm font-medium ${accent ? "text-lime-300" : "text-slate-100"}`}>{value}</dd></div>; }
 function Panel({ title, children }: { title: string; children: React.ReactNode }) { return <section className="rounded-2xl border border-white/10 bg-slate-900/80 p-5"><h2 className="mb-4 flex items-center gap-2 text-xl font-semibold"><Boxes className="h-5 w-5 text-lime-300" />{title}</h2>{children}</section>; }
 function Notice({ text }: { text: string }) { return <div className="flex items-center gap-3 rounded-xl border border-amber-400/25 bg-amber-400/10 p-4 text-sm"><ShieldCheck className="h-5 w-5" />{text}</div>; }
 function Input(props: { name: string; label: string; type?: string; min?: string; step?: string; required?: boolean }) { return <label className="block text-sm">{props.label}<input {...props} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label>; }
