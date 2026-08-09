@@ -40,8 +40,8 @@ import {
   type AdminDateRange
 } from "@/features/admin/period";
 import { ShipperStatisticsSection } from "@/features/admin/shipper-statistics";
-import { CashOpeningBalanceSection } from "@/features/admin/cash-opening-balance";
 import { AdminCashDashboardView } from "@/features/cash/cash-dashboard-view";
+import { CashPeriodConsultation } from "@/features/cash/cash-period-consultation";
 import { CashAdminControls } from "@/features/admin/cash-admin-controls";
 import { AdminExpensesModule } from "@/features/admin/admin-expenses-module";
 import { AdminSystemStatus } from "@/features/admin/admin-system-status";
@@ -308,7 +308,7 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
         </header>
 
         {module === "home" ? <><AdminModuleGrid /><AdminSystemStatus accessToken={accessTokenRef.current} /></> : null}
-        {module === "cash" ? <><CashOpeningBalanceSection accessToken={accessTokenRef.current} /><AdminCashDashboardView accessToken={accessTokenRef.current} /><CashAdminControls accessToken={accessTokenRef.current} /></> : null}
+        {module === "cash" ? <><AdminCashDashboardView accessToken={accessTokenRef.current} /><CashPeriodConsultation /><CashAdminControls accessToken={accessTokenRef.current} /></> : null}
         {module === "shippers" ? <ShipperStatisticsSection accessToken={accessTokenRef.current} /> : null}
         {module === "expenses" ? <AdminExpensesModule accessToken={accessTokenRef.current} /> : null}
         {module === "payments" ? <>

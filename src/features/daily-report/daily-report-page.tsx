@@ -14,7 +14,7 @@ import { REPORT_PERIODS, type ReportPeriod } from "@/features/daily-report/repor
 import { formatWeight } from "@/lib/format-weight";
 
 type Payload = { from: string; to: string; agencies: DailyAgencyReport[] };
-const periodLabels: Record<ReportPeriod, string> = { TODAY: "Aujourd’hui", YESTERDAY: "Hier", THIS_WEEK: "Cette semaine", LAST_WEEK: "Semaine passée", CUSTOM: "Personnalisé" };
+const periodLabels: Record<ReportPeriod, string> = { TODAY: "Aujourd’hui", YESTERDAY: "Hier", THIS_WEEK: "Cette semaine", LAST_WEEK: "Semaine passée", THIS_MONTH: "Ce mois", LAST_MONTH: "Mois précédent", CUSTOM: "Personnalisé" };
 const inputClass = "h-11 rounded-md border border-white/15 bg-slate-950 px-3 font-medium text-white outline-none transition hover:border-accent/40 focus:border-accent focus:ring-2 focus:ring-accent/25";
 
 export function DailyReportPage({ role }: { role: "ADMIN" | "AGENT" }) {

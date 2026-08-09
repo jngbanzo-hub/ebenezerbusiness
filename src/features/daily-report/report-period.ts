@@ -1,4 +1,4 @@
-export const REPORT_PERIODS = ["TODAY", "YESTERDAY", "THIS_WEEK", "LAST_WEEK", "CUSTOM"] as const;
+export const REPORT_PERIODS = ["TODAY", "YESTERDAY", "THIS_WEEK", "LAST_WEEK", "THIS_MONTH", "LAST_MONTH", "CUSTOM"] as const;
 export type ReportPeriod = (typeof REPORT_PERIODS)[number];
 
 export function resolveReportPeriod(input: {
@@ -20,6 +20,15 @@ export function resolveReportPeriod(input: {
   if (input.preset === "YESTERDAY") {
     const value = shift(today, -1);
     return range(value, value, input.preset);
+  }
+  if (input.preset === "THIS_MONTH") {
+    return range(`${input.today.slice(0, 7)}-01`, input.today, input.preset);
+  }
+  if (input.preset === "LAST_MONTH") {
+    const firstThisMonth = new Date(`${input.today.slice(0, 7)}-01T12:00:00.000Z`);
+    const lastPreviousMonth = new Date(firstThisMonth); lastPreviousMonth.setUTCDate(0);
+    const firstPreviousMonth = new Date(lastPreviousMonth); firstPreviousMonth.setUTCDate(1);
+    return range(firstPreviousMonth.toISOString().slice(0, 10), lastPreviousMonth.toISOString().slice(0, 10), input.preset);
   }
   const mondayOffset = (today.getUTCDay() + 6) % 7;
   const monday = shift(today, -mondayOffset + (input.preset === "LAST_WEEK" ? -7 : 0));
