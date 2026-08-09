@@ -100,14 +100,20 @@ export function createServerCashDashboardSource() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new CashDashboardSourceError("CASH_SOURCE_NOT_CONFIGURED");
-  return new CashDashboardSource(createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } }));
+  return new CashDashboardSource(createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: { fetch: noStoreFetch }
+  }));
 }
 
 export async function readCashReportMetadata(from: string, to: string) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new CashDashboardSourceError("CASH_SOURCE_NOT_CONFIGURED");
-  const client = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+  const client = createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: { fetch: noStoreFetch }
+  });
   const [events, audit] = await Promise.all([
     client.schema("public").from("cash_events")
       .select("event_id,agency,direction,amount,reason,actor_name_snapshot,occurred_at,business_date")
@@ -139,3 +145,6 @@ function text(value: unknown) { if (typeof value !== "string" || !value.trim()) 
 function money(value: unknown) { const number = typeof value === "number" ? value : Number(value); if (!Number.isFinite(number)) throw new CashDashboardSourceError("CASH_ROW_INVALID"); return cents(number); }
 function integer(value: unknown) { const number = Number(value); if (!Number.isInteger(number) || number < 0) throw new CashDashboardSourceError("CASH_ROW_INVALID"); return number; }
 function cents(value: number) { return Math.round(value * 100) / 100; }
+function noStoreFetch(input: RequestInfo | URL, init?: RequestInit) {
+  return fetch(input, { ...init, cache: "no-store" });
+}

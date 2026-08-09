@@ -118,7 +118,14 @@ function serviceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new StockagesV2Error("STORAGE_SERVICE_NOT_CONFIGURED", 503);
-  return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } }).schema("public");
+  return createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: { fetch: noStoreFetch }
+  }).schema("public");
+}
+
+function noStoreFetch(input: RequestInfo | URL, init?: RequestInit) {
+  return fetch(input, { ...init, cache: "no-store" });
 }
 
 function mapRpcError(message: string) {
