@@ -12,6 +12,7 @@ import { getAllowedDestinations } from "@/features/agent/agencies";
 import { getAgentProfile, signOutAgent } from "@/features/agent/auth";
 import { AgentApiError, saveDestinationPayment, savePayment, searchDestinationParcel, searchParcel } from "@/features/agent/functions";
 import { AgentManifestControl } from "@/features/agent/agent-manifest-page";
+import { formatParcelArrivalDate } from "@/features/agent/parcel-arrival-date";
 import {
   acquireForwardingSubmissionLock,
   fingerprintForwardingIntent,
@@ -77,6 +78,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
     () => (profile ? getAllowedDestinations(profile.agence) : []),
     [profile]
   );
+  const parcelArrival = parcel ? formatParcelArrivalDate(parcel.dateColis) : null;
 
   useEffect(() => {
     let active = true;
@@ -459,7 +461,8 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
                   label="Destination"
                   value={`${parcel.destinationNom} (${parcel.destinationCode})`}
                 />
-                <ParcelValue label="Date du colis" value={parcel.dateColis} />
+                <ParcelValue label="Date d’arrivée" value={parcelArrival?.date ?? "—"} />
+                <ParcelValue label="Heure d’arrivée" value={parcelArrival?.time ?? "—"} />
                 <ParcelValue label="Poids" value={formatWeight(parcel.poidsKg)} />
                 <ParcelValue label="Montant attendu" value={formatAmount(parcel.montantAttendu)} />
                 <ParcelValue label="Statut du colis" value={parcel.statutColis} />
