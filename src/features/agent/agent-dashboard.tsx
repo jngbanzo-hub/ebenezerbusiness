@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -22,8 +23,10 @@ import { signOutAgent } from "@/features/agent/auth";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import type { Agency } from "@/features/agent/types";
 import { NotificationBell } from "@/features/notifications/notification-center";
+import { getAgentProfilePhoto } from "@/features/agent/profile-photo-map";
 
 type AgentDashboardProfile = {
+  id: string;
   nom: string;
   role: "AGENT";
   agence: Agency;
@@ -233,6 +236,13 @@ export function AgentDashboard() {
           actionLabel: "CONSULTER"
         }
       : operation);
+  const profilePhoto = getAgentProfilePhoto(profile.id);
+  const initials = profile.nom
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
 
   return (
     <main className="min-h-screen bg-ebe-night py-8 text-white sm:py-12">
@@ -240,6 +250,25 @@ export function AgentDashboard() {
         <header className="flex flex-col gap-5 border-b border-white/10 pb-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <Badge variant="growth">Espace Agent</Badge>
+            {profilePhoto ? (
+              <div className="relative mt-4 h-20 w-20 overflow-hidden rounded-full border-2 border-accent/40 shadow-lg shadow-accent/10 sm:h-24 sm:w-24">
+                <Image
+                  src={profilePhoto}
+                  alt={`Photo de profil de ${profile.nom}`}
+                  fill
+                  sizes="(min-width: 640px) 96px, 80px"
+                  className="object-cover"
+                  priority
+                />
+              </div>
+            ) : (
+              <div
+                className="mt-4 grid h-20 w-20 place-items-center rounded-full border-2 border-accent/40 bg-accent/15 text-2xl font-bold text-accent shadow-lg shadow-accent/10 sm:h-24 sm:w-24 sm:text-3xl"
+                aria-label={`Avatar ${initials}`}
+              >
+                {initials || <UserRound className="h-8 w-8" />}
+              </div>
+            )}
             <h1 className="mt-3 text-3xl font-semibold">{profile.nom}</h1>
             <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
               <span>Agence : {AGENCY_LABELS[profile.agence]}</span>
@@ -322,6 +351,8 @@ function isAgentDashboardProfile(
 
   const profile = value as Record<string, unknown>;
   return (
+    typeof profile.id === "string" &&
+    profile.id.trim().length > 0 &&
     typeof profile.nom === "string" &&
     profile.nom.trim().length > 0 &&
     profile.role === "AGENT" &&
