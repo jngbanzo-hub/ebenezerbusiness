@@ -13,6 +13,7 @@ import { getAgentProfile, signOutAgent } from "@/features/agent/auth";
 import { AgentApiError, saveDestinationPayment, savePayment, searchDestinationParcel, searchParcel } from "@/features/agent/functions";
 import { AgentManifestControl } from "@/features/agent/agent-manifest-page";
 import { formatParcelArrivalDate } from "@/features/agent/parcel-arrival-date";
+import { parcelStatusLabel } from "@/features/agent/parcel-status-label";
 import {
   acquireForwardingSubmissionLock,
   fingerprintForwardingIntent,
@@ -465,7 +466,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
                 <ParcelValue label="Heure d’arrivée" value={parcelArrival?.time ?? "—"} />
                 <ParcelValue label="Poids" value={formatWeight(parcel.poidsKg)} />
                 <ParcelValue label="Montant attendu" value={formatAmount(parcel.montantAttendu)} />
-                <ParcelValue label="Statut du colis" value={parcel.statutColis} />
+                <ParcelValue label="Statut du colis" value={parcelStatusLabel(parcel.statutColis)} />
                 <ParcelValue
                   label="Déjà payé"
                   value={formatAmount(parcel.montantDejaPaye)}
