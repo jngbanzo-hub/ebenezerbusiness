@@ -50,7 +50,7 @@ export class CashDashboardSource {
   }
 
   private async readAgency(agency: CashAgency, businessDate: string): Promise<CashDashboard> {
-    const [accounts, currentDay, totals, agents, history, anomalies, opening] = await Promise.all([
+    const [accounts, currentDay, totals, agents, history, anomalies, opening, ledger] = await Promise.all([
       this.select("cash_accounts", "agency,currency,status", { agency }),
       this.select("cash_current_day", "agency,business_date,payments_total,expenses_total,corrections_net", { agency, business_date: businessDate }),
       this.select("cash_agency_totals", "agency,business_date,payment_count,payments_total,expenses_total", { agency, business_date: businessDate }),
@@ -58,13 +58,16 @@ export class CashDashboardSource {
       this.select("cash_daily_history", "agency,business_date,opening_balance,payments_total,expenses_total,corrections_net,closing_balance,status,version,closed_at,reopened_at", { agency }),
       this.select("cash_anomalies", "agency,business_date,anomaly_type", { agency }),
       this.select("cash_events", "amount", { agency, event_type: "OPENING_BALANCE_RECORDED" })
+      ,this.select("cash_events", "event_type,direction,amount,business_date", { agency })
     ]);
     if (accounts.length !== 1) throw new CashDashboardSourceError("CASH_ACCOUNT_NOT_FOUND");
     const day = currentDay[0];
     const total = totals[0];
     const historyEntries = history.map(decodeHistory).sort((a, b) => b.businessDate.localeCompare(a.businessDate) || b.version - a.version);
     const previous = historyEntries.find((entry) => entry.businessDate < businessDate && entry.status === "CLOSED");
-    const openingBalance = previous?.closingBalance ?? money(opening[0]?.amount ?? 0);
+    const initialBalance = opening.length ? money(opening[0].amount) : null;
+    const priorMovements = ledger.filter((row) => text(row.event_type) !== "OPENING_BALANCE_RECORDED" && text(row.business_date) < businessDate);
+    const openingBalance = previous?.closingBalance ?? cents((initialBalance ?? 0) + priorMovements.reduce((sum, row) => sum + (text(row.direction) === "CREDIT" ? money(row.amount) : -money(row.amount)), 0));
     const paymentsTotal = money(day?.payments_total ?? total?.payments_total ?? 0);
     const expensesTotal = money(day?.expenses_total ?? total?.expenses_total ?? 0);
     const correctionsNet = money(day?.corrections_net ?? 0);
@@ -74,7 +77,7 @@ export class CashDashboardSource {
       currency: "USD",
       accountStatus: accountStatus(accounts[0].status),
       openingBalance,
-      initialBalance: opening.length ? money(opening[0].amount) : null,
+      initialBalance,
       paymentCount: integer(total?.payment_count ?? 0),
       paymentsTotal,
       expensesTotal,
