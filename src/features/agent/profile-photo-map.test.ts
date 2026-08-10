@@ -17,6 +17,13 @@ test("associe uniquement Kiss Esda BOMEME à la photo COO", () => {
   );
 });
 
+test("associe uniquement Christian Sacre à la photo COO", () => {
+  assert.equal(
+    getAgentProfilePhoto("2d046964-eb9b-4319-84e2-0e47e5e614d3"),
+    "/agents/christian-sacre.jpg",
+  );
+});
+
 test("conserve le fallback initiales pour les autres Agents", () => {
   assert.equal(getAgentProfilePhoto("7be74430-9bd7-41d5-ab22-8f9c5f1ab7bb"), null);
   assert.equal(getAgentProfilePhoto("agent-inconnu"), null);
