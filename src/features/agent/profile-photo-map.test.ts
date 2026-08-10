@@ -13,7 +13,7 @@ test("associe uniquement Sera NGBANZO à la photo FIH", () => {
 test("associe uniquement Kiss Esda BOMEME à la photo COO", () => {
   assert.equal(
     getAgentProfilePhoto("ac8d449e-4461-4fd3-a15f-910ad66299db"),
-    "/agents/coo-kiss-profile.jpg",
+    "/agents/kiss-esda-bomeme.jpg",
   );
 });
 
