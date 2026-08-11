@@ -165,7 +165,7 @@ export type TransferAuditEntry = {
 
 export type TransfersPageResponse = {
   state: TransfersModuleState;
-  moduleStatus: "PREPARATION";
+  moduleStatus: "PREPARATION" | "OPERATIONAL";
   role: "AGENT" | "ADMIN";
   agency: TransferAgency | null;
   apiAvailable: boolean;

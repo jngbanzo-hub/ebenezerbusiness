@@ -174,7 +174,7 @@ export function AdminTransfertsPage() {
           <Status label="État" value={result?.state ?? "CHARGEMENT"} />
           <Status label="Agence de traçabilité" value={result?.agency ?? "NON CONFIGURÉE"} />
           <Status label="API" value={result?.apiAvailable ? "DISPONIBLE" : "INDISPONIBLE"} />
-          <Status label="Écritures" value="DÉSACTIVÉES" />
+          <Status label="Écritures" value={result?.writesEnabled ? "ACTIVÉES" : "DÉSACTIVÉES"} />
           <Status label="Accès Admin" value={result?.adminEnabled ? "ACTIVÉ" : "DÉSACTIVÉ"} />
         </section>
 

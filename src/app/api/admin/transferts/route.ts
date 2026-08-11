@@ -43,11 +43,11 @@ export async function GET(request: Request) {
     const statistics = calculateAdminTransferStatistics(allTransfers);
     return privateJson({
       state: transfers.length ? "READY" : "EMPTY",
-      moduleStatus: "PREPARATION",
+      moduleStatus: "OPERATIONAL",
       role: "ADMIN",
       agency: authorization.agency,
       apiAvailable: true,
-      writesEnabled: false,
+      writesEnabled: flags.writesEnabled,
       adminEnabled: true,
       transfers,
       statistics,

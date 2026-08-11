@@ -38,7 +38,7 @@ export async function GET(request: Request) {
     const flags = getTransfertsFeatureFlags();
     const body: TransfersPageResponse = {
       state: transfers.length ? "READY" : "EMPTY",
-      moduleStatus: "PREPARATION",
+      moduleStatus: flags.writesEnabled ? "OPERATIONAL" : "PREPARATION",
       role: "AGENT",
       agency: identity.site,
       apiAvailable: true,

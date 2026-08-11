@@ -76,14 +76,16 @@ export function AgentTransfertsPage() {
             <Badge variant="growth">{result?.writesEnabled ? "OPÉRATIONS AUTORISÉES" : "EN PRÉPARATION"}</Badge>
             <h1 className="mt-3 text-3xl font-semibold">Transferts</h1>
             <p className="mt-3 max-w-2xl whitespace-pre-line text-sm leading-6 text-muted-foreground">
-              {"Le module Transferts est en cours de préparation.\nLes opérations réelles seront disponibles après autorisation de mise en service."}
+              {result?.writesEnabled
+                ? "Créez et suivez les transferts autorisés pour votre agence."
+                : "Le module Transferts est en cours de préparation.\nLes opérations réelles seront disponibles après autorisation de mise en service."}
             </p>
           </div>
           <Button asChild variant="outline"><Link href="/agent">Retour au tableau de bord</Link></Button>
         </header>
 
         <section className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          <Status label="Statut du module" value="PRÉPARATION" />
+          <Status label="Statut du module" value={result?.moduleStatus === "OPERATIONAL" ? "OPÉRATIONNEL" : "PRÉPARATION"} />
           <Status label="Agence connectée" value={result?.agency ?? "Vérification…"} />
           <Status label="Rôle connecté" value={result?.role ?? "AGENT"} />
           <Status label="Disponibilité API" value={result?.apiAvailable ? "DISPONIBLE" : error ? "INDISPONIBLE" : "VÉRIFICATION"} />
