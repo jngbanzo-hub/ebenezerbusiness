@@ -59,6 +59,36 @@ export async function readAdminStorage() {
   return { mode: "V2" as const, accounts: accounts.data ?? [], events: events.data ?? [], activity: activity.data ?? [], anomalies: anomalies.data ?? [], audit: audit.data ?? [] };
 }
 
+export async function readAdminStorageParcels(agency: StorageAgency) {
+  const client = serviceClient();
+  const [{ data: account, error: accountError }, { data: parcels, error: parcelsError }, { data: arrivals, error: arrivalsError }] = await Promise.all([
+    client.from("stockage_accounts").select("agency,status,current_parcel_count,current_weight_kg,version,opened_business_date,updated_at").eq("agency", agency).single(),
+    client.from("stockage_parcels").select("tracking_code,agency,canonical_weight_kg,delivery_status,created_at,updated_at").eq("agency", agency).in("delivery_status", ["AVAILABLE", "PRESENT"]).order("created_at", { ascending: false }).order("tracking_code", { ascending: true }),
+    client.from("stockage_events").select("tracking_code,actor_name,occurred_at").eq("agency", agency).not("tracking_code", "is", null).gt("parcel_count_delta", 0).order("occurred_at", { ascending: false }).limit(1000)
+  ]);
+  if (accountError || parcelsError || arrivalsError) throw new StockagesV2Error("STORAGE_ADMIN_READ_FAILED", 503);
+  const arrivalByCode = new Map<string, { actorName: string; occurredAt: string }>();
+  for (const row of arrivals ?? []) {
+    const code = String(row.tracking_code ?? "");
+    if (code && !arrivalByCode.has(code)) arrivalByCode.set(code, { actorName: String(row.actor_name ?? ""), occurredAt: String(row.occurred_at ?? "") });
+  }
+  return {
+    mode: "V2" as const,
+    account,
+    parcels: (parcels ?? []).map((parcel) => {
+      const arrival = arrivalByCode.get(parcel.tracking_code);
+      return {
+        trackingCode: parcel.tracking_code,
+        agency: parcel.agency,
+        weightKg: Number(parcel.canonical_weight_kg),
+        status: parcel.delivery_status,
+        arrivedAt: arrival?.occurredAt || parcel.created_at,
+        arrivalAgent: arrival?.actorName || null
+      };
+    })
+  };
+}
+
 export async function readStorageReportEvents(from: string, to = from, agency?: string) {
   let query = serviceClient()
     .from("stockage_events")
