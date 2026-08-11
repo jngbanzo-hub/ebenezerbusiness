@@ -7,7 +7,8 @@ import { GlassPanel } from "@/components/design-system";
 import { Button } from "@/components/ui/button";
 import {
   correctAdminTransferCode,
-  loadAdminTransferDetail
+  loadAdminTransferDetail,
+  revealAdminTransferCode
 } from "@/features/transferts/api";
 import type { TransferSummary } from "@/features/transferts/types";
 
@@ -27,6 +28,8 @@ export function AdminTransferDetails({
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [showCode, setShowCode] = useState(false);
+  const [revealedCode, setRevealedCode] = useState("");
+  const [revealingCode, setRevealingCode] = useState(false);
   const [pending, setPending] = useState(false);
   const [correctionRequestId, setCorrectionRequestId] = useState(() => crypto.randomUUID());
   const [writesEnabled, setWritesEnabled] = useState(false);
@@ -45,6 +48,7 @@ export function AdminTransferDetails({
   useEffect(() => {
     let active = true;
     setLoading(true);
+    setRevealedCode("");
     void loadAdminTransferDetail(token, transferId)
       .then((result) => {
         if (active) {
@@ -67,6 +71,7 @@ export function AdminTransferDetails({
     setTransfer(null);
     setShowForm(false);
     setShowCode(false);
+    setRevealedCode("");
     onClose();
   };
 
@@ -90,7 +95,35 @@ export function AdminTransferDetails({
               <Item label="Service" value={transfer.service} />
               <Item label="Montant" value={`${transfer.amount} ${transfer.currency}`} />
               <Item label="Frais" value={`${transfer.fees} ${transfer.currency}`} />
-              <Item label="Code" value={transfer.maskedCode} />
+              <p>
+                <span className="text-muted-foreground">Code :</span>{" "}
+                <span className="font-mono">{revealedCode || transfer.maskedCode || "—"}</span>{" "}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={revealingCode}
+                  aria-label={revealedCode ? "Masquer le code de transfert" : "Afficher le code de transfert"}
+                  onClick={async () => {
+                    if (revealedCode) {
+                      setRevealedCode("");
+                      return;
+                    }
+                    setRevealingCode(true);
+                    setError("");
+                    try {
+                      const response = await revealAdminTransferCode(token, transfer.transferId);
+                      setRevealedCode(response.transferCode);
+                    } catch (caught) {
+                      setError(caught instanceof Error ? caught.message : "Code indisponible.");
+                    } finally {
+                      setRevealingCode(false);
+                    }
+                  }}
+                >
+                  {revealedCode ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </p>
               <Item label="Statut" value={transfer.status} />
               <Item label="Date" value={transfer.sentAt} />
               <Item label="Observation" value={transfer.observation || "—"} />

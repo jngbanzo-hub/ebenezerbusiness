@@ -49,6 +49,18 @@ export function loadAdminTransferDetail(
   );
 }
 
+export function revealAdminTransferCode(
+  token: string,
+  transferId: string,
+  signal?: AbortSignal
+) {
+  return loadTransfers<{ state: "READY"; transferCode: string }>(
+    `/api/admin/transferts/${encodeURIComponent(transferId)}/code`,
+    token,
+    signal
+  );
+}
+
 export function correctAdminTransferCode(
   token: string,
   transferId: string,

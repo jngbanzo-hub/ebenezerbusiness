@@ -207,7 +207,7 @@ export function AdminTransfertsPage() {
         <GlassPanel className="mt-6 border-accent/20 p-5">
           <p className="flex gap-3 text-sm text-muted-foreground">
             <ShieldCheck className="h-5 w-5 shrink-0 text-accent" />
-            Aucun code complet ni action de création, confirmation, annulation ou modification n’est disponible.
+            Les codes restent masqués par défaut. Leur consultation ponctuelle est réservée à l’Admin authentifié depuis le détail.
           </p>
         </GlassPanel>
         {selectedTransferId && token.current ? (

@@ -53,7 +53,7 @@ export async function callTransfertsReadApi(
   action: TransfertsReadAction,
   actor: TransfertsActor,
   payload: Record<string, unknown>,
-  options: { fetcher?: typeof fetch; now?: number; allowAgentDetailCode?: boolean } = {}
+  options: { fetcher?: typeof fetch; now?: number; allowAgentDetailCode?: boolean; allowAdminDetailCode?: boolean } = {}
 ): Promise<unknown> {
   return callTransfertsApi(action, actor, payload, options);
 }
@@ -62,7 +62,7 @@ export async function callTransfertsWriteApi(
   action: TransfertsWriteAction | TransfertsAdminWriteAction,
   actor: TransfertsActor,
   payload: Record<string, unknown>,
-  options: { fetcher?: typeof fetch; now?: number; allowAgentDetailCode?: boolean } = {}
+  options: { fetcher?: typeof fetch; now?: number; allowAgentDetailCode?: boolean; allowAdminDetailCode?: boolean } = {}
 ): Promise<unknown> {
   return callTransfertsApi(action, actor, payload, options);
 }
@@ -71,7 +71,7 @@ async function callTransfertsApi(
   action: TransfertsReadAction | TransfertsWriteAction | TransfertsAdminWriteAction,
   actor: TransfertsActor,
   payload: Record<string, unknown>,
-  options: { fetcher?: typeof fetch; now?: number; allowAgentDetailCode?: boolean } = {}
+  options: { fetcher?: typeof fetch; now?: number; allowAgentDetailCode?: boolean; allowAdminDetailCode?: boolean } = {}
 ): Promise<unknown> {
   const config = readTransfertsConfiguration();
   const timestamp = String(options.now ?? Date.now());
@@ -126,7 +126,10 @@ async function callTransfertsApi(
       throw new TransfertsServiceError(validated.error?.code ?? "TRANSFERTS_SERVICE_ERROR");
     }
     return sanitizeTransfertsResponse(validated.data, {
-      allowTransferCode: action === "GET_TRANSFER" && options.allowAgentDetailCode === true
+      allowTransferCode:
+        action === "GET_TRANSFER" &&
+        ((actor.role === "AGENT" && options.allowAgentDetailCode === true) ||
+          (actor.role === "ADMIN" && options.allowAdminDetailCode === true))
     });
   } finally {
     clearTimeout(timeout);
