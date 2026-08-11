@@ -53,6 +53,14 @@ test("l'inventaire Agent lit uniquement les colis présents de son agence", () =
   assert.doesNotMatch(ui, /CurrentInventory[\s\S]*modifier un colis/i);
 });
 
+test("la page Statistiques Agent privilégie l'inventaire et conserve la période", () => {
+  assert.match(ui, /function AgentStatisticsView/);
+  assert.match(ui, /<CurrentInventory account=\{data\.account\} parcels=\{data\.parcels\}/);
+  assert.match(ui, /Voir l’historique/);
+  assert.match(ui, /filterEventsByPeriod/);
+  assert.doesNotMatch(ui, /AgentStatisticsView[\s\S]{0,1800}<PhysicalStatistics/);
+});
+
 test("un arrivage réussi notifie Admin et COO avec des clés idempotentes", () => {
   const arrival = read("./arrival/route.ts") + read("./forwardings/arrival/route.ts");
   assert.match(arrival, /if \(!result\.replayed\)/);

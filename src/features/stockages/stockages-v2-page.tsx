@@ -57,7 +57,26 @@ function AgentPhysicalHistory({ mode }: { mode: "outputs" | "statistics" }) {
   const title = mode === "outputs" ? "Stockages — Sorties" : "Stockages — Statistiques";
   if (!data) return <Shell back="/agent/stockages" title={title}><Notice text={message || "Chargement…"} /></Shell>;
   const outputs = data.events.filter((event) => event.parcel_count_delta < 0);
-  return <Shell back="/agent/stockages" title={`${mode === "outputs" ? "Sorties" : "Statistiques"} — ${data.account.agency}`}><AccountCards accounts={[data.account]} />{mode === "outputs" ? <><ForwardingCommandForm mode="delivery" disabled={!data.actionsEnabled} onDone={load} /><FilteredOutputHistory events={outputs} /></> : <><PhysicalStatistics events={data.events} /><CurrentInventory account={data.account} parcels={data.parcels} /><EventTable title="Historique physique" rows={data.events} /><ActivityTable rows={data.activity} /></>}{message && <Notice text={message} />}</Shell>;
+  return <Shell back="/agent/stockages" title={`${mode === "outputs" ? "Sorties" : "Statistiques"} — ${data.account.agency}`}><AccountCards accounts={[data.account]} />{mode === "outputs" ? <><ForwardingCommandForm mode="delivery" disabled={!data.actionsEnabled} onDone={load} /><FilteredOutputHistory events={outputs} /></> : <AgentStatisticsView data={data} />}{message && <Notice text={message} />}</Shell>;
+}
+
+function AgentStatisticsView({ data }: { data: AgentData }) {
+  const [period, setPeriod] = useState("MONTH");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const events = useMemo(() => filterEventsByPeriod(data.events, period, from, to), [data.events, from, period, to]);
+  return <>
+    <section className="rounded-2xl border border-lime-400/20 bg-slate-900/70 p-4"><div className="grid items-end gap-3 sm:grid-cols-3"><label className="text-sm">Période<select value={period} onChange={(event) => setPeriod(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2"><option value="DAY">Journalière</option><option value="WEEK">Hebdomadaire</option><option value="MONTH">Mensuelle</option><option value="YEAR">Annuelle</option><option value="CUSTOM">Personnalisée</option></select></label>{period === "CUSTOM" && <><label className="text-sm">Du<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><label className="text-sm">Au<input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label></>}</div></section>
+    <CurrentInventory account={data.account} parcels={data.parcels} />
+    <details className="rounded-2xl border border-white/10 bg-slate-900/60 p-4"><summary className="cursor-pointer font-semibold text-lime-300">Voir l’historique</summary><div className="mt-5 space-y-5"><EventTable title="Historique physique" rows={events} /><ActivityTable rows={data.activity} /></div></details>
+  </>;
+}
+
+function filterEventsByPeriod(events: EventRow[], period: string, from: string, to: string) {
+  const today = new Date(); const start = new Date(today);
+  if (period === "DAY") start.setDate(today.getDate()); else if (period === "WEEK") start.setDate(today.getDate() - 6); else if (period === "MONTH") start.setMonth(today.getMonth(), 1); else if (period === "YEAR") start.setMonth(0, 1);
+  const startDate = period === "CUSTOM" ? from : start.toISOString().slice(0, 10); const endDate = period === "CUSTOM" ? to : today.toISOString().slice(0, 10);
+  return events.filter((event) => (!startDate || event.business_date >= startDate) && (!endDate || event.business_date <= endDate));
 }
 
 function CurrentInventory({ account, parcels }: { account: Account; parcels: StorageParcel[] }) {
