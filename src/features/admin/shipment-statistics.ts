@@ -5,11 +5,16 @@ export type ShipmentStatisticRow = {
   weightKg: number; groupageCodes: string; pricePerKg: number; amountUsd: number;
   groupageWeights: string; manifestTotal: string; status: string; arrivalDate: string;
   arrivedGroupages: string; klzPackages: string; parcelCount: number | null;
+  manifestWeightKg: number; parcelCodes: string[];
 };
 
 export type ShipmentStatistics = {
   shipments: ShipmentStatisticRow[];
-  totals: { shipments: number; groupages: number; weightKg: number; amountUsd: number; parcels: number };
+  totals: {
+    shipments: number; groupages: number; weightKg: number; manifestWeightKg: number;
+    amountUsd: number; parcels: number;
+    destinationParcels: { fih: number; lshi: number; klz: number };
+  };
   byCompany: Array<{ label: string; shipments: number; weightKg: number }>;
   byDestination: Array<{ label: string; shipments: number; weightKg: number }>;
 };
@@ -35,7 +40,9 @@ export function parseShipmentStatistics(rows: unknown[][]): ShipmentStatistics {
       arrivalDate: normalizeDate(row[11]) ?? "",
       arrivedGroupages: text(row[12]),
       klzPackages: text(row[13]),
-      parcelCount: parseParcelCount(row[9], row[13])
+      parcelCount: parseParcelCount(row[9], row[13]),
+      manifestWeightKg: parseManifestWeight(row[8]),
+      parcelCodes: parseParcelCodes(row[5])
     } satisfies ShipmentStatisticRow];
   });
   return summarizeShipments(shipments);
@@ -59,9 +66,38 @@ function summarizeShipments(shipments: ShipmentStatisticRow[]): ShipmentStatisti
     const current = map.get(label) ?? { label, shipments: 0, weightKg: 0 };
     current.shipments += 1; current.weightKg += row.weightKg; map.set(label, current); return map;
   }, new Map<string, { label: string; shipments: number; weightKg: number }>()).values()).sort((a, b) => a.label.localeCompare(b.label));
+  const detailedCodes = new Set<string>();
+  const destinationCodes = { fih: new Set<string>(), lshi: new Set<string>(), klz: new Set<string>() };
+  let fallbackParcels = 0;
+  const fallbackDestinationParcels = { fih: 0, lshi: 0, klz: 0 };
+  for (const row of shipments) {
+    if (row.parcelCodes.length) {
+      for (const code of row.parcelCodes) {
+        detailedCodes.add(code);
+        if (row.company === "ETHIOPIAN" && row.destination === "LSHI") {
+          destinationCodes[code.endsWith("KLZ") ? "klz" : "lshi"].add(code);
+        } else if (["ASKY", "DHL"].includes(row.company) && row.destination === "FIH") {
+          destinationCodes.fih.add(code);
+        }
+      }
+    } else {
+      const count = row.parcelCount ?? 0;
+      fallbackParcels += count;
+      if (row.company === "ETHIOPIAN" && row.destination === "LSHI") fallbackDestinationParcels.lshi += count;
+      if (["ASKY", "DHL"].includes(row.company) && row.destination === "FIH") fallbackDestinationParcels.fih += count;
+    }
+  }
   return {
     shipments,
-    totals: shipments.reduce((total, row) => ({ shipments: total.shipments + 1, groupages: total.groupages + row.groupages, weightKg: total.weightKg + row.weightKg, amountUsd: total.amountUsd + row.amountUsd, parcels: total.parcels + (row.parcelCount ?? 0) }), { shipments: 0, groupages: 0, weightKg: 0, amountUsd: 0, parcels: 0 }),
+    totals: shipments.reduce((total, row) => ({ ...total, shipments: total.shipments + 1, groupages: total.groupages + row.groupages, weightKg: total.weightKg + row.weightKg, manifestWeightKg: total.manifestWeightKg + row.manifestWeightKg, amountUsd: total.amountUsd + row.amountUsd }), {
+      shipments: 0, groupages: 0, weightKg: 0, manifestWeightKg: 0, amountUsd: 0,
+      parcels: detailedCodes.size + fallbackParcels,
+      destinationParcels: {
+        fih: destinationCodes.fih.size + fallbackDestinationParcels.fih,
+        lshi: destinationCodes.lshi.size + fallbackDestinationParcels.lshi,
+        klz: destinationCodes.klz.size + fallbackDestinationParcels.klz
+      }
+    }),
     byCompany: aggregate("company"), byDestination: aggregate("destination")
   };
 }
@@ -74,4 +110,14 @@ function normalizeDate(value: unknown) {
   return /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : null;
 }
 function parseParcelCount(...values: unknown[]) { for (const value of values) { const match = text(value).match(/(\d+)\s*(?:COLIS|PCS)/i); if (match) return Number(match[1]); } return null; }
+function parseManifestWeight(value: unknown) {
+  const raw = text(value);
+  const kilograms = Array.from(raw.matchAll(/(-?\d+(?:[.,]\d+)?)\s*(?:KGS?|KILOGRAMMES?)/gi), (match) => Number(match[1].replace(",", ".")));
+  const values = kilograms.length ? kilograms : Array.from(raw.matchAll(/-?\d+(?:[.,]\d+)?/g), (match) => Number(match[0].replace(",", ".")));
+  return values.reduce((sum, item) => sum + (Number.isFinite(item) && item > 0 ? item : 0), 0);
+}
+function parseParcelCodes(value: unknown) {
+  const matches = text(value).toUpperCase().match(/[A-Z]{1,10}[ \t]*-?[ \t]*\d{2,}(?:[ \t]*[A-Z]{1,5})?/g) ?? [];
+  return Array.from(new Set(matches.map((code) => code.replace(/[^A-Z0-9]/g, "")).filter((code) => !/^(?:GROUPAGE|GRP)\d+$/.test(code))));
+}
 function normalize(value: unknown) { return text(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim().replace(/\s+/g, " "); }

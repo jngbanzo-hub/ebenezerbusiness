@@ -36,3 +36,37 @@ test("combine mois, destination, compagnie, statut et arrivée", () => {
   assert.equal(filterShipmentStatistics(parsed.shipments, { from: "2026-04-01", to: "2026-04-30", arrival: "ARRIVED" }).shipments.length, 1);
   assert.equal(filterShipmentStatistics(parsed.shipments, { from: "2026-04-01", to: "2026-04-30", destination: "KLZ", company: "ASKY", status: "ARRIVE", arrival: "ARRIVED" }).shipments.length, 1);
 });
+
+test("calcule le poids manifeste et sépare les colis Ethiopian LSHI/KLZ sans doublon", () => {
+  const parsed = parseShipmentStatistics([
+    ["Date"],
+    ["01/08/2026", "ETHIOPIAN", "LSHI", 2, 70, "AT02926klz\nAT02726 KLZ\nJL10026\nJL10026", 5, 350, "GROUPAGE 30 : 32 kg\nGROUPAGE 31 : 33 kg", "3 COLIS"],
+    ["02/08/2026", "ETHIOPIAN", "LSHI", 1, 40, "JL10126", 5, 200, "36 kg", "1 COLIS"]
+  ]);
+  const filtered = filterShipmentStatistics(parsed.shipments, { company: "ETHIOPIAN", destination: "LSHI" });
+  assert.equal(filtered.totals.weightKg, 110);
+  assert.equal(filtered.totals.manifestWeightKg, 101);
+  assert.equal(filtered.totals.parcels, 4);
+  assert.equal(filtered.totals.destinationParcels.lshi, 2);
+  assert.equal(filtered.totals.destinationParcels.klz, 2);
+  assert.equal(filtered.totals.parcels, filtered.totals.destinationParcels.lshi + filtered.totals.destinationParcels.klz);
+});
+
+test("classe tous les colis ASKY et DHL vers FIH", () => {
+  const parsed = parseShipmentStatistics([
+    ["Date"],
+    ["03/08/2026", "ASKY", "FIH", 1, 20, "FIH10026\nFIH10126klz", 5, 100, "19 kg", "2 COLIS"],
+    ["04/08/2026", "DHL", "FIH", 1, 30, "FIH10226", 5, 150, "29 kg", "1 COLIS"]
+  ]);
+  const asky = filterShipmentStatistics(parsed.shipments, { company: "ASKY", destination: "FIH" });
+  assert.equal(asky.totals.weightKg, 20);
+  assert.equal(asky.totals.manifestWeightKg, 19);
+  assert.equal(asky.totals.parcels, 2);
+  assert.equal(asky.totals.destinationParcels.fih, 2);
+  const dhl = filterShipmentStatistics(parsed.shipments, { company: "DHL", destination: "FIH" });
+  assert.equal(dhl.totals.weightKg, 30);
+  assert.equal(dhl.totals.manifestWeightKg, 29);
+  assert.equal(dhl.totals.parcels, 1);
+  assert.equal(dhl.totals.destinationParcels.fih, 1);
+  assert.equal(parsed.totals.parcels, 3);
+});
