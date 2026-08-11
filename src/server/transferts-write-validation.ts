@@ -48,7 +48,7 @@ export function validateCreateTransferInput(
     transferCode: text(body.transferCode, "transferCode", 128),
     senderName: text(body.senderName, "senderName", 120),
     beneficiaryName: text(body.beneficiaryName, "beneficiaryName", 120),
-    beneficiaryPhone: text(body.beneficiaryPhone, "beneficiaryPhone", 40),
+    beneficiaryPhone: optionalText(body.beneficiaryPhone, "beneficiaryPhone", 40),
     transferRequestId,
     ...(observation ? { observation } : {})
   };

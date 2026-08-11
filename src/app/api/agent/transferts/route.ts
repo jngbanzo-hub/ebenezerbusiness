@@ -8,6 +8,7 @@ import {
 import { mapAgentTransferError, error, privateJson, readJson } from "@/server/transferts-agent-actions";
 import { areTransfertsWritesEnabled, getTransfertsFeatureFlags } from "@/server/transferts-feature-flags";
 import { validateCreateTransferInput } from "@/server/transferts-write-validation";
+import { notifyTransferCreated } from "@/server/transferts-notifications";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -105,6 +106,7 @@ export async function POST(request: Request) {
         );
       }
     }
+    await notifyTransferCreated(transfer, { userId: identity.userId, name: identity.nom }).catch(() => undefined);
     return privateJson({ state: "SUCCESS", message: "Transfert créé.", transfer }, 201);
   } catch (caught) {
     return mapAgentTransferError(caught);

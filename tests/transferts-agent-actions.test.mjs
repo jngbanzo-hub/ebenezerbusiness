@@ -44,6 +44,8 @@ test("la création valide strictement les montants, frais, devise et champs obli
   const valid = validation.validateCreateTransferInput(baseInput, "FIH");
   assert.equal(valid.agencyFrom, "FIH");
   assert.equal(valid.transferCode, "SECRET-123");
+  assert.equal(validation.validateCreateTransferInput({ ...baseInput, beneficiaryPhone: "" }, "FIH").beneficiaryPhone, "");
+  assert.equal(validation.validateCreateTransferInput({ ...baseInput, beneficiaryPhone: null }, "FIH").beneficiaryPhone, "");
   for (const amount of [0, -1, Infinity, "100"]) {
     assert.throws(() => validation.validateCreateTransferInput({ ...baseInput, amount }, "FIH"));
   }
@@ -52,7 +54,7 @@ test("la création valide strictement les montants, frais, devise et champs obli
   }
   for (const mutation of [
     { currency: "EUR" },
-    { beneficiaryPhone: "" },
+    { beneficiaryPhone: "<numéro>" },
     { service: "" },
     { transferCode: "" },
     { transferCode: "<script>" },

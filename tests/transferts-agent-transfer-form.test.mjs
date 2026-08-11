@@ -32,3 +32,10 @@ test("Eye et EyeOff ne changent que la visibilité de la saisie", () => {
   assert.ok(form.includes('type="button"'));
   assert.equal(form.includes("console."), false);
 });
+
+test("le téléphone bénéficiaire est explicitement facultatif", () => {
+  assert.match(form, /Téléphone bénéficiaire \(facultatif\)/);
+  const field = form.match(/<input name="beneficiaryPhone"[^>]+>/)?.[0] ?? "";
+  assert.ok(field);
+  assert.doesNotMatch(field, /\brequired\b/);
+});

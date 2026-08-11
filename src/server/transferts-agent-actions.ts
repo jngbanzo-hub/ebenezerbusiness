@@ -19,6 +19,7 @@ import {
   validateTransferId,
   validateTransitionBody
 } from "@/server/transferts-write-validation";
+import { notifyTransferWithdrawn } from "@/server/transferts-notifications";
 
 export async function executeAgentTransferAction(
   request: Request,
@@ -67,6 +68,9 @@ export async function executeAgentTransferAction(
         );
       }
       result = recovered;
+    }
+    if (action === "CONFIRM_FUNDS_WITHDRAWN") {
+      await notifyTransferWithdrawn(transfer, { userId: identity.userId, name: identity.nom }).catch(() => undefined);
     }
     return privateJson({
       state: "SUCCESS",

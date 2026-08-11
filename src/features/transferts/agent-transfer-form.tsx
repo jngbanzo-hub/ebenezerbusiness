@@ -78,7 +78,7 @@ export function AgentTransferForm({
       </Field>
       <Field label="Expéditeur"><input name="senderName" maxLength={120} required className="field" /></Field>
       <Field label="Bénéficiaire"><input name="beneficiaryName" maxLength={120} required className="field" /></Field>
-      <Field label="Téléphone bénéficiaire"><input name="beneficiaryPhone" maxLength={40} required className="field" /></Field>
+      <Field label="Téléphone bénéficiaire (facultatif)"><input name="beneficiaryPhone" maxLength={40} className="field" /></Field>
       <Field label="Observation"><input name="observation" maxLength={500} className="field" /></Field>
       <div className="sm:col-span-2">
         <Button type="submit" disabled={pending}>{pending ? "Envoi sécurisé…" : "Créer le transfert"}</Button>

@@ -3,21 +3,23 @@ import "server-only";
 import { createClient } from "@supabase/supabase-js";
 
 export type NotificationAgency = "COO" | "FIH" | "LSHI" | "KLZ";
-export type NotificationType = "PAYMENT" | "EXPENSE" | "STORAGE_ARRIVAL" | "STORAGE_EXIT" | "CASH";
+export type NotificationType = "PAYMENT" | "EXPENSE" | "STORAGE_ARRIVAL" | "STORAGE_EXIT" | "CASH" | "TRANSFER";
+export type NotificationAudience = "ALL" | "AGENT" | "ADMIN";
 
 type Scope = { userId: string; role: "AGENT" | "ADMIN"; agency: NotificationAgency | null };
 
-export async function recordInternalNotification(input: { eventKey: string; agency: NotificationAgency; type: NotificationType; title: string; message: string; actorUserId: string; actorName: string }) {
+export async function recordInternalNotification(input: { eventKey: string; agency: NotificationAgency; type: NotificationType; title: string; message: string; actorUserId: string; actorName: string; audience?: NotificationAudience }) {
   const { error } = await client().from("internal_notifications").upsert({
     event_key: input.eventKey, agency: input.agency, type: input.type, title: input.title.slice(0, 160),
-    message: input.message.slice(0, 500), actor_user_id: input.actorUserId, actor_name: input.actorName.slice(0, 160)
+    message: input.message.slice(0, 500), actor_user_id: input.actorUserId, actor_name: input.actorName.slice(0, 160),
+    audience_role: input.audience ?? "ALL"
   }, { onConflict: "event_key", ignoreDuplicates: true });
   if (error) throw new Error("NOTIFICATION_WRITE_FAILED");
 }
 
 export async function listInternalNotifications(scope: Scope, unreadOnly: boolean) {
   let query = client().from("internal_notifications").select("id,type,title,message,agency,actor_name,occurred_at").order("occurred_at", { ascending: false }).limit(100);
-  if (scope.role === "AGENT") query = query.eq("agency", requiredAgency(scope.agency));
+  if (scope.role === "AGENT") query = query.eq("agency", requiredAgency(scope.agency)).in("audience_role", ["ALL", "AGENT"]);
   const [{ data, error }, reads] = await Promise.all([query, client().from("internal_notification_reads").select("notification_id").eq("user_id", scope.userId)]);
   if (error || reads.error) throw new Error("NOTIFICATION_READ_FAILED");
   const readIds = new Set((reads.data ?? []).map((row) => row.notification_id));
