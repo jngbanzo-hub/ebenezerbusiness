@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, CircleAlert, LoaderCircle, PackageSearch, RefreshCw, Scale } from "lucide-react";
+import { ArrowLeft, Check, CircleAlert, ClipboardCopy, LoaderCircle, PackageSearch, RefreshCw, Scale } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { Container, GlassPanel } from "@/components/design-system";
 import { Button } from "@/components/ui/button";
-import type { ReceptionStatistics } from "@/features/agent/reception-statistics";
+import { formatParcelsForArrival, type ReceptionStatistics } from "@/features/agent/reception-statistics";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { formatWeight } from "@/lib/format-weight";
 
@@ -25,6 +25,7 @@ export function ReceptionStatisticsPage() {
   const [year, setYear] = useState(""); const [month, setMonth] = useState("");
   const [company, setCompany] = useState("ALL"); const [status, setStatus] = useState("ALL");
   const [arrival, setArrival] = useState("ALL"); const [search, setSearch] = useState("");
+  const [copyFeedback, setCopyFeedback] = useState("");
 
   const load = useCallback(async () => {
     if (!token.current) return;
@@ -62,6 +63,15 @@ export function ReceptionStatisticsPage() {
 
   function reset() { setFrom(""); setTo(""); setYear(""); setMonth(""); setCompany("ALL"); setStatus("ALL"); setArrival("ALL"); setSearch(""); }
 
+  async function copyForArrival() {
+    if (!statistics || statistics.copyValidationErrors.length) return;
+    try {
+      await navigator.clipboard.writeText(formatParcelsForArrival(statistics.parcels));
+      setCopyFeedback(`${statistics.parcels.length} colis · ${formatWeight(statistics.parcels.reduce((sum, parcel) => sum + parcel.weightKg, 0))} copiés`);
+      window.setTimeout(() => setCopyFeedback(""), 4000);
+    } catch { setError("La copie dans le presse-papiers a échoué."); }
+  }
+
   return <main className="min-h-screen bg-ebe-night py-8 text-white"><Container>
     <header><Link href="/agent" className="inline-flex items-center gap-2 text-sm text-accent"><ArrowLeft className="h-4 w-4"/>Retour au tableau de bord Agent</Link><h1 className="mt-3 text-3xl font-semibold">Statistiques de Réception</h1><p className="mt-2 text-sm text-muted-foreground">Consulter les colis et le poids prévus à la réception de votre agence.</p></header>
     <GlassPanel className="mt-8 p-5"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -69,7 +79,7 @@ export function ReceptionStatisticsPage() {
     </div><div className="mt-4 flex gap-3"><Button variant="growth" onClick={()=>void load()} disabled={loading}><RefreshCw className="mr-2 h-4 w-4"/>Appliquer les filtres</Button><Button variant="outline" onClick={reset}>Réinitialiser</Button></div></GlassPanel>
     {error?<GlassPanel className="mt-6 p-8 text-center"><CircleAlert className="mx-auto h-8 w-8 text-red-200"/><p role="alert" className="mt-3">{error}</p></GlassPanel>:null}
     {loading&&!statistics?<div className="grid min-h-64 place-items-center"><LoaderCircle className="h-8 w-8 animate-spin text-accent"/></div>:null}
-    {statistics?<><div className="mt-6 grid gap-4 sm:grid-cols-2"><Metric label="NOMBRE DE COLIS À RECEVOIR" value={`${statistics.totals.parcels} colis`} icon={PackageSearch}/><Metric label="POIDS À RECEVOIR" value={formatWeight(statistics.totals.weightKg)} icon={Scale}/></div><p className="mt-5 text-sm text-amber-100">Ces statistiques indiquent les colis prévus à la réception. Le Stockage V2 reste la source de vérité des colis physiquement reçus.</p><GlassPanel className="mt-5 overflow-x-auto"><table className="w-full min-w-[760px] text-sm"><thead><tr className="border-b border-white/10 text-left text-muted-foreground"><th className="p-4">Groupage</th><th>Compagnie</th><th>Date</th><th>Nombre colis</th><th>Poids à recevoir</th><th>Statut</th></tr></thead><tbody>{statistics.rows.map(row=><tr key={row.id} className="border-b border-white/5"><td className="max-w-64 whitespace-pre-wrap p-4">{row.groupage}</td><td>{row.company}</td><td>{formatDate(row.date)}</td><td>{row.parcels}</td><td>{formatWeight(row.weightKg)}</td><td>{row.status}</td></tr>)}</tbody></table>{statistics.rows.length===0?<div className="p-10 text-center text-muted-foreground">Aucune réception prévue ne correspond aux filtres.</div>:null}</GlassPanel></>:null}
+    {statistics?<><div className="mt-6 grid gap-4 sm:grid-cols-2"><Metric label="NOMBRE DE COLIS À RECEVOIR" value={`${statistics.totals.parcels} colis`} icon={PackageSearch}/><Metric label="POIDS À RECEVOIR" value={formatWeight(statistics.totals.weightKg)} icon={Scale}/></div><p className="mt-5 text-sm text-amber-100">Ces statistiques indiquent les colis prévus à la réception. Le Stockage V2 reste la source de vérité des colis physiquement reçus.</p><GlassPanel className="mt-5 p-5"><div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-lg font-semibold">COLIS À RECEVOIR</h2><p className="mt-1 text-sm text-muted-foreground">Nombre de colis sélectionnés : {statistics.parcels.length}</p><p className="text-sm text-muted-foreground">Poids total sélectionné : {formatWeight(statistics.parcels.reduce((sum, parcel) => sum + parcel.weightKg, 0))}</p></div><Button variant="growth" onClick={()=>void copyForArrival()} disabled={!statistics.parcels.length||statistics.copyValidationErrors.length>0}><ClipboardCopy className="mr-2 h-4 w-4"/>COPIER POUR ARRIVAGE</Button></div>{copyFeedback?<p role="status" className="mt-4 flex items-center gap-2 text-sm text-accent"><Check className="h-4 w-4"/>Liste copiée pour Arrivage — {copyFeedback}</p>:null}{statistics.copyValidationErrors.length?<div role="alert" className="mt-4 rounded-md border border-red-300/30 bg-red-950/30 p-3 text-sm text-red-100"><p className="font-semibold">Copie indisponible :</p><ul className="mt-1 list-disc pl-5">{statistics.copyValidationErrors.map(message=><li key={message}>{message}</li>)}</ul></div>:null}<div className="mt-4 max-h-72 overflow-auto rounded-md border border-white/10"><table className="w-full min-w-[420px] text-sm"><thead><tr className="border-b border-white/10 text-left text-muted-foreground"><th className="p-3">Code colis</th><th className="p-3">Poids</th></tr></thead><tbody>{statistics.parcels.map(parcel=><tr key={parcel.code} className="border-b border-white/5"><td className="p-3">{parcel.code}</td><td className="p-3">{formatWeight(parcel.weightKg)}</td></tr>)}</tbody></table></div></GlassPanel><GlassPanel className="mt-5 overflow-x-auto"><table className="w-full min-w-[760px] text-sm"><thead><tr className="border-b border-white/10 text-left text-muted-foreground"><th className="p-4">Groupage</th><th>Compagnie</th><th>Date</th><th>Nombre colis</th><th>Poids à recevoir</th><th>Statut</th></tr></thead><tbody>{statistics.rows.map(row=><tr key={row.id} className="border-b border-white/5"><td className="max-w-64 whitespace-pre-wrap p-4">{row.groupage}</td><td>{row.company}</td><td>{formatDate(row.date)}</td><td>{row.parcels}</td><td>{formatWeight(row.weightKg)}</td><td>{row.status}</td></tr>)}</tbody></table>{statistics.rows.length===0?<div className="p-10 text-center text-muted-foreground">Aucune réception prévue ne correspond aux filtres.</div>:null}</GlassPanel></>:null}
   </Container></main>;
 }
 

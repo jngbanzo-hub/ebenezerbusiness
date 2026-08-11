@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { parseShipmentStatistics } from "@/features/admin/shipment-statistics";
-import { isKlzSuffix, projectReceptionStatistics } from "./reception-statistics";
+import { formatParcelsForArrival, isKlzSuffix, projectReceptionStatistics } from "./reception-statistics";
 
 test("sépare Ethiopian LSHI et KLZ par suffixe sans perdre le total", () => {
   const source = parseShipmentStatistics([
@@ -17,6 +17,17 @@ test("sépare Ethiopian LSHI et KLZ par suffixe sans perdre le total", () => {
   assert.equal(lshi.totals.weightKg, 4);
   assert.equal(klz.totals.weightKg, 6);
   assert.equal(isKlzSuffix("MR12526 klz  "), true);
+  assert.deepEqual(klz.parcels.map((parcel) => parcel.copyCode), ["JL00226", "JL00426"]);
+  assert.equal(formatParcelsForArrival(klz.parcels), "JL00226 : 2Kgs\nJL00426 : 4Kgs");
+  assert.deepEqual(lshi.parcels.map((parcel) => parcel.copyCode), ["JL00126", "JL00326"]);
+});
+
+test("refuse une copie partielle si un poids est absent ou un code est dupliqué", () => {
+  assert.throws(() => formatParcelsForArrival([
+    { code: "JL00126", copyCode: "JL00126", weightKg: 2 },
+    { code: "JL00126KLZ", copyCode: "JL00126", weightKg: 3 },
+  ]), /plusieurs fois/);
+  assert.throws(() => formatParcelsForArrival([{ code: "JL00226", copyCode: "JL00226", weightKg: 0 }]), /invalide/);
 });
 
 test("conserve ASKY et DHL FIH sans appliquer le suffixe KLZ", () => {
