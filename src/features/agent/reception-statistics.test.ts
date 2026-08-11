@@ -62,3 +62,14 @@ test("les filtres restent compatibles avec la projection d'agence", () => {
   assert.equal(april.rows.length, 1);
   assert.equal(april.totals.parcels, 1);
 });
+
+test("les cartes correspondent exactement à la sélection unique copiée", () => {
+  const source = parseShipmentStatistics([
+    ["Date"],
+    ["01/08/2026", "ASKY", "FIH", 1, 2, "JL00126 : 2kgs", 0, 0, "2 kg", "1 COLIS"],
+    ["02/08/2026", "ASKY", "FIH", 1, 9, "JL00226 : 9kgs", 0, 0, "9 kg", "1 COLIS"],
+  ]).shipments;
+  const reception = projectReceptionStatistics(source, "FIH");
+  assert.equal(reception.totals.parcels, reception.parcels.length);
+  assert.equal(reception.totals.weightKg, reception.parcels.reduce((sum, parcel) => sum + parcel.weightKg, 0));
+});

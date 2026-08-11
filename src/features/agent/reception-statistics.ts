@@ -61,7 +61,10 @@ export function projectReceptionStatistics(
       if (uniqueParcels === 0) return [];
       const weights = parcelWeights(shipment);
       for (const code of projection.codes) {
-        if (selectedParcels.has(code)) continue;
+        if (selectedParcels.has(code)) {
+          copyValidationErrors.add(`Code dupliqué dans la sélection : ${code}.`);
+          continue;
+        }
         const weightKg = weights.get(code);
         const copyCode = agency === "KLZ" && specialEthiopianShipment(shipment)
           ? stripKlzSuffix(code)
@@ -87,14 +90,16 @@ export function projectReceptionStatistics(
       status: shipment.status || "—",
     }];
   });
+  const parcels = Array.from(selectedParcels.values());
+  const detailedWeightKg = round(parcels.reduce((sum, parcel) => sum + parcel.weightKg, 0));
   return {
     agency,
     totals: {
       parcels: seenCodes.size + fallbackParcels,
-      weightKg: round(rows.reduce((sum, row) => sum + row.weightKg, 0)),
+      weightKg: fallbackParcels === 0 && copyValidationErrors.size === 0 ? detailedWeightKg : round(rows.reduce((sum, row) => sum + row.weightKg, 0)),
     },
     rows: rows.sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id)),
-    parcels: Array.from(selectedParcels.values()),
+    parcels,
     copyValidationErrors: Array.from(copyValidationErrors),
   };
 }
