@@ -2,12 +2,14 @@ import "server-only";
 
 import { createClient } from "@supabase/supabase-js";
 
+import { buildStockagesRpcDiagnostic, type StockagesRpcDiagnosticContext, type StockagesRpcFailure } from "@/server/stockages-rpc-diagnostics";
+
 
 export const STORAGE_AGENCIES = ["FIH", "LSHI", "KLZ"] as const;
 export type StorageAgency = (typeof STORAGE_AGENCIES)[number];
 
 export class StockagesV2Error extends Error {
-  constructor(readonly code: string, readonly status = 400) {
+  constructor(readonly code: string, readonly status = 400, readonly diagnosticId?: string) {
     super(code);
   }
 }
@@ -131,10 +133,10 @@ export function validateArrivalParcels(value: unknown): readonly ArrivalParcel[]
   return Object.freeze(parcels);
 }
 
-export async function recordArrival(input: { parcels: unknown; reference?: string; observation?: string; requestId: string; actorId: string }) {
+export async function recordArrival(input: { parcels: unknown; reference?: string; observation?: string; requestId: string; actorId: string; agency: StorageAgency }) {
   validateUuid(input.requestId);
   const parcels = validateArrivalParcels(input.parcels);
-  return rpc("record_detailed_arrival", { p_parcels: parcels, p_business_date: businessDatePortoNovo(), p_arrival_reference: clean(input.reference), p_observation: clean(input.observation), p_request_id: input.requestId, p_actor_id: input.actorId });
+  return rpc("record_detailed_arrival", { p_parcels: parcels, p_business_date: businessDatePortoNovo(), p_arrival_reference: clean(input.reference), p_observation: clean(input.observation), p_request_id: input.requestId, p_actor_id: input.actorId }, { rpc: "record_detailed_arrival", agency: input.agency, commandType: "MANUAL_ARRIVAL" });
 }
 
 export async function confirmDelivery(input: { trackingCode: string; requestId: string; physicalConfirmed: boolean; actorId: string; agency: StorageAgency; weightKg: number; weightSourceReference: string; paymentSnapshot: Record<string, unknown> }) {
@@ -154,9 +156,14 @@ export async function runAdminStorageCommand(action: string, body: Record<string
   throw new StockagesV2Error("UNKNOWN_STORAGE_COMMAND");
 }
 
-async function rpc(name: string, args: Record<string, unknown>): Promise<RpcResult> {
+async function rpc(name: string, args: Record<string, unknown>, diagnosticContext?: StockagesRpcDiagnosticContext): Promise<RpcResult> {
   const { data, error } = await serviceClient().rpc(name, args);
-  if (error) throw mapRpcError(error.message);
+  if (error) {
+    const diagnosticId = crypto.randomUUID();
+    const diagnostic = buildStockagesRpcDiagnostic(diagnosticId, error as StockagesRpcFailure, diagnosticContext ?? { rpc: name, commandType: "STORAGE_RPC" });
+    console.error("[stockages-rpc-error]", JSON.stringify(diagnostic));
+    throw mapRpcError(error.message, diagnosticId);
+  }
   return (data ?? {}) as RpcResult;
 }
 
@@ -174,10 +181,10 @@ function noStoreFetch(input: RequestInfo | URL, init?: RequestInit) {
   return fetch(input, { ...init, cache: "no-store" });
 }
 
-function mapRpcError(message: string) {
+function mapRpcError(message: string, diagnosticId?: string) {
   const codes = ["IDEMPOTENCY_CONFLICT", "STORAGE_ACCOUNT_NOT_ACTIVE", "STORAGE_ACCOUNT_NOT_SUSPENDED", "OPENING_STOCK_ALREADY_RECORDED", "PARCEL_ALREADY_DELIVERED", "INSUFFICIENT_STOCK", "PARCEL_VERSION_CONFLICT", "STORAGE_VERSION_CONFLICT", "ADMIN_REQUIRED", "ACTIVE_AGENT_REQUIRED"];
   const code = codes.find((candidate) => message.includes(candidate)) ?? "STORAGE_COMMAND_FAILED";
-  return new StockagesV2Error(code, code === "IDEMPOTENCY_CONFLICT" || code.includes("ALREADY") ? 409 : code.includes("NOT_ACTIVE") ? 423 : 400);
+  return new StockagesV2Error(code, code === "IDEMPOTENCY_CONFLICT" || code.includes("ALREADY") ? 409 : code.includes("NOT_ACTIVE") ? 423 : 400, diagnosticId);
 }
 
 function normalizeTrackingCode(value: unknown) { const code = String(value ?? "").trim().toUpperCase(); if (!/^[A-Z0-9][A-Z0-9._/-]{1,63}$/.test(code)) throw new StockagesV2Error("INVALID_TRACKING_CODE"); return code; }

@@ -74,3 +74,15 @@ test("un arrivage réussi notifie Admin et COO avec des clés idempotentes", () 
   assert.match(arrival, /agency: "COO", audience: "AGENT"/);
   assert.match(arrival, /if\(!result\.replayed\)/);
 });
+
+test("une erreur RPC reste générique côté Agent et corrélée aux logs serveur", () => {
+  const arrival = read("./arrival/route.ts");
+  const diagnostics = read("../../../../server/stockages-rpc-diagnostics.ts");
+  assert.match(arrival, /Commande Stockages refusée/);
+  assert.match(arrival, /diagnosticId/);
+  assert.match(server, /\[stockages-rpc-error\]/);
+  assert.match(diagnostics, /code: clean\(error\.code\)/);
+  assert.match(diagnostics, /details: clean\(error\.details\)/);
+  assert.match(diagnostics, /hint: clean\(error\.hint\)/);
+  assert.doesNotMatch(diagnostics, /JWT|SERVICE_ROLE|access_token/i);
+});
