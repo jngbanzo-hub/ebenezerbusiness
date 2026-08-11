@@ -19,3 +19,15 @@ test("refuse une période inversée ou invalide", () => {
   assert.throws(() => resolveReportPeriod({ preset: "CUSTOM", today, from: "2026-08-09", to: "2026-08-08" }), /INVALID_REPORT_PERIOD/);
   assert.throws(() => resolveReportPeriod({ preset: "CUSTOM", today, from: "", to: "2026-08-08" }), /INVALID_REPORT_PERIOD/);
 });
+
+test("gère les fins de mois 28, 29, 30 et 31 jours", () => {
+  assert.deepEqual(resolveReportPeriod({ preset: "LAST_MONTH", today: "2027-03-01" }), { preset: "LAST_MONTH", from: "2027-02-01", to: "2027-02-28" });
+  assert.deepEqual(resolveReportPeriod({ preset: "LAST_MONTH", today: "2028-03-01" }), { preset: "LAST_MONTH", from: "2028-02-01", to: "2028-02-29" });
+  assert.deepEqual(resolveReportPeriod({ preset: "LAST_MONTH", today: "2026-05-01" }), { preset: "LAST_MONTH", from: "2026-04-01", to: "2026-04-30" });
+  assert.deepEqual(resolveReportPeriod({ preset: "LAST_MONTH", today: "2026-09-01" }), { preset: "LAST_MONTH", from: "2026-08-01", to: "2026-08-31" });
+});
+
+test("gère le passage décembre vers janvier et les périodes qui traversent un mois", () => {
+  assert.deepEqual(resolveReportPeriod({ preset: "LAST_MONTH", today: "2027-01-01" }), { preset: "LAST_MONTH", from: "2026-12-01", to: "2026-12-31" });
+  assert.deepEqual(enumerateReportDates("2026-08-31", "2026-09-02"), ["2026-08-31", "2026-09-01", "2026-09-02"]);
+});

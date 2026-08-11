@@ -1,5 +1,7 @@
 import "server-only";
 
+import { resolveCashOpeningBalance } from "@/features/daily-report/cash-period";
+
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import {
@@ -66,8 +68,12 @@ export class CashDashboardSource {
     const historyEntries = history.map(decodeHistory).sort((a, b) => b.businessDate.localeCompare(a.businessDate) || b.version - a.version);
     const previous = historyEntries.find((entry) => entry.businessDate < businessDate && entry.status === "CLOSED");
     const initialBalance = opening.length ? money(opening[0].amount) : null;
-    const priorMovements = ledger.filter((row) => text(row.event_type) !== "OPENING_BALANCE_RECORDED" && text(row.business_date) < businessDate);
-    const openingBalance = previous?.closingBalance ?? cents((initialBalance ?? 0) + priorMovements.reduce((sum, row) => sum + (text(row.direction) === "CREDIT" ? money(row.amount) : -money(row.amount)), 0));
+    const openingBalance = resolveCashOpeningBalance({
+      businessDate,
+      initialBalance,
+      previousClosedDay: previous,
+      ledger: ledger.map((row) => ({ eventType: text(row.event_type), businessDate: text(row.business_date), amount: money(row.amount), direction: text(row.direction) === "CREDIT" ? "CREDIT" : "DEBIT" }))
+    });
     const paymentsTotal = money(day?.payments_total ?? total?.payments_total ?? 0);
     const expensesTotal = money(day?.expenses_total ?? total?.expenses_total ?? 0);
     const correctionsNet = money(day?.corrections_net ?? 0);

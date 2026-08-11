@@ -19,6 +19,12 @@ test("détaille chaque code arrivé et sorti depuis Stockage V2", () => {
 });
 
 test("COO reste hors caisse", () => {
-  const report = buildDailyAgencyReport({ agency: "COO", payments: [{ ...payment("Agent COO", 25), agenceEncaissement: "COO" }], expenses: [], storageEvents: [], cash: null });
-  assert.equal(report.paymentsTotal, 25); assert.equal(report.cash, null);
+  const report = buildDailyAgencyReport({ agency: "COO", payments: [{ ...payment("Agent COO", 25), agenceEncaissement: "COO" }], expenses: [], storageEvents: [], cash: null, storage: { openingParcels: 1, openingWeightKg: 2, arrivalsParcels: 0, arrivalsWeightKg: 0, departuresParcels: 0, departuresWeightKg: 0, closingParcels: 1, closingWeightKg: 2 } });
+  assert.equal(report.paymentsTotal, 25); assert.equal(report.cash, null); assert.equal(report.storage, null);
+});
+
+test("expose le report mensuel Stockage sans altérer les détails", () => {
+  const storage = { openingParcels: 90, openingWeightKg: 349, arrivalsParcels: 10, arrivalsWeightKg: 50, departuresParcels: 4, departuresWeightKg: 20, closingParcels: 96, closingWeightKg: 379 };
+  const report = buildDailyAgencyReport({ agency: "FIH", payments: [], expenses: [], storageEvents: [], cash: null, storage });
+  assert.deepEqual(report.storage, storage);
 });
