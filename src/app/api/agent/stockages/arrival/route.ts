@@ -15,7 +15,16 @@ export async function POST(request: Request) {
     const body = await request.json() as Record<string, unknown>;
     const parcels = validateArrivalParcels(body.parcels);
     const result = await recordArrival({ parcels, reference: String(body.reference ?? ""), observation: String(body.observation ?? ""), requestId: String(body.requestId ?? ""), actorId: auth.identity.userId });
-    if (!result.replayed) await recordInternalNotification({ eventKey: `STORAGE_ARRIVAL:${String(body.requestId)}`, agency: auth.identity.site as "FIH"|"LSHI"|"KLZ", type: "STORAGE_ARRIVAL", title: "Arrivage enregistré", message: `${parcels.length} colis / ${parcels.reduce((sum, parcel) => sum + parcel.weightKg, 0)} kg`, actorUserId: auth.identity.userId, actorName: auth.identity.nom }).catch(() => undefined);
+    if (!result.replayed) {
+      const agency = auth.identity.site as "FIH"|"LSHI"|"KLZ";
+      const eventId = result.eventId ?? String(body.requestId);
+      const summary = `${parcels.length} colis / ${parcels.reduce((sum, parcel) => sum + parcel.weightKg, 0)} kg`;
+      const reference = String(body.reference ?? "").trim();
+      await Promise.allSettled([
+        recordInternalNotification({ eventKey: `stock_arrival:${eventId}:admin`, agency, audience: "ADMIN", type: "STORAGE_ARRIVAL", title: "Arrivage Stockage enregistré", message: `${agency} a enregistré un nouvel arrivage : ${summary}.${reference ? ` Référence : ${reference}.` : ""}`, actorUserId: auth.identity.userId, actorName: auth.identity.nom }),
+        recordInternalNotification({ eventKey: `stock_arrival:${eventId}:coo`, agency: "COO", audience: "AGENT", type: "STORAGE_ARRIVAL", title: `Arrivage confirmé à ${agency}`, message: `${agency} a confirmé la réception physique de ${summary}.${reference ? ` Référence : ${reference}.` : ""}`, actorUserId: auth.identity.userId, actorName: auth.identity.nom })
+      ]);
+    }
     return NextResponse.json({ state: "SUCCESS", ...result }, { status: result.replayed ? 200 : 201 });
   } catch (cause) { return cause instanceof StockagesV2Error ? reply(cause.code, cause.status) : reply("STORAGE_SERVICE_UNAVAILABLE", 503); }
 }

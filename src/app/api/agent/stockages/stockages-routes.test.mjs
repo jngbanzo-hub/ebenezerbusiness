@@ -45,3 +45,20 @@ test("COO est exclu et les comptes SUSPENDED désactivent les actions", () => {
 test("Transferts, Caisse et Dépenses ne sont pas importés", () => {
   assert.doesNotMatch(server + agent + admin + ui + remittance, /features\/transferts|cash_events|cash_|agent-expenses|expenses/);
 });
+
+test("l'inventaire Agent lit uniquement les colis présents de son agence", () => {
+  assert.match(server, /from\("stockage_parcels"\)[\s\S]*\.eq\("agency", agency\)[\s\S]*\.in\("delivery_status", \["AVAILABLE", "PRESENT"\]\)/);
+  assert.match(ui, /INVENTAIRE PHYSIQUE ACTUEL/);
+  assert.match(ui, /Rechercher un code/);
+  assert.doesNotMatch(ui, /CurrentInventory[\s\S]*modifier un colis/i);
+});
+
+test("un arrivage réussi notifie Admin et COO avec des clés idempotentes", () => {
+  const arrival = read("./arrival/route.ts") + read("./forwardings/arrival/route.ts");
+  assert.match(arrival, /if \(!result\.replayed\)/);
+  assert.match(arrival, /stock_arrival:\$\{eventId\}:admin/);
+  assert.match(arrival, /agency, audience: "ADMIN"/);
+  assert.match(arrival, /stock_arrival:\$\{eventId\}:coo/);
+  assert.match(arrival, /agency: "COO", audience: "AGENT"/);
+  assert.match(arrival, /if\(!result\.replayed\)/);
+});

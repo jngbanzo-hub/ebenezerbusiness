@@ -37,13 +37,29 @@ export function requireStorageAgency(value: string): StorageAgency {
 
 export async function readAgentStorage(agency: StorageAgency) {
   const client = serviceClient();
-  const [{ data: account, error: accountError }, { data: events, error: eventsError }, { data: activity, error: activityError }] = await Promise.all([
+  const [{ data: account, error: accountError }, { data: events, error: eventsError }, { data: activity, error: activityError }, { data: parcels, error: parcelsError }, { data: arrivalEvents, error: arrivalEventsError }] = await Promise.all([
     client.from("stockage_accounts").select("agency,status,current_parcel_count,current_weight_kg,version,opened_business_date,updated_at").eq("agency", agency).single(),
     client.from("stockage_events").select("event_id,event_type,business_date,occurred_at,parcel_count_delta,weight_kg_delta,tracking_code,arrival_reference,actor_name,account_version_after").eq("agency", agency).order("occurred_at", { ascending: false }).limit(40),
-    client.from("stockage_agent_activity").select("agency,business_date,actor_id,actor_name,arrivals,deliveries,arrived_weight_kg,delivered_weight_kg").eq("agency", agency).order("business_date", { ascending: false }).limit(40)
+    client.from("stockage_agent_activity").select("agency,business_date,actor_id,actor_name,arrivals,deliveries,arrived_weight_kg,delivered_weight_kg").eq("agency", agency).order("business_date", { ascending: false }).limit(40),
+    client.from("stockage_parcels").select("tracking_code,agency,canonical_weight_kg,delivery_status,created_at").eq("agency", agency).in("delivery_status", ["AVAILABLE", "PRESENT"]).order("created_at", { ascending: false }).order("tracking_code", { ascending: true }),
+    client.from("stockage_events").select("actor_name,occurred_at,metadata").eq("agency", agency).eq("event_type", "MANUAL_ARRIVAL_RECORDED").order("occurred_at", { ascending: false }).limit(1000)
   ]);
-  if (accountError || eventsError || activityError) throw new StockagesV2Error("STORAGE_READ_FAILED", 503);
-  return { mode: "V2" as const, account, events: events ?? [], activity: activity ?? [], actionsEnabled: account?.status === "ACTIVE" };
+  if (accountError || eventsError || activityError || parcelsError || arrivalEventsError) throw new StockagesV2Error("STORAGE_READ_FAILED", 503);
+  const arrivalByCode = new Map<string, { actorName: string; occurredAt: string }>();
+  for (const event of arrivalEvents ?? []) {
+    const metadata = event.metadata as { parcels?: Array<{ trackingCode?: string }> } | null;
+    for (const parcel of metadata?.parcels ?? []) {
+      const code = String(parcel.trackingCode ?? "").trim().toUpperCase();
+      if (code && !arrivalByCode.has(code)) arrivalByCode.set(code, { actorName: String(event.actor_name ?? ""), occurredAt: String(event.occurred_at ?? "") });
+    }
+  }
+  return {
+    mode: "V2" as const, account, events: events ?? [], activity: activity ?? [], actionsEnabled: account?.status === "ACTIVE",
+    parcels: (parcels ?? []).map((parcel) => {
+      const arrival = arrivalByCode.get(parcel.tracking_code);
+      return { trackingCode: parcel.tracking_code, agency: parcel.agency, weightKg: Number(parcel.canonical_weight_kg), status: parcel.delivery_status, arrivedAt: arrival?.occurredAt || parcel.created_at, arrivalAgent: arrival?.actorName || null };
+    })
+  };
 }
 
 export async function readAdminStorage() {

@@ -27,6 +27,7 @@ type RpcResult = Readonly<{
   replayed?: boolean;
   state?: string;
   version?: number;
+  weightKg?: number;
 }>;
 
 export type ForwardingReadiness = Readonly<{
@@ -167,13 +168,18 @@ export async function recordForwardingArrival(input: {
   actorAgency: string;
 }) {
   validateUuid(input.requestId);
-  return rpc("record_forwarding_arrival", {
-    p_forwarding_reference: normalizeReference(input.forwardingReference),
-    p_destination_agency: requireStorageAgency(input.actorAgency),
+  const destination = requireStorageAgency(input.actorAgency);
+  const forwardingReference = normalizeReference(input.forwardingReference);
+  const result = await rpc("record_forwarding_arrival", {
+    p_forwarding_reference: forwardingReference,
+    p_destination_agency: destination,
     p_business_date: businessDatePortoNovo(),
     p_request_id: input.requestId,
     p_actor_id: input.actorId
   });
+  const { data, error } = await serviceClient().from("stockage_parcels").select("canonical_weight_kg").eq("agency", destination).eq("tracking_code", forwardingReference).single();
+  if (error) throw new StockagesV2Error("FORWARDING_SERVICE_UNAVAILABLE", 503);
+  return { ...result, weightKg: Number(data.canonical_weight_kg) };
 }
 
 export async function confirmForwardingDelivery(input: {
