@@ -65,19 +65,26 @@ function AgentStatisticsView({ data }: { data: AgentData }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const events = useMemo(() => filterEventsByPeriod(data.events, period, from, to), [data.events, from, period, to]);
+  const entries = useMemo(() => summarizePhysicalMovements(events.filter((event) => event.parcel_count_delta > 0)), [events]);
+  const outputs = useMemo(() => summarizePhysicalMovements(events.filter((event) => event.parcel_count_delta < 0)), [events]);
   return <>
-    <section className="rounded-2xl border border-lime-400/20 bg-slate-900/70 p-4"><div className="grid items-end gap-3 sm:grid-cols-3"><label className="text-sm">Période<select value={period} onChange={(event) => setPeriod(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2"><option value="DAY">Journalière</option><option value="WEEK">Hebdomadaire</option><option value="MONTH">Mensuelle</option><option value="YEAR">Annuelle</option><option value="CUSTOM">Personnalisée</option></select></label>{period === "CUSTOM" && <><label className="text-sm">Du<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><label className="text-sm">Au<input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label></>}</div></section>
+    <section className="rounded-2xl border border-lime-400/20 bg-slate-900/70 p-4"><div className="grid items-end gap-3 sm:grid-cols-3"><label className="text-sm">Période<select value={period} onChange={(event) => setPeriod(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2"><option value="DAY">Journalière</option><option value="WEEK">Hebdomadaire</option><option value="MONTH">Mensuelle</option><option value="YEAR">Annuelle</option><option value="CUSTOM">Personnalisée</option></select></label>{period === "CUSTOM" && <><label className="text-sm">Du<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><label className="text-sm">Au<input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label></>}</div><div className="mt-3 grid gap-3 sm:grid-cols-2"><CompactMovementCard label="ENTRÉES" parcels={entries.parcels} weightKg={entries.weightKg} /><CompactMovementCard label="SORTIES" parcels={outputs.parcels} weightKg={outputs.weightKg} /></div></section>
     <CurrentInventory account={data.account} parcels={data.parcels} />
     <details className="rounded-2xl border border-white/10 bg-slate-900/60 p-4"><summary className="cursor-pointer font-semibold text-lime-300">Voir l’historique</summary><div className="mt-5 space-y-5"><EventTable title="Historique physique" rows={events} /><ActivityTable rows={data.activity} /></div></details>
   </>;
 }
 
 function filterEventsByPeriod(events: EventRow[], period: string, from: string, to: string) {
-  const today = new Date(); const start = new Date(today);
-  if (period === "DAY") start.setDate(today.getDate()); else if (period === "WEEK") start.setDate(today.getDate() - 6); else if (period === "MONTH") start.setMonth(today.getMonth(), 1); else if (period === "YEAR") start.setMonth(0, 1);
-  const startDate = period === "CUSTOM" ? from : start.toISOString().slice(0, 10); const endDate = period === "CUSTOM" ? to : today.toISOString().slice(0, 10);
+  const todayKey = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Porto-Novo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const [year, month] = todayKey.split("-");
+  const weekStart = new Date(`${todayKey}T12:00:00Z`); weekStart.setUTCDate(weekStart.getUTCDate() - 6);
+  const inferredStart = period === "DAY" ? todayKey : period === "WEEK" ? weekStart.toISOString().slice(0, 10) : period === "MONTH" ? `${year}-${month}-01` : `${year}-01-01`;
+  const startDate = period === "CUSTOM" ? from : inferredStart; const endDate = period === "CUSTOM" ? to : todayKey;
   return events.filter((event) => (!startDate || event.business_date >= startDate) && (!endDate || event.business_date <= endDate));
 }
+
+function summarizePhysicalMovements(events: EventRow[]) { return events.reduce((total, event) => ({ parcels: total.parcels + Math.abs(Number(event.parcel_count_delta)), weightKg: total.weightKg + Math.abs(Number(event.weight_kg_delta)) }), { parcels: 0, weightKg: 0 }); }
+function CompactMovementCard({ label, parcels, weightKg }: { label: "ENTRÉES" | "SORTIES"; parcels: number; weightKg: number }) { return <div className="rounded-xl border border-lime-400/20 bg-slate-950/60 px-4 py-3"><p className="text-xs font-semibold tracking-[0.16em] text-lime-300">{label}</p><p className="mt-1 text-lg font-semibold text-white">{parcels} colis · {formatStockageWeight(weightKg)}</p></div>; }
 
 function CurrentInventory({ account, parcels }: { account: Account; parcels: StorageParcel[] }) {
   const [query, setQuery] = useState("");

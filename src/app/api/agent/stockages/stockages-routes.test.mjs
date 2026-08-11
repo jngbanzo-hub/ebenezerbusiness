@@ -59,6 +59,10 @@ test("la page Statistiques Agent privilégie l'inventaire et conserve la périod
   assert.match(ui, /Voir l’historique/);
   assert.match(ui, /filterEventsByPeriod/);
   assert.doesNotMatch(ui, /AgentStatisticsView[\s\S]{0,1800}<PhysicalStatistics/);
+  assert.match(ui, /CompactMovementCard label="ENTRÉES"/);
+  assert.match(ui, /CompactMovementCard label="SORTIES"/);
+  assert.match(ui, /timeZone: "Africa\/Porto-Novo"/);
+  assert.match(ui, /<CurrentInventory account=\{data\.account\} parcels=\{data\.parcels\}/);
 });
 
 test("un arrivage réussi notifie Admin et COO avec des clés idempotentes", () => {
