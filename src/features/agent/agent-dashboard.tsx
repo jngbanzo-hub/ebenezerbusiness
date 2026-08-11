@@ -12,6 +12,7 @@ import {
   LoaderCircle,
   LogOut,
   ReceiptText,
+  Scale,
   ShieldX,
   UserRound
 } from "lucide-react";
@@ -41,6 +42,15 @@ const AGENCY_LABELS: Record<Agency, string> = {
 };
 
 const OPERATIONS = [
+  {
+    key: "statistiques-reception",
+    title: "Statistiques de Réception",
+    description: "Consulter les colis et le poids prévus à la réception de votre agence",
+    icon: Scale,
+    available: true,
+    href: "/agent/statistiques-reception",
+    actionLabel: "CONSULTER"
+  },
   {
     key: "rapport-journalier",
     title: "Rapport synthèse du jour",
@@ -224,7 +234,7 @@ export function AgentDashboard() {
 
   const operations = OPERATIONS
     .filter((operation) => profile.agence === "COTONOU"
-      ? !["caisse", "rapport-journalier"].includes(operation.key)
+      ? !["caisse", "rapport-journalier", "statistiques-reception"].includes(operation.key)
       : operation.key !== "rapport-coo")
     .map((operation) => profile.agence === "COTONOU" && operation.key === "stockage"
       ? {
