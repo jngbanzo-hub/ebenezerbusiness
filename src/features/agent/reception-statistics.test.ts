@@ -30,6 +30,16 @@ test("refuse une copie partielle si un poids est absent ou un code est dupliqué
   assert.throws(() => formatParcelsForArrival([{ code: "JL00226", copyCode: "JL00226", weightKg: 0 }]), /invalide/);
 });
 
+test("n'interprète jamais les libellés de groupage comme des colis", () => {
+  const source = parseShipmentStatistics([
+    ["Date"],
+    ["03/08/2026", "DHL", "FIH", 1, 3, "GROUPAGE 1 SAC1\nJL27226 : 1kgs\nGROUPAGE 2 S2\nJL27326 : 2kgs", 0, 0, "1 kg\n2 kg", "2 COLIS"],
+  ]).shipments;
+  const reception = projectReceptionStatistics(source, "FIH");
+  assert.deepEqual(reception.parcels.map((parcel) => parcel.code), ["JL27226", "JL27326"]);
+  assert.equal(reception.copyValidationErrors.length, 0);
+});
+
 test("conserve ASKY et DHL FIH sans appliquer le suffixe KLZ", () => {
   const source = parseShipmentStatistics([
     ["Date"],

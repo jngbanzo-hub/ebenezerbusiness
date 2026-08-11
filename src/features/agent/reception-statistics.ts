@@ -104,7 +104,7 @@ function projectShipment(row: ShipmentStatisticRow, agency: ReceptionAgency) {
   const directDestination = row.destination === agency;
   if (!directDestination && !(specialEthiopian && agency === "KLZ")) return null;
 
-  const codes = row.parcelCodes;
+  const codes = row.parcelCodes.filter(isReceptionParcelCode);
   if (!specialEthiopian) {
     return {
       codes,
@@ -126,6 +126,10 @@ function projectShipment(row: ShipmentStatisticRow, agency: ReceptionAgency) {
     ? selectedCodes.reduce((sum, code) => sum + weights[codes.indexOf(code)], 0)
     : totalWeight * (selectedCodes.length / codes.length);
   return { codes: selectedCodes, parcels: selectedCodes.length, weightKg: round(weightKg) };
+}
+
+function isReceptionParcelCode(code: string) {
+  return /^[A-Z]{1,10}\d{2,}[A-Z]*$/.test(code) && !/^GROU?PAGE/.test(code) && !/^SAC\d/.test(code);
 }
 
 function specialEthiopianShipment(row: ShipmentStatisticRow) {
