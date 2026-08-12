@@ -104,6 +104,96 @@ test("la canonisation et la base de signature correspondent au contrat V2", () =
   );
 });
 
+test("une lecture interrompue est retentée une seule fois, jamais une écriture", async () => {
+  const originalEnv = {
+    url: process.env.TRANSFERTS_PUBLIC_APPS_SCRIPT_URL,
+    apiKey: process.env.TRANSFERTS_API_KEY,
+    secret: process.env.TRANSFERTS_HMAC_SECRET
+  };
+  process.env.TRANSFERTS_PUBLIC_APPS_SCRIPT_URL = "https://script.google.com/macros/s/test/exec";
+  process.env.TRANSFERTS_API_KEY = "test-key";
+  process.env.TRANSFERTS_HMAC_SECRET = "test-secret";
+  try {
+    let readCalls = 0;
+    const read = await module.callTransfertsReadApi(
+      "LIST_AGENCY_TRANSFERS",
+      { userId: "agent", email: "agent@example.test", role: "AGENT", agency: "FIH" },
+      { agency: "FIH" },
+      { fetcher: async (_url, init) => {
+        readCalls += 1;
+        if (readCalls === 1) throw new DOMException("timeout", "AbortError");
+        const body = JSON.parse(init.body);
+        return Response.json({ ok: true, requestId: body.requestId, action: body.action, data: [], error: null });
+      } }
+    );
+    assert.deepEqual(read, []);
+    assert.equal(readCalls, 2);
+
+    let writeCalls = 0;
+    await assert.rejects(() => module.callTransfertsWriteApi(
+      "CREATE_TRANSFER",
+      { userId: "agent", email: "agent@example.test", role: "AGENT", agency: "FIH" },
+      {},
+      { fetcher: async () => { writeCalls += 1; throw new DOMException("timeout", "AbortError"); } }
+    ), (error) => error?.name === "AbortError");
+    assert.equal(writeCalls, 1);
+  } finally {
+    if (originalEnv.url === undefined) delete process.env.TRANSFERTS_PUBLIC_APPS_SCRIPT_URL; else process.env.TRANSFERTS_PUBLIC_APPS_SCRIPT_URL = originalEnv.url;
+    if (originalEnv.apiKey === undefined) delete process.env.TRANSFERTS_API_KEY; else process.env.TRANSFERTS_API_KEY = originalEnv.apiKey;
+    if (originalEnv.secret === undefined) delete process.env.TRANSFERTS_HMAC_SECRET; else process.env.TRANSFERTS_HMAC_SECRET = originalEnv.secret;
+  }
+});
+
+test("une lecture 503 est retentée, un refus métier ne l'est pas", async () => {
+  const originalEnv = {
+    url: process.env.TRANSFERTS_PUBLIC_APPS_SCRIPT_URL,
+    apiKey: process.env.TRANSFERTS_API_KEY,
+    secret: process.env.TRANSFERTS_HMAC_SECRET
+  };
+  process.env.TRANSFERTS_PUBLIC_APPS_SCRIPT_URL = "https://script.google.com/macros/s/test/exec";
+  process.env.TRANSFERTS_API_KEY = "test-key";
+  process.env.TRANSFERTS_HMAC_SECRET = "test-secret";
+  try {
+    let transientCalls = 0;
+    const transient = await module.callTransfertsReadApi(
+      "LIST_ADMIN_TRANSFERS",
+      { userId: "admin", email: "admin@example.test", role: "ADMIN", agency: "COO" },
+      {},
+      { fetcher: async (_url, init) => {
+        transientCalls += 1;
+        if (transientCalls === 1) return new Response("unavailable", { status: 503 });
+        const body = JSON.parse(init.body);
+        return Response.json({ ok: true, requestId: body.requestId, action: body.action, data: [], error: null });
+      } }
+    );
+    assert.deepEqual(transient, []);
+    assert.equal(transientCalls, 2);
+
+    let businessCalls = 0;
+    await assert.rejects(() => module.callTransfertsReadApi(
+      "GET_TRANSFER",
+      { userId: "admin", email: "admin@example.test", role: "ADMIN", agency: "COO" },
+      { transferId: "missing" },
+      { fetcher: async (_url, init) => {
+        businessCalls += 1;
+        const body = JSON.parse(init.body);
+        return Response.json({
+          ok: false,
+          requestId: body.requestId,
+          action: body.action,
+          data: null,
+          error: { code: "TRANSFER_NOT_FOUND", message: "Introuvable" }
+        });
+      } }
+    ), (error) => error?.code === "TRANSFER_NOT_FOUND");
+    assert.equal(businessCalls, 1);
+  } finally {
+    if (originalEnv.url === undefined) delete process.env.TRANSFERTS_PUBLIC_APPS_SCRIPT_URL; else process.env.TRANSFERTS_PUBLIC_APPS_SCRIPT_URL = originalEnv.url;
+    if (originalEnv.apiKey === undefined) delete process.env.TRANSFERTS_API_KEY; else process.env.TRANSFERTS_API_KEY = originalEnv.apiKey;
+    if (originalEnv.secret === undefined) delete process.env.TRANSFERTS_HMAC_SECRET; else process.env.TRANSFERTS_HMAC_SECRET = originalEnv.secret;
+  }
+});
+
 test("le client serveur supprime récursivement tout code complet", () => {
   const safe = module.stripFullTransferCodes({
     transferCode: "SECRET",

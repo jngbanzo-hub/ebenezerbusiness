@@ -95,7 +95,8 @@ export async function POST(request: Request) {
       transfer = Array.isArray(transfers)
         ? transfers.find((item) =>
             item && typeof item === "object" &&
-            (item as Record<string, unknown>).transferRequestId === input.transferRequestId
+            (item as Record<string, unknown>).transferRequestId === input.transferRequestId &&
+            (item as Record<string, unknown>).agencyFrom === identity.site
           )
         : undefined;
       if (!transfer) {

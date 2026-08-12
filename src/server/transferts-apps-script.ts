@@ -44,7 +44,7 @@ type AppsScriptResponse = {
 
 export class TransfertsConfigurationError extends Error {}
 export class TransfertsServiceError extends Error {
-  constructor(readonly code: string) {
+  constructor(readonly code: string, readonly status?: number) {
     super(code);
   }
 }
@@ -55,7 +55,12 @@ export async function callTransfertsReadApi(
   payload: Record<string, unknown>,
   options: { fetcher?: typeof fetch; now?: number; allowAgentDetailCode?: boolean; allowAdminDetailCode?: boolean } = {}
 ): Promise<unknown> {
-  return callTransfertsApi(action, actor, payload, options);
+  try {
+    return await callTransfertsApi(action, actor, payload, options);
+  } catch (caught) {
+    if (!isRetryableReadError(caught)) throw caught;
+    return callTransfertsApi(action, actor, payload, options);
+  }
 }
 
 export async function callTransfertsWriteApi(
@@ -114,7 +119,7 @@ async function callTransfertsApi(
     });
 
     if (!response.ok) {
-      throw new TransfertsServiceError("TRANSFERTS_SERVICE_REJECTED");
+      throw new TransfertsServiceError("TRANSFERTS_SERVICE_REJECTED", response.status);
     }
     if (!(response.headers.get("content-type") ?? "").toLowerCase().includes("application/json")) {
       throw new TransfertsServiceError("TRANSFERTS_INVALID_RESPONSE");
@@ -134,6 +139,16 @@ async function callTransfertsApi(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function isRetryableReadError(caught: unknown) {
+  return caught instanceof Error && (
+    caught.name === "AbortError" ||
+    caught instanceof TypeError ||
+    (caught instanceof TransfertsServiceError &&
+      caught.status !== undefined &&
+      [502, 503, 504].includes(caught.status))
+  );
 }
 
 export function canonicalizeTransfertsPayload(value: unknown): string {
