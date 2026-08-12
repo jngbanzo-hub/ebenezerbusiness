@@ -12,9 +12,14 @@ export function detectManifestHeaderMap(rows: readonly unknown[][]): ManifestHea
     const hasDate = normalized.includes("DATE");
     const hasCode = normalized.some((header) => header === "CODE" || header === "CODE COLIS");
     const statusIndex = normalized.findIndex((header) => header === "STATUT" || header === "STATUS");
-    const beneficiaryIndex = normalized.findIndex((header) =>
-      header === "BENEFICIAIRE" || header === "NOM ET NUMERO BENEFICIAIRE"
+    const detectedBeneficiaryIndex = normalized.findIndex((header) =>
+      header.includes("BENEFICIAIRE")
     );
+    const beneficiaryIndex = detectedBeneficiaryIndex >= 0
+      ? detectedBeneficiaryIndex
+      : headers.length > 3
+        ? 3
+        : -1;
     if (hasDate && hasCode && statusIndex >= 0) {
       return Object.freeze({ headerRowIndex, headers: Object.freeze(headers), statusIndex, beneficiaryIndex });
     }

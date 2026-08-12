@@ -29,3 +29,23 @@ test("refuse de confondre Paiement avec Statut", () => {
   const map = detectManifestHeaderMap([["Date", "Code colis", "Poids", "Paiement"]]);
   assert.equal(map.statusIndex, -1);
 });
+
+test("détecte les variantes réelles de l’en-tête bénéficiaire", () => {
+  for (const header of [
+    "Bénéficiaire",
+    "Nom et numéro du bénéficiaire",
+    "Coordonnées bénéficiaire"
+  ]) {
+    const map = detectManifestHeaderMap([
+      ["Date", "Code colis", "Expéditeur", header, "Poids", "Statut"]
+    ]);
+    assert.equal(map.beneficiaryIndex, 3, header);
+  }
+});
+
+test("conserve la colonne bénéficiaire canonique quand son libellé est historique", () => {
+  const map = detectManifestHeaderMap([
+    ["Date", "Code colis", "Expéditeur", "Destinataire", "Poids", "Statut"]
+  ]);
+  assert.equal(map.beneficiaryIndex, 3);
+});
