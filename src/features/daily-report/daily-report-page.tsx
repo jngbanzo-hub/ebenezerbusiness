@@ -9,6 +9,7 @@ import { Container, GlassPanel } from "@/components/design-system";
 import { Button } from "@/components/ui/button";
 import { signOutAgent } from "@/features/agent/auth";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 import type { DailyAgencyReport, ReportAgency } from "@/features/daily-report/daily-report";
 import { REPORT_PERIODS, type ReportPeriod } from "@/features/daily-report/report-period";
 import { formatWeight } from "@/lib/format-weight";
@@ -30,17 +31,14 @@ export function DailyReportPage({ role }: { role: "ADMIN" | "AGENT" }) {
     setLoading(true); setError("");
     if (period === "CUSTOM" && (!from || !to || from > to)) { setLoading(false); return; }
     try {
-      const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
-      if (!session?.access_token) return router.replace("/auth/sign-in");
       const query = new URLSearchParams();
       query.set("period", period); if (period === "CUSTOM") { query.set("from", from); query.set("to", to); }
-      const response = await fetch(`/api/${role === "ADMIN" ? "admin" : "agent"}/daily-report${query.size ? `?${query}` : ""}`, { headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store", signal });
-      const body = await response.json() as Payload & { message?: string };
-      if (!response.ok) throw new Error(body.message || "Rapport indisponible.");
+      const response = await authenticatedRead(getSupabaseBrowserClient().auth, `/api/${role === "ADMIN" ? "admin" : "agent"}/daily-report${query.size ? `?${query}` : ""}`, { signal });
+      const body = await readJsonOrThrow<Payload>(response, "Rapport indisponible.");
       setData(body); if (role === "AGENT") setAgency(body.agencies[0]?.agency ?? "ALL");
     } catch (cause) { if (!signal?.aborted) setError(cause instanceof Error ? cause.message : "Rapport indisponible."); }
     finally { if (!signal?.aborted) setLoading(false); }
-  }, [from, period, role, router, to]);
+  }, [from, period, role, to]);
 
   useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
   const visible = useMemo(() => data?.agencies.filter((row) => agency === "ALL" || row.agency === agency) ?? [], [agency, data]);

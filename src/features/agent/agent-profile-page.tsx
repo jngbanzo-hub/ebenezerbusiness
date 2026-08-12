@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { GlassPanel } from "@/components/design-system";
 import { getAgentProfilePhoto } from "@/features/agent/profile-photo-map";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 
 type Profile = { id: string; email: string; nom: string; role: "AGENT"; agence: string; site: string; actif: true; lastSignInAt: string | null };
 
@@ -14,7 +15,7 @@ const UNAVAILABLE_PERSONAL_INFORMATION = "Non renseigné";
 
 export function AgentProfilePage() {
   const [profile, setProfile] = useState<Profile | null>(null), [error, setError] = useState("");
-  useEffect(() => { void (async () => { try { const { data: { session } } = await getSupabaseBrowserClient().auth.getSession(); if (!session?.access_token) throw new Error("Session expirée."); const response = await fetch("/api/agent/profile", { headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store" }); const value = await response.json(); if (!response.ok) throw new Error(value.message ?? "Profil indisponible."); setProfile(value); } catch (cause) { setError(cause instanceof Error ? cause.message : "Profil indisponible."); } })(); }, []);
+  useEffect(() => { void (async () => { try { const response = await authenticatedRead(getSupabaseBrowserClient().auth, "/api/agent/profile"); const value = await readJsonOrThrow<Profile>(response, "Profil indisponible."); setProfile(value); } catch (cause) { setError(cause instanceof Error ? cause.message : "Profil indisponible."); } })(); }, []);
   if (!profile) return <main className="grid min-h-screen place-items-center bg-ebe-night text-white">{error ? <p role="alert" className="text-red-200">{error}</p> : <LoaderCircle className="h-7 w-7 animate-spin text-accent"/>}</main>;
   const initials = profile.nom.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
   const profilePhoto = getAgentProfilePhoto(profile.id);

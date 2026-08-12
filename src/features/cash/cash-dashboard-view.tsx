@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { signOutAgent } from "@/features/agent/auth";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 import type { AdminCashDashboard, CashDashboard } from "./cash-dashboard";
 import { loadAdminCash, loadAgentCash } from "./cash-dashboard-client";
 
@@ -17,7 +18,7 @@ export function AgentCashDashboardView() {
   const [data, setData] = useState<CashDashboard | null | undefined>();
   const [outsideCash, setOutsideCash] = useState(false);
   const [error, setError] = useState("");
-  useEffect(() => { const controller = new AbortController(); void (async () => { try { const { data: { session } } = await getSupabaseBrowserClient().auth.getSession(); if (!session?.access_token) throw new Error("Session invalide."); const result = await loadAgentCash(session.access_token); if (!controller.signal.aborted) { setData(result.cash); setOutsideCash(result.outsideCash); } } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Lecture impossible."); } })(); return () => controller.abort(); }, []);
+  useEffect(() => { const controller = new AbortController(); void (async () => { try { const response = await authenticatedRead(getSupabaseBrowserClient().auth, "/api/agent/cash", { signal: controller.signal }); const result = await readJsonOrThrow<Awaited<ReturnType<typeof loadAgentCash>>>(response, "Lecture Caisse impossible."); if (!controller.signal.aborted) { setData(result.cash); setOutsideCash(result.outsideCash); } } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Lecture impossible."); } })(); return () => controller.abort(); }, []);
   if (outsideCash) return <GlassPanel className="mt-8 p-6"><Badge>Hors caisse</Badge><h2 className="mt-3 text-xl font-semibold">Aucune caisse COO</h2><p className="mt-2 text-sm text-muted-foreground">Les encaissements COO restent des recettes hors caisse. Aucun solde ni aucune clôture ne s’applique.</p></GlassPanel>;
   if (error) return <LoadState error={error} />;
   if (data === undefined) return <LoadState />;
@@ -33,7 +34,7 @@ export function AgentCashPage() {
 export function AdminCashDashboardView({ accessToken }: { accessToken: string }) {
   const [data, setData] = useState<AdminCashDashboard | null>(null);
   const [error, setError] = useState("");
-  useEffect(() => { let active = true; void loadAdminCash(accessToken).then((value) => { if (active) setData(value); }).catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : "Lecture impossible."); }); return () => { active = false; }; }, [accessToken]);
+  useEffect(() => { let active = true; void (async () => { try { const response = await authenticatedRead(getSupabaseBrowserClient().auth, "/api/admin/cash", {}, fetch, accessToken); const value = await readJsonOrThrow<AdminCashDashboard>(response, "Lecture de la Caisse impossible."); if (active) setData(value); } catch (cause) { if (active) setError(cause instanceof Error ? cause.message : "Lecture impossible."); } })(); return () => { active = false; }; }, [accessToken]);
   if (error) return <LoadState error={error} />;
   if (!data) return <LoadState />;
   return <section className="mt-8"><div><h2 className="text-2xl font-semibold">Caisses des agences</h2><p className="mt-2 text-sm text-muted-foreground">Date métier {data.businessDate} · Africa/Porto-Novo · consultation sécurisée</p></div><div className="mt-5 grid gap-5 xl:grid-cols-3">{data.agencies.map((cash) => <AgencyCashPanel key={cash.agency} cash={cash} compact />)}</div><GlassPanel className="mt-6 p-6"><Badge>Hors caisse</Badge><h3 className="mt-3 text-xl font-semibold">Recettes COO hors caisse</h3><div className="mt-4 grid gap-3 sm:grid-cols-3"><Metric label="Encaissements" value={String(data.cooOutsideCash.paymentCount)} /><Metric label="Montant" value={usd(data.cooOutsideCash.paymentsTotal)} /><Metric label="Dépenses COO" value={usd(data.cooOutsideCash.expensesTotal)} /></div><AgentBreakdown rows={data.cooOutsideCash.byAgent} /></GlassPanel><GlassPanel className="mt-6 p-6"><h3 className="text-xl font-semibold">Contrôles Admin</h3><p className="mt-2 text-sm text-muted-foreground">Ajustement, correction compensatoire, clôture et réouverture restent soumis aux droits Admin et aux contrôles de sécurité. Les comptes SUSPENDED refusent ces commandes. Chaque action exige un motif et une confirmation finale, utilise un identifiant technique généré automatiquement et produit une trace d’Audit immutable. Les soldes initiaux sont désormais traités exclusivement par procédure contrôlée hors interface quotidienne.</p><p className="mt-3 text-sm">Audit disponible : {data.audit.length} trace{data.audit.length === 1 ? "" : "s"}.</p></GlassPanel></section>;

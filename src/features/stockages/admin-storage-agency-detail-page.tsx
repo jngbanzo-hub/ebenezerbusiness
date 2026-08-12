@@ -6,6 +6,7 @@ import { ArrowLeft, LogOut, RefreshCcw, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 import { formatStockageWeight } from "@/features/stockages/presentation";
 
 type Account = { agency: string; status: "SUSPENDED" | "ACTIVE"; current_parcel_count: number; current_weight_kg: number };
@@ -48,4 +49,7 @@ export function AdminStorageAgencyDetailPage({ agency }: { agency: string }) {
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-2xl border border-lime-400/25 bg-slate-900 p-5"><p className="text-xs uppercase tracking-wide text-slate-400">{label}</p><p className="mt-2 text-2xl font-semibold text-lime-300">{value}</p></div>; }
 function formatArrival(value: string | null) { if (!value) return { date: "Non disponible", time: "Non disponible" }; const parsed = new Date(value); if (Number.isNaN(parsed.getTime())) return { date: "Non disponible", time: "Non disponible" }; return { date: new Intl.DateTimeFormat("fr-FR", { timeZone: "Africa/Porto-Novo", day: "2-digit", month: "2-digit", year: "numeric" }).format(parsed), time: new Intl.DateTimeFormat("fr-FR", { timeZone: "Africa/Porto-Novo", hour: "2-digit", minute: "2-digit", hour12: false }).format(parsed) }; }
-async function request<T>(url: string): Promise<T> { const { data: { session } } = await getSupabaseBrowserClient().auth.getSession(); if (!session?.access_token) throw new Error("Session expirée."); const response = await fetch(url, { headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store" }); const payload = await response.json().catch(() => null) as Record<string, unknown> | null; if (!response.ok) throw new Error(typeof payload?.message === "string" ? payload.message : "Détail du Stockage indisponible."); return payload as T; }
+async function request<T>(url: string): Promise<T> {
+  const response = await authenticatedRead(getSupabaseBrowserClient().auth, url);
+  return readJsonOrThrow<T>(response, "Détail du Stockage indisponible.");
+}

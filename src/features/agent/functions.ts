@@ -1,4 +1,5 @@
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead } from "@/features/auth/authenticated-fetch";
 import {
   DESTINATIONS,
   type DestinationCode,
@@ -71,30 +72,34 @@ function createResponseError(data: Record<string, unknown> | null, fallback: str
 
 async function invokeAgentFunction<T>(
   functionName: (typeof FUNCTION_NAMES)[keyof typeof FUNCTION_NAMES],
-  payload: object
+  payload: object,
+  readOnly = false
 ): Promise<T> {
   const supabase = getSupabaseBrowserClient();
-  const {
-    data: { session }
-  } = await supabase.auth.getSession();
-
-  if (!session?.access_token) {
-    throw new Error("Votre session a expiré. Veuillez vous reconnecter.");
-  }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   if (!supabaseUrl) {
     throw new Error("Configuration Supabase manquante.");
   }
 
-  const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
+  const init = {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${session.access_token}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify(payload)
-  });
+  } satisfies RequestInit;
+  let response: Response;
+  if (readOnly) {
+    response = await authenticatedRead(supabase.auth, `${supabaseUrl}/functions/v1/${functionName}`, init);
+  } else {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) throw new Error("Votre session a expiré. Veuillez vous reconnecter.");
+    response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
+      ...init,
+      headers: { ...init.headers, Authorization: `Bearer ${session.access_token}` }
+    });
+  }
 
   const rawData: unknown = await response.json().catch(() => null);
   const data = isRecord(rawData) ? rawData : null;
@@ -115,20 +120,14 @@ async function invokeAgentFunction<T>(
 }
 
 export function searchParcel(payload: { destinationCode: string; codeColis: string }) {
-  return invokeAgentFunction<Record<string, unknown>>(FUNCTION_NAMES.search, payload);
+  return invokeAgentFunction<Record<string, unknown>>(FUNCTION_NAMES.search, payload, true);
 }
 
 export async function searchDestinationParcel(trackingCode: string) {
-  const {
-    data: { session }
-  } = await getSupabaseBrowserClient().auth.getSession();
-  if (!session?.access_token) throw new Error("Votre session a expiré. Veuillez vous reconnecter.");
-  const response = await fetch(
+  const response = await authenticatedRead(
+    getSupabaseBrowserClient().auth,
     `/api/agent/encaissements/parcel?trackingCode=${encodeURIComponent(trackingCode)}`,
-    {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-      cache: "no-store"
-    }
+    {}
   );
   const payload = await response.json().catch(() => null) as
     | { parcel?: Record<string, unknown>; message?: string }

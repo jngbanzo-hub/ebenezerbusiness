@@ -32,6 +32,7 @@ import {
 } from "@/features/agent/payment-request-id";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { getVerifiedAgentWriteToken } from "@/features/stockages/verified-agent-token";
+import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 import {
   PAYMENT_MODES,
   DESTINATIONS,
@@ -565,16 +566,14 @@ function getExactBalance(parcel: Parcel): number | null {
 }
 
 async function loadInterAgencyQuote(trackingCode: string, sourceAgency: DestinationCode, intent: { paymentMode: PaymentMode; optionalReference: string; optionalObservation: string }) {
-  const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
-  if (!session?.access_token) throw new Error("Session expirée.");
   const params = new URLSearchParams({ trackingCode, sourceAgency, paymentMode: intent.paymentMode, optionalReference: intent.optionalReference.trim(), optionalObservation: intent.optionalObservation.trim() });
-  const response = await fetch(`/api/agent/inter-agency-routing/quote?${params}`, { headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store" });
-  const payload = await response.json().catch(() => null) as { quote?: { trackingCode: string; routingReference: string; origin: string; destination: string; weightKg: number; rateUsdPerKg: number; amountExpectedUsd: number }; resume?: { state: string; resumable: boolean; paymentRequestId?: string } | null; readiness?: { ready: boolean; code: string | null; message: string | null }; code?: string; message?: string } | null;
-  if (!response.ok || !payload?.quote) throw new Error(`${payload?.code ?? `HTTP_${response.status}`} — ${payload?.message ?? "Acheminement indisponible."}`);
+  const response = await authenticatedRead(getSupabaseBrowserClient().auth, `/api/agent/inter-agency-routing/quote?${params}`);
+  const payload = await readJsonOrThrow<{ quote?: { trackingCode: string; routingReference: string; origin: string; destination: string; weightKg: number; rateUsdPerKg: number; amountExpectedUsd: number }; resume?: { state: string; resumable: boolean; paymentRequestId?: string } | null; readiness?: { ready: boolean; code: string | null; message: string | null } }>(response, "Acheminement indisponible.");
+  if (!payload?.quote) throw new Error("Acheminement indisponible.");
   return { ...payload.quote, resume: payload.resume ?? null, readiness: payload.readiness ?? { ready: false, code: "FORWARDING_SERVICE_UNAVAILABLE", message: "Le service d’acheminement est indisponible." } };
 }
 
-async function loadParcelAction(trackingCode: string) { const { data: { session } } = await getSupabaseBrowserClient().auth.getSession(); if (!session?.access_token) throw new Error("Session expirée."); const response=await fetch(`/api/agent/stockages/payment-action?trackingCode=${encodeURIComponent(trackingCode)}`,{headers:{Authorization:`Bearer ${session.access_token}`},cache:"no-store"}); const payload=await response.json().catch(()=>null) as {action?:{totalPaid:number;paymentSites:string[];physicallyPresent:boolean;delivered:boolean;fullyPaidAtCooOnly:boolean};message?:string}|null; if(!response.ok||!payload?.action)throw new Error(payload?.message??"Situation indisponible."); return payload.action; }
+async function loadParcelAction(trackingCode: string) { const response=await authenticatedRead(getSupabaseBrowserClient().auth,`/api/agent/stockages/payment-action?trackingCode=${encodeURIComponent(trackingCode)}`); const payload=await readJsonOrThrow<{action?:{totalPaid:number;paymentSites:string[];physicallyPresent:boolean;delivered:boolean;fullyPaidAtCooOnly:boolean}}>(response,"Situation indisponible."); if(!payload?.action)throw new Error("Situation indisponible."); return payload.action; }
 function parcelStatus(parcel: Parcel, action: { physicallyPresent:boolean; delivered:boolean; fullyPaidAtCooOnly:boolean } | null) { if(parcel.soldeRestant>0)return parcel.montantDejaPaye>0?"COLIS AVEC SOLDE RESTANT":"COLIS À ENCAISSER"; if(action?.delivered)return "LIVRAISON TERMINÉE"; if(action?.fullyPaidAtCooOnly)return action.physicallyPresent?"PAIEMENT COO — COLIS PRÊT À REMETTRE":"PAIEMENT COO — EN ATTENTE D’ARRIVAGE"; return action?.physicallyPresent?"PAIEMENT TERMINÉ — SORTIE PHYSIQUE À FINALISER":"PAIEMENT TERMINÉ — COLIS NON PRÉSENT"; }
 async function confirmPhysicalRemittance(trackingCode:string,setMessage:React.Dispatch<React.SetStateAction<{type:"success"|"error";text:string;details?:string[]}|null>>,setParcel:React.Dispatch<React.SetStateAction<Parcel|null>>){ if(!window.confirm(`Confirmer la remise physique du colis ${trackingCode} ?`))return; try{const accessToken=await getVerifiedAgentWriteToken(getSupabaseBrowserClient().auth);const response=await fetch("/api/agent/stockages/delivery",{method:"POST",headers:{Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},body:JSON.stringify({trackingCode,physicalDeliveryConfirmed:true,requestId:crypto.randomUUID()})});const payload=await response.json().catch(()=>null) as {message?:string};if(!response.ok)throw new Error(payload?.message??"Remise refusée.");setMessage({type:"success",text:"Remise physique confirmée. La sortie Stockages a été enregistrée."});setParcel(null);}catch(error){setMessage({type:"error",text:error instanceof Error?error.message:"Remise refusée."});}}
 

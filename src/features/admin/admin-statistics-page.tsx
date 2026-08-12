@@ -13,6 +13,7 @@ import { PARCEL_STATUSES, PARCEL_STATUS_LABELS, type ParcelStatusSituation } fro
 import type { ShipmentStatistics } from "@/features/admin/shipment-statistics";
 import { getAdminProfile, signOutAgent } from "@/features/agent/auth";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 
 type PageKind = "manifest" | "shipments";
 type ShipmentPageData = ShipmentStatistics & { pagination: { page: number; pageSize: number; totalResults: number; totalPages: number } };
@@ -42,9 +43,9 @@ export function AdminStatisticsPage({ kind }: { kind: PageKind }) {
   const load = useCallback(async (params = buildParams()) => {
     if (!token.current) return; setLoading(true); setError("");
     try {
-      const response = await fetch(`/api/admin/statistics/${kind}?${params}`, { headers: { Authorization: `Bearer ${token.current}` }, cache: "no-store" });
-      const body = await response.json() as { statistics?: ManifestStatistics | ShipmentPageData; situation?: ParcelStatusSituation; filters?: { dateField: string }; message?: string };
-      if (!response.ok || !body.statistics) throw new Error(body.message || "Lecture impossible.");
+      const response = await authenticatedRead(getSupabaseBrowserClient().auth, `/api/admin/statistics/${kind}?${params}`, {}, fetch, token.current);
+      const body = await readJsonOrThrow<{ statistics?: ManifestStatistics | ShipmentPageData; situation?: ParcelStatusSituation; filters?: { dateField: string } }>(response, "Lecture impossible.");
+      if (!body.statistics) throw new Error("Lecture impossible.");
       if (kind === "manifest") { if (!body.situation || !body.filters) throw new Error("Réponse statistique incomplète."); setManifest({ statistics: body.statistics as ManifestStatistics, situation: body.situation, filters: body.filters }); }
       else setShipments(body.statistics as ShipmentPageData);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Lecture impossible."); } finally { setLoading(false); }

@@ -5,6 +5,7 @@ import { FileSearch, RefreshCcw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 import { formatWeight } from "@/lib/format-weight";
 import { MANIFEST_STATUS_OPTIONS, manifestStatusLabel } from "@/lib/manifest-status";
 
@@ -24,16 +25,14 @@ export function AgentManifestControl({ cooModule = false }: { cooModule?: boolea
     const sequence = ++requestSequence.current;
     setError("");
     try {
-      const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
-      if (!session?.access_token) throw new Error("Session expirée.");
       const params = new URLSearchParams({ ...next, page: String(page), pageSize: "25" });
       if (cooModule) {
         params.set("view", "coo");
         params.set("agency", agency);
       }
-      const response = await fetch(`/api/agent/manifest?${params}`, { headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store" });
-      const payload = await response.json().catch(() => null) as ResponseData | { message?: string } | null;
-      if (!response.ok || !payload || !("rows" in payload)) throw new Error(payload && "message" in payload ? payload.message : "Lecture indisponible.");
+      const response = await authenticatedRead(getSupabaseBrowserClient().auth, `/api/agent/manifest?${params}`);
+      const payload = await readJsonOrThrow<ResponseData>(response, "Lecture indisponible.");
+      if (!payload || !("rows" in payload)) throw new Error("Lecture indisponible.");
       if (sequence === requestSequence.current) setData(payload);
     } catch (cause) { if (sequence === requestSequence.current) setError(cause instanceof Error ? cause.message : "Lecture indisponible."); }
   }, [cooModule, manifestAgency]);

@@ -9,6 +9,7 @@ import { Container, GlassPanel } from "@/components/design-system";
 import { Button } from "@/components/ui/button";
 import { formatParcelsForArrival, type ReceptionStatistics } from "@/features/agent/reception-statistics";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 import { formatWeight } from "@/lib/format-weight";
 
 const field = "h-11 rounded-md border border-white/15 bg-white/[0.05] px-3 text-white outline-none focus:border-accent";
@@ -35,9 +36,9 @@ export function ReceptionStatisticsPage() {
     if (!month) { add("from", from); add("to", to); }
     add("year", year); add("month", month); add("company", company); add("status", status); add("arrival", arrival); add("search", search.trim());
     try {
-      const response = await fetch(`/api/agent/reception-statistics?${params}`, { headers: { Authorization: `Bearer ${token.current}` }, cache: "no-store" });
-      const body = await response.json() as { statistics?: ReceptionStatistics; message?: string };
-      if (!response.ok || !body.statistics) throw new Error(body.message || "Lecture impossible.");
+      const response = await authenticatedRead(getSupabaseBrowserClient().auth, `/api/agent/reception-statistics?${params}`, {}, fetch, token.current);
+      const body = await readJsonOrThrow<{ statistics?: ReceptionStatistics }>(response, "Lecture impossible.");
+      if (!body.statistics) throw new Error("Lecture impossible.");
       setStatistics(body.statistics);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Lecture impossible.");

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { GlassPanel } from "@/components/design-system";
 import { Button } from "@/components/ui/button";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 import type { DailyAgencyReport, ReportAgency } from "@/features/daily-report/daily-report";
 import { REPORT_PERIODS, type ReportPeriod } from "@/features/daily-report/report-period";
 
@@ -14,7 +15,7 @@ const field = "mt-2 h-11 w-full rounded-md border border-white/15 bg-slate-950 p
 export function CashPeriodConsultation() {
   const [period,setPeriod]=useState<ReportPeriod>("TODAY"); const [agency,setAgency]=useState<ReportAgency|"ALL">("ALL");
   const [from,setFrom]=useState(""); const [to,setTo]=useState(""); const [data,setData]=useState<Payload|null>(null); const [error,setError]=useState(""); const [loading,setLoading]=useState(false);
-  const load=useCallback(async()=>{setLoading(true);setError("");try{const {data:{session}}=await getSupabaseBrowserClient().auth.getSession();if(!session?.access_token)throw new Error("Session Admin expirée.");const query=new URLSearchParams({period});if(period==="CUSTOM"){query.set("from",from);query.set("to",to);}const response=await fetch(`/api/admin/daily-report?${query}`,{headers:{Authorization:`Bearer ${session.access_token}`},cache:"no-store"});const body=await response.json() as Payload&{message?:string};if(!response.ok)throw new Error(body.message??"Consultation indisponible.");setData(body);}catch(cause){setError(cause instanceof Error?cause.message:"Consultation indisponible.");}finally{setLoading(false);}},[from,period,to]);
+  const load=useCallback(async()=>{setLoading(true);setError("");try{const query=new URLSearchParams({period});if(period==="CUSTOM"){query.set("from",from);query.set("to",to);}const response=await authenticatedRead(getSupabaseBrowserClient().auth,`/api/admin/daily-report?${query}`);const body=await readJsonOrThrow<Payload>(response,"Consultation indisponible.");setData(body);}catch(cause){setError(cause instanceof Error?cause.message:"Consultation indisponible.");}finally{setLoading(false);}},[from,period,to]);
   useEffect(()=>{void load();},[load]);
   const rows=useMemo(()=>data?.agencies.filter(row=>agency==="ALL"||row.agency===agency)??[],[agency,data]);
   const total=rows.reduce((sum,row)=>sum+row.paymentsTotal,0); const count=rows.reduce((sum,row)=>sum+row.paymentCount,0);

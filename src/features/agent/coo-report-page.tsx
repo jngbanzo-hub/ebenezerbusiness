@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { AdminPayment } from "@/features/admin/types";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 import type { CooReport, CooReportExpense } from "@/server/coo-report";
 
 type Tab = "PAYMENTS" | "EXPENSES";
@@ -27,17 +28,15 @@ export function CooReportPage() {
   const load = useCallback(async (filters?: { from?: string; to?: string; code?: string; label?: string }) => {
     setLoading(true); setError("");
     try {
-      const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
-      if (!session?.access_token) { router.replace("/auth/sign-in"); return; }
       const query = new URLSearchParams();
       for (const [key, value] of Object.entries(filters ?? {})) if (value) query.set(key, value);
-      const response = await fetch(`/api/agent/coo-report${query.size ? `?${query}` : ""}`, { headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store" });
-      const payload = await response.json().catch(() => null) as CooReport | { message?: string } | null;
-      if (!response.ok || !payload || !("readOnly" in payload)) throw new Error(payload && "message" in payload ? payload.message : "Rapport COO indisponible.");
+      const response = await authenticatedRead(getSupabaseBrowserClient().auth, `/api/agent/coo-report${query.size ? `?${query}` : ""}`);
+      const payload = await readJsonOrThrow<CooReport>(response, "Rapport COO indisponible.");
+      if (!payload || !("readOnly" in payload)) throw new Error("Rapport COO indisponible.");
       setReport(payload); setFrom(payload.from); setTo(payload.to);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Rapport COO indisponible."); }
     finally { setLoading(false); }
-  }, [router]);
+  }, []);
 
   useEffect(() => { void load(); }, [load]);
   function submit(event: FormEvent) { event.preventDefault(); void load({ from, to, code: tab === "PAYMENTS" ? code : undefined, label: tab === "EXPENSES" ? label : undefined }); }

@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { signOutAgent } from "@/features/agent/auth";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 import type { Agency } from "@/features/agent/types";
 import { NotificationBell } from "@/features/notifications/notification-center";
 import { getAgentProfilePhoto } from "@/features/agent/profile-photo-map";
@@ -127,24 +128,8 @@ export function AgentDashboard() {
 
     async function loadProfile() {
       try {
-        const supabase = getSupabaseBrowserClient();
-        const {
-          data: { session }
-        } = await supabase.auth.getSession();
-
-        if (!session?.access_token) {
-          router.replace("/auth/sign-in");
-          return;
-        }
-
-        const response = await fetch("/api/agent/profile", {
-          headers: {
-            Authorization: `Bearer ${session.access_token}`
-          },
-          cache: "no-store",
-          signal: controller.signal
-        });
-        const payload: unknown = await response.json().catch(() => null);
+        const response = await authenticatedRead(getSupabaseBrowserClient().auth, "/api/agent/profile", { signal: controller.signal });
+        const payload: unknown = await readJsonOrThrow<unknown>(response, "Impossible de vérifier votre profil Agent.");
 
         if (response.status === 401) {
           await signOutAgent().catch(() => undefined);

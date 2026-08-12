@@ -6,6 +6,8 @@ import type {
   TransfersAuditResponse,
   TransfersPageResponse
 } from "@/features/transferts/types";
+import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
+import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 
 export class TransfertsApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -115,21 +117,21 @@ async function loadTransfers<T>(
   token: string,
   signal?: AbortSignal
 ): Promise<T> {
-  const response = await fetch(url, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
-    signal
-  });
-  const payload: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message =
-      isRecord(payload) && typeof payload.message === "string"
-        ? payload.message
-        : "Le module Transferts est temporairement indisponible.";
-    throw new TransfertsApiError(message, response.status);
+  const response = await authenticatedRead(
+    getSupabaseBrowserClient().auth,
+    url,
+    { signal },
+    fetch,
+    token
+  );
+  try {
+    return await readJsonOrThrow<T>(response, "Le module Transferts est temporairement indisponible.");
+  } catch (error) {
+    if (error instanceof Error && "status" in error && typeof error.status === "number") {
+      throw new TransfertsApiError(error.message, error.status);
+    }
+    throw error;
   }
-  return payload as T;
 }
 
 async function writeTransfer(
