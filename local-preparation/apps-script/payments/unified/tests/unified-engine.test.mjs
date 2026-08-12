@@ -398,6 +398,21 @@ for (const sourceStatus of [
   });
 }
 
+for (const [sourceStatus, expectedStatus] of [
+  ["⚪ En Attente", "EN ATTENTE"],
+  ["✈️ En Vol", "EN VOL"],
+  ["🚚 En Transit", "EN TRANSIT"],
+  ["📦 Arrivé", "ARRIVÉ"],
+  ["ENREGISTRE", "ENREGISTRÉ"],
+]) {
+  test(`le statut manifeste décoré ${sourceStatus} est normalisé`, () => {
+    const harness = createHarness({ sourceStatus });
+    const response = harness.request(harness.basePayment());
+    assert.equal(response.ok, true);
+    assert.equal(harness.payments.getSheetByName("COO").rows[1][13], expectedStatus);
+  });
+}
+
 for (const sourceStatus of ["LIVRÉ", "SORTI", "ANNULÉ", "INCONNU"]) {
   test(`le statut non admissible ${sourceStatus} est refusé`, () => {
     const harness = createHarness({ sourceStatus });

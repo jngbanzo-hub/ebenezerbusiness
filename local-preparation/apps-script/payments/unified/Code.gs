@@ -652,7 +652,22 @@ function validerReferenceAcheminement_(value) {
 }
 
 function normaliserStatutColisPourPaiement_(value) {
-  var statut = String(value || "").trim().toUpperCase();
+  var statutSource = String(value || "")
+    .replace(/[✅☑️🟢🟡🔴⚪📦✈️🚚]/g, "")
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ");
+  var correspondances = {
+    "EN ATTENTE": "EN ATTENTE",
+    "ENREGISTRE": "ENREGISTRÉ",
+    "EN VOL": "EN VOL",
+    "EN TRANSIT": "EN TRANSIT",
+    "ARRIVE": "ARRIVÉ"
+  };
+  var statut = correspondances[statutSource] || "";
   var statutsAutorises = [
     "EN ATTENTE",
     "ENREGISTRÉ",
