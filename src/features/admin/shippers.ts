@@ -9,6 +9,8 @@ import type {
   ShipperSuggestion,
   ShipperSuggestionsApiResponse
 } from "@/features/admin/types";
+import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead } from "@/features/auth/authenticated-fetch";
 
 const STRICT_MANIFEST_DATE = /^(\d{2})\/(\d{2})\/(\d{4})$/;
 const STRICT_POSITIVE_WEIGHT =
@@ -58,15 +60,12 @@ export async function loadShipperSuggestions(
   query: string,
   signal?: AbortSignal
 ) {
-  const response = await fetch(
+  const response = await authenticatedRead(
+    getSupabaseBrowserClient().auth,
     `/api/admin/shippers?q=${encodeURIComponent(query)}`,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`
-      },
-      cache: "no-store",
-      signal
-    }
+    { signal },
+    fetch,
+    accessToken
   );
   const payload = (await response.json()) as
     | ShipperSuggestionsApiResponse
@@ -96,15 +95,12 @@ export async function loadShipperStatistics(
     site: filters.site,
     destination: filters.destination
   });
-  const response = await fetch(
+  const response = await authenticatedRead(
+    getSupabaseBrowserClient().auth,
     `/api/admin/shippers/statistics?${searchParams.toString()}`,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`
-      },
-      cache: "no-store",
-      signal
-    }
+    { signal },
+    fetch,
+    accessToken
   );
   const payload = (await response.json()) as
     | ShipperStatisticsApiResponse

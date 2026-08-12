@@ -8,6 +8,8 @@ import {
   type AdminPaymentStats,
   type AdminSite
 } from "@/features/admin/types";
+import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead } from "@/features/auth/authenticated-fetch";
 
 const EMPTY_STATS: AdminPaymentStats = {
   montantTotal: 0,
@@ -32,13 +34,13 @@ export async function loadAdminPayments(
   signal?: AbortSignal
 ) {
   const searchParams = new URLSearchParams({ from: startDate, to: endDate });
-  const response = await fetch(`/api/admin/payments?${searchParams.toString()}`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    },
-    cache: "no-store",
-    signal
-  });
+  const response = await authenticatedRead(
+    getSupabaseBrowserClient().auth,
+    `/api/admin/payments?${searchParams.toString()}`,
+    { signal },
+    fetch,
+    accessToken
+  );
   const payload = (await response.json().catch(() => null)) as
     | AdminPaymentsApiResponse
     | { message?: string }

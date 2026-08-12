@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
+
+import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 import { GlassPanel } from "@/components/design-system";
 
 type AgencyState = { agency: string; cash: { status: string; currentBalance?: number | null; currency?: string }; storage: { status: string; parcelCount?: number; weightKg?: number }; payments: string; expenses: string; manifest: string };
 
 export function AdminSystemStatus({ accessToken }: { accessToken: string }) {
   const [agencies, setAgencies] = useState<AgencyState[]>([]), [error, setError] = useState("");
-  useEffect(() => { if (!accessToken) return; void fetch("/api/admin/system-status", { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" }).then(async (response) => { const value = await response.json(); if (!response.ok) throw new Error(); setAgencies(Array.isArray(value.agencies) ? value.agencies : []); }).catch(() => setError("État du système temporairement indisponible.")); }, [accessToken]);
+  useEffect(() => { if (!accessToken) return; setError(""); void authenticatedRead(getSupabaseBrowserClient().auth, "/api/admin/system-status", {}, fetch, accessToken).then((response) => readJsonOrThrow<{agencies?:AgencyState[]}>(response, "État du système temporairement indisponible.")).then((value) => setAgencies(Array.isArray(value.agencies) ? value.agencies : [])).catch((cause) => setError(cause instanceof Error ? cause.message : "État du système temporairement indisponible.")); }, [accessToken]);
   return <section className="mt-10"><h2 className="text-2xl font-semibold">État du système</h2><p className="mt-2 text-sm text-muted-foreground">Lecture seule — états calculés depuis les sources Caisse et Stockage officielles.</p>{error ? <p role="alert" className="mt-5 text-red-200">{error}</p> : <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">{agencies.map((item) => <GlassPanel key={item.agency} className="p-5"><h3 className="text-xl font-semibold text-accent">{item.agency}</h3><dl className="mt-4 space-y-3 text-sm"><Status label="Encaissements" value={item.payments}/><Status label="Dépenses" value={item.expenses}/><Status label="Manifeste" value={item.manifest}/><Status label="Caisse" value={item.cash.status}/>{item.cash.currentBalance !== undefined && item.cash.currentBalance !== null ? <Status label="Solde actuel" value={`${item.cash.currentBalance.toFixed(2)} ${item.cash.currency}`}/> : null}<Status label="Stockage" value={item.storage.status}/>{item.storage.parcelCount !== undefined ? <Status label="Inventaire" value={`${item.storage.parcelCount} colis / ${item.storage.weightKg} kg`}/> : null}</dl></GlassPanel>)}</div>}</section>;
 }
 function Status({ label, value }: { label: string; value: string }) { const display = value === "OPERATIONAL" ? "OPÉRATIONNEL" : value === "READ_ONLY_OPERATIONAL" ? "LECTURE SEULE / OPÉRATIONNEL" : value === "NOT_APPLICABLE" ? "NON APPLICABLE" : value === "SUSPENDED" ? "SUSPENDU" : value; return <div className="flex items-start justify-between gap-3 border-b border-white/10 pb-2"><dt className="text-muted-foreground">{label}</dt><dd className="text-right font-semibold">● {display}</dd></div>; }

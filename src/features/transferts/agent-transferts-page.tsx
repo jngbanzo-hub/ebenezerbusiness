@@ -32,6 +32,7 @@ export function AgentTransfertsPage() {
     const controller = new AbortController();
     let active = true;
     async function load() {
+      setError("");
       try {
         const supabase = getSupabaseBrowserClient();
         const { data: { session } } = await supabase.auth.getSession();

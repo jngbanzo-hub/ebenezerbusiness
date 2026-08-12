@@ -1,4 +1,6 @@
 import type { StockagesPreparationStatus } from "@/features/stockages/types";
+import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead } from "@/features/auth/authenticated-fetch";
 
 export class StockagesStatusApiError extends Error {
   constructor(
@@ -14,13 +16,13 @@ export async function loadStockagesStatus(
   scope: "agent" | "admin",
   signal?: AbortSignal
 ) {
-  const response = await fetch(`/api/${scope}/stockages/status`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    },
-    cache: "no-store",
-    signal
-  });
+  const response = await authenticatedRead(
+    getSupabaseBrowserClient().auth,
+    `/api/${scope}/stockages/status`,
+    { signal },
+    fetch,
+    accessToken
+  );
   const payload: unknown = await response.json().catch(() => null);
 
   if (!response.ok) {

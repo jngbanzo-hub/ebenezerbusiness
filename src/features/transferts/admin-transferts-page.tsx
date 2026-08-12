@@ -95,20 +95,14 @@ export function AdminTransfertsPage() {
     async function load() {
       setLoading(true);
       try {
-        const loaded = await loadAdminTransfers(token.current, filters, controller.signal);
+        const auditFilters = { period, from: dateFrom, to: dateTo, agencyFrom, agencyTo, circuit, status, currency, transferId };
+        const [loaded, loadedAudit] = await Promise.all([
+          loadAdminTransfers(token.current, filters, controller.signal),
+          loadAdminTransfersAudit(token.current, auditFilters, controller.signal)
+        ]);
         if (!active) return;
         setResult(loaded);
-        if (loaded.adminEnabled) {
-          setAudit(
-            await loadAdminTransfersAudit(
-              token.current,
-              { period, from: dateFrom, to: dateTo, agencyFrom, agencyTo, circuit, status, currency, transferId },
-              controller.signal
-            )
-          );
-        } else {
-          setAudit(null);
-        }
+        setAudit(loaded.adminEnabled ? loadedAudit : null);
       } catch (error) {
         if (!active || controller.signal.aborted) return;
         if (error instanceof TransfertsApiError && error.status === 401) {

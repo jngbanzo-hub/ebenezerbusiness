@@ -1,3 +1,6 @@
+import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead } from "@/features/auth/authenticated-fetch";
+
 export type AdminExpenseAgency = "COO" | "FIH" | "LSHI" | "KLZ";
 export type AdminExpenseCurrency = "USD" | "FCFA" | "CDF";
 export type AdminExpenseStatus =
@@ -75,12 +78,15 @@ export async function loadAdminExpenses(
   for (const [key, value] of Object.entries(filters)) {
     if (value !== undefined && value !== "") query.set(key, String(value));
   }
-  const response = await fetcher(`/api/admin/expenses?${query.toString()}`, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
-    signal
-  });
+  const url = `/api/admin/expenses?${query.toString()}`;
+  const response = fetcher === fetch
+    ? await authenticatedRead(getSupabaseBrowserClient().auth, url, { signal }, fetcher, token)
+    : await fetcher(url, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+        signal
+      });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const message = readErrorMessage(payload) ?? "Impossible de charger les dépenses.";
