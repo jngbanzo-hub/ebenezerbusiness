@@ -530,7 +530,7 @@ test("le rapport UI détaille les dates invalides et les doublons par agence", a
   assert.doesNotMatch(view, /Codes présents dans plusieurs sites/);
 });
 
-test("place Top bénéficiaires après les statistiques expéditeur et avant les anomalies", async () => {
+test("épure l’en-tête secondaire et place Top bénéficiaires en dernier", async () => {
   const view = await readFile(
     new URL("../src/features/admin/shipper-statistics.tsx", import.meta.url),
     "utf8"
@@ -541,7 +541,9 @@ test("place Top bénéficiaires après les statistiques expéditeur et avant les
   const anomalies = results.indexOf("<AnomalyPanel");
   const parcels = results.indexOf("Détail des colis");
 
-  assert.ok(breakdown >= 0 && breakdown < beneficiaries);
-  assert.ok(beneficiaries < anomalies);
+  assert.doesNotMatch(view, /<Badge variant="growth">Lecture seule<\/Badge>/);
+  assert.doesNotMatch(view, /<h2[^>]*>\s*Statistiques par expéditeur\s*<\/h2>/);
+  assert.ok(breakdown >= 0 && breakdown < anomalies);
   assert.ok(anomalies < parcels);
+  assert.ok(parcels < beneficiaries);
 });

@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 
 import { GlassPanel } from "@/components/design-system";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatWeight } from "@/lib/format-weight";
 import { TopBeneficiariesSection } from "@/features/admin/top-beneficiaries";
@@ -160,18 +159,10 @@ export function ShipperStatisticsSection({
 
   return (
     <section className="mt-12 border-t border-white/10 pt-10">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <Badge variant="growth">Lecture seule</Badge>
-          <h2 className="mt-3 text-2xl font-semibold text-accent">
-            Statistiques par expéditeur
-          </h2>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Consultez les colis du Manifeste Public sans modifier les données
-            sources.
-          </p>
-        </div>
-      </div>
+      <p className="max-w-2xl text-sm text-muted-foreground">
+        Consultez les colis du Manifeste Public sans modifier les données
+        sources.
+      </p>
 
       <GlassPanel className="mt-6 p-5 sm:p-6">
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
@@ -420,8 +411,6 @@ function ShipperResults({
         />
       </div>
 
-      {topBeneficiaries}
-
       <AnomalyPanel anomalies={statistics.anomalies} />
 
       <GlassPanel className="mt-6 overflow-hidden">
@@ -493,6 +482,8 @@ function ShipperResults({
           </div>
         )}
       </GlassPanel>
+
+      {topBeneficiaries}
     </>
   );
 }
