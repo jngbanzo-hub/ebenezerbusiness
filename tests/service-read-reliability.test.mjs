@@ -19,11 +19,14 @@ test("les lectures Admin sensibles utilisent le helper Auth/retry commun", async
   }
 });
 
-test("les lectures Admin Transferts indépendantes ne sont plus séquentielles", async () => {
+test("la liste Admin Transferts est indépendante de l’Audit", async () => {
   const source = await read("src/features/transferts/admin-transferts-page.tsx");
-  assert.match(source, /Promise\.all\(\[/);
+  assert.doesNotMatch(source, /Promise\.all\(\[/);
   assert.match(source, /loadAdminTransfers\(/);
   assert.match(source, /loadAdminTransfersAudit\(/);
+  assert.match(source, /setAuditLoading\(true\)/);
+  assert.match(source, /setAuditError\(/);
+  assert.match(source, /Audit temporairement indisponible\./);
 });
 
 test("une nouvelle lecture Agent Transferts efface l’erreur précédente", async () => {

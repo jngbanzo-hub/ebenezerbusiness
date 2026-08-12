@@ -38,6 +38,8 @@ export function AdminTransfertsPage() {
   const [result, setResult] = useState<TransfersPageResponse | null>(null);
   const [audit, setAudit] = useState<TransfersAuditResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState("");
   const [period, setPeriod] = useState("THIS_MONTH");
   const [agencyFrom, setAgencyFrom] = useState("");
   const [agencyTo, setAgencyTo] = useState("");
@@ -94,15 +96,13 @@ export function AdminTransfertsPage() {
     let active = true;
     async function load() {
       setLoading(true);
+      setResult(null);
+      setAudit(null);
+      setAuditError("");
       try {
-        const auditFilters = { period, from: dateFrom, to: dateTo, agencyFrom, agencyTo, circuit, status, currency, transferId };
-        const [loaded, loadedAudit] = await Promise.all([
-          loadAdminTransfers(token.current, filters, controller.signal),
-          loadAdminTransfersAudit(token.current, auditFilters, controller.signal)
-        ]);
+        const loaded = await loadAdminTransfers(token.current, filters, controller.signal);
         if (!active) return;
         setResult(loaded);
-        setAudit(loaded.adminEnabled ? loadedAudit : null);
       } catch (error) {
         if (!active || controller.signal.aborted) return;
         if (error instanceof TransfertsApiError && error.status === 401) {
@@ -129,6 +129,37 @@ export function AdminTransfertsPage() {
     void load();
     return () => { active = false; controller.abort(); };
   }, [agencyFrom, agencyTo, authorized, circuit, currency, dateFrom, dateTo, filters, period, reloadKey, router, status, transferId]);
+
+  useEffect(() => {
+    if (!authorized || !token.current || !result?.adminEnabled) return;
+    const controller = new AbortController();
+    let active = true;
+    async function loadAudit() {
+      setAuditLoading(true);
+      setAuditError("");
+      setAudit(null);
+      try {
+        const loadedAudit = await loadAdminTransfersAudit(
+          token.current,
+          { period, from: dateFrom, to: dateTo, agencyFrom, agencyTo, circuit, status, currency, transferId },
+          controller.signal
+        );
+        if (active) setAudit(loadedAudit);
+      } catch (error) {
+        if (!active || controller.signal.aborted) return;
+        if (error instanceof TransfertsApiError && error.status === 401) {
+          await signOutAgent().catch(() => undefined);
+          router.replace("/auth/sign-in");
+          return;
+        }
+        setAuditError(error instanceof Error ? error.message : "Audit temporairement indisponible.");
+      } finally {
+        if (active) setAuditLoading(false);
+      }
+    }
+    void loadAudit();
+    return () => { active = false; controller.abort(); };
+  }, [agencyFrom, agencyTo, authorized, circuit, currency, dateFrom, dateTo, period, reloadKey, result?.adminEnabled, router, status, transferId]);
 
   async function handleSignOut() {
     await signOutAgent();
@@ -194,7 +225,7 @@ export function AdminTransfertsPage() {
         {result?.adminEnabled ? (
           <>
             <TransferTable result={result} onSelect={setSelectedTransferId} />
-            <AuditTable audit={audit} />
+            <AuditTable audit={audit} loading={auditLoading} error={auditError} />
           </>
         ) : null}
 
@@ -278,11 +309,11 @@ function TransferTable({
   );
 }
 
-function AuditTable({ audit }: { audit: TransfersAuditResponse | null }) {
+function AuditTable({ audit, loading, error }: { audit: TransfersAuditResponse | null; loading: boolean; error: string }) {
   return (
     <GlassPanel className="mt-6 overflow-x-auto p-5 sm:p-6">
       <h2 className="text-xl font-semibold">Audit</h2>
-      {!audit?.entries.length ? <p className="mt-4 text-sm text-muted-foreground">Aucun événement d’audit disponible.</p> : (
+      {loading ? <p className="mt-4 flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="h-4 w-4 animate-spin text-accent" />Chargement de l’Audit…</p> : error ? <p role="alert" className="mt-4 text-sm text-amber-100">Audit temporairement indisponible.</p> : !audit?.entries.length ? <p className="mt-4 text-sm text-muted-foreground">Aucun événement d’audit disponible.</p> : (
         <table className="mt-5 min-w-full text-left text-sm"><thead className="text-muted-foreground"><tr><th className="p-2">Date</th><th>Action</th><th>Transfer ID</th><th>Acteur</th><th>Agence</th><th>Résultat</th></tr></thead><tbody>{audit.entries.map((entry) => <tr key={entry.auditId} className="border-t border-white/10"><td className="p-2">{entry.dateTime}</td><td>{entry.action}</td><td>{entry.transferId}</td><td>{entry.user || "Non disponible"}</td><td>{entry.agencyFrom} → {entry.agencyTo}</td><td>{entry.result}</td></tr>)}</tbody></table>
       )}
     </GlassPanel>
