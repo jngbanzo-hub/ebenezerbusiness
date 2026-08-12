@@ -104,6 +104,7 @@ async function readManifestRows(config: ManifestGoogleSheetsConfig): Promise<Man
         dateRaw: getCell(row, 0),
         codeColisRaw: getCell(row, 1),
         expediteurRaw: getCell(row, 2),
+        beneficiaireRaw: headerMap.beneficiaryIndex >= 0 ? getCell(row, headerMap.beneficiaryIndex) : "",
         poidsRaw: getCell(row, 4),
         montantAttenduRaw: getCell(row, 5),
         statutRaw: headerMap.statusIndex >= 0 ? getCell(row, headerMap.statusIndex) : ""

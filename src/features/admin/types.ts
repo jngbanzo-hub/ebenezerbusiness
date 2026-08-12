@@ -68,6 +68,7 @@ export type ManifestShipperRow = {
   dateRaw: string;
   codeColisRaw: string;
   expediteurRaw: string;
+  beneficiaireRaw?: string;
   poidsRaw: string | number;
   montantAttenduRaw?: string | number;
   statutRaw?: string;

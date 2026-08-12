@@ -15,6 +15,7 @@ import { GlassPanel } from "@/components/design-system";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatWeight } from "@/lib/format-weight";
+import { TopBeneficiariesSection } from "@/features/admin/top-beneficiaries";
 import {
   AdminShippersApiError,
   loadShipperStatistics,
@@ -171,6 +172,8 @@ export function ShipperStatisticsSection({
           </p>
         </div>
       </div>
+
+      <TopBeneficiariesSection accessToken={accessToken} />
 
       <GlassPanel className="mt-6 p-5 sm:p-6">
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">

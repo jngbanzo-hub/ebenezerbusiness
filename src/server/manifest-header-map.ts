@@ -2,6 +2,7 @@ export type ManifestHeaderMap = Readonly<{
   headerRowIndex: number;
   headers: readonly string[];
   statusIndex: number;
+  beneficiaryIndex: number;
 }>;
 
 export function detectManifestHeaderMap(rows: readonly unknown[][]): ManifestHeaderMap {
@@ -11,11 +12,14 @@ export function detectManifestHeaderMap(rows: readonly unknown[][]): ManifestHea
     const hasDate = normalized.includes("DATE");
     const hasCode = normalized.some((header) => header === "CODE" || header === "CODE COLIS");
     const statusIndex = normalized.findIndex((header) => header === "STATUT" || header === "STATUS");
+    const beneficiaryIndex = normalized.findIndex((header) =>
+      header === "BENEFICIAIRE" || header === "NOM ET NUMERO BENEFICIAIRE"
+    );
     if (hasDate && hasCode && statusIndex >= 0) {
-      return Object.freeze({ headerRowIndex, headers: Object.freeze(headers), statusIndex });
+      return Object.freeze({ headerRowIndex, headers: Object.freeze(headers), statusIndex, beneficiaryIndex });
     }
   }
-  return Object.freeze({ headerRowIndex: -1, headers: Object.freeze([]), statusIndex: -1 });
+  return Object.freeze({ headerRowIndex: -1, headers: Object.freeze([]), statusIndex: -1, beneficiaryIndex: -1 });
 }
 
 export function normalizeManifestHeader(value: unknown): string {
