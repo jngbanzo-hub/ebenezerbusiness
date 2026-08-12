@@ -194,6 +194,10 @@ test("une lecture 503 est retentée, un refus métier ne l'est pas", async () =>
   }
 });
 
+test("les lectures disposent d'une fenêtre dédiée sans allonger les écritures", () => {
+  assert.match(serverSource, /isReadAction \? 30_000 : 15_000/);
+});
+
 test("le client serveur supprime récursivement tout code complet", () => {
   const safe = module.stripFullTransferCodes({
     transferCode: "SECRET",

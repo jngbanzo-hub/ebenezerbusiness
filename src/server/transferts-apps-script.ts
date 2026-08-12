@@ -94,7 +94,8 @@ async function callTransfertsApi(
   });
   const signature = signTransfertsRequest(config.hmacSecret, signatureBase);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
+  const isReadAction = TRANSFERTS_READ_ACTIONS.includes(action as TransfertsReadAction);
+  const timeout = setTimeout(() => controller.abort(), isReadAction ? 30_000 : 15_000);
 
   try {
     const response = await (options.fetcher ?? fetch)(config.url, {
