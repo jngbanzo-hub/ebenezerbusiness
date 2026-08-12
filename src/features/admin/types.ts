@@ -95,12 +95,28 @@ export type ShipperBreakdown = {
 
 export type ShipperAnomalyReport = {
   invalidDates: number;
+  invalidDateDetails: Array<{
+    sourceSite: ManifestSite;
+    rowNumber: number;
+    codeColis: string;
+    expediteur: string;
+    rawDate: string;
+  }>;
   missingCodes: number;
   missingShippers: number;
   invalidWeights: number;
   duplicateRows: number;
+  sameAgencyDuplicates: number;
+  duplicateDetails: Array<{
+    sourceSite: ManifestSite;
+    codeColis: string;
+    occurrences: number;
+    dates: string[];
+    weightsKg: Array<number | null>;
+    shippers: string[];
+    rowNumbers: number[];
+  }>;
   conflictingWeights: number;
-  crossSiteCodes: number;
 };
 
 export type ShipperStatistics = {

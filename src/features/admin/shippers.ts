@@ -162,8 +162,7 @@ export function hasVisibleShipperAnomalies(
     anomalies.missingCodes > 0 ||
     anomalies.invalidWeights > 0 ||
     anomalies.duplicateRows > 0 ||
-    anomalies.conflictingWeights > 0 ||
-    anomalies.crossSiteCodes > 0
+    anomalies.conflictingWeights > 0
   );
 }
 
@@ -284,6 +283,13 @@ export function calculateShipperStatistics(
     const date = parseStrictManifestDate(row.dateRaw);
     if (!date) {
       anomalies.invalidDates += 1;
+      anomalies.invalidDateDetails.push({
+        sourceSite: row.sourceSite,
+        rowNumber: row.rowNumber,
+        codeColis: normalizeManifestCode(row.codeColisRaw) || "Code manquant",
+        expediteur,
+        rawDate: row.dateRaw
+      });
       continue;
     }
 
@@ -339,6 +345,16 @@ export function calculateShipperStatistics(
 
     if (group.length > 1) {
       anomalies.duplicateRows += group.length - 1;
+      anomalies.sameAgencyDuplicates += 1;
+      anomalies.duplicateDetails.push({
+        sourceSite: representative.sourceSite,
+        codeColis: representative.codeColis,
+        occurrences: group.length,
+        dates: ordered.map((row) => row.dateKey),
+        weightsKg: ordered.map((row) => row.poidsKg),
+        shippers: Array.from(new Set(ordered.map((row) => row.expediteur))),
+        rowNumbers: ordered.map((row) => row.rowNumber)
+      });
     }
 
     let poidsKg: number | null = null;
@@ -362,16 +378,6 @@ export function calculateShipperStatistics(
       poidsKg
     };
   });
-
-  const sitesByCode = new Map<string, Set<ManifestSite>>();
-  for (const parcel of parcels) {
-    const sites = sitesByCode.get(parcel.codeColis) ?? new Set<ManifestSite>();
-    sites.add(parcel.sourceSite);
-    sitesByCode.set(parcel.codeColis, sites);
-  }
-  anomalies.crossSiteCodes = Array.from(sitesByCode.values()).filter(
-    (sites) => sites.size > 1
-  ).length;
 
   parcels.sort(
     (left, right) =>
@@ -413,12 +419,14 @@ function isLeapYear(year: number) {
 function createEmptyAnomalyReport(): ShipperAnomalyReport {
   return {
     invalidDates: 0,
+    invalidDateDetails: [],
     missingCodes: 0,
     missingShippers: 0,
     invalidWeights: 0,
     duplicateRows: 0,
+    sameAgencyDuplicates: 0,
+    duplicateDetails: [],
     conflictingWeights: 0,
-    crossSiteCodes: 0
   };
 }
 

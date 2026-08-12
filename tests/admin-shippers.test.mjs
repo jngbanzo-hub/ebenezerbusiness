@@ -9,7 +9,16 @@ const sourceUrl = new URL(
   import.meta.url
 );
 const source = await readFile(sourceUrl, "utf8");
-const compiled = ts.transpileModule(source, {
+const testableSource = source
+  .replace(
+    'import { getSupabaseBrowserClient } from "@/features/agent/supabase";',
+    "const getSupabaseBrowserClient = () => { throw new Error('non utilisé dans ces tests'); };"
+  )
+  .replace(
+    'import { authenticatedRead } from "@/features/auth/authenticated-fetch";',
+    "const authenticatedRead = () => { throw new Error('non utilisé dans ces tests'); };"
+  );
+const compiled = ts.transpileModule(testableSource, {
   compilerOptions: {
     module: ts.ModuleKind.ESNext,
     target: ts.ScriptTarget.ES2022
@@ -178,17 +187,32 @@ test("déduplique dans une feuille sans multiplier le poids", () => {
   assert.equal(statistics.nombreColis, 1);
   assert.equal(statistics.totalKilogrammes, 10);
   assert.equal(statistics.anomalies.duplicateRows, 1);
+  assert.equal(statistics.anomalies.sameAgencyDuplicates, 1);
+  assert.deepEqual(statistics.anomalies.duplicateDetails[0], {
+    sourceSite: "FIH",
+    codeColis: "JL45426",
+    occurrences: 2,
+    dates: ["2026-07-15", "2026-07-15"],
+    weightsKg: [10, 10],
+    shippers: ["Jacques NGBANZO"],
+    rowNumbers: [2, 3]
+  });
 });
 
-test("compte le même code dans deux feuilles comme deux colis distincts", () => {
+test("ne signale pas le même code présent une fois dans plusieurs agences", () => {
   const statistics = calculateShipperStatistics(
-    [row(), row({ sourceSite: "LSHI", rowNumber: 2 })],
+    [
+      row(),
+      row({ sourceSite: "LSHI", rowNumber: 2 }),
+      row({ sourceSite: "KLZ", rowNumber: 2 })
+    ],
     baseFilters
   );
 
-  assert.equal(statistics.nombreColis, 2);
-  assert.equal(statistics.totalKilogrammes, 20);
-  assert.equal(statistics.anomalies.crossSiteCodes, 1);
+  assert.equal(statistics.nombreColis, 3);
+  assert.equal(statistics.totalKilogrammes, 30);
+  assert.equal(statistics.anomalies.sameAgencyDuplicates, 0);
+  assert.deepEqual(statistics.anomalies.duplicateDetails, []);
 });
 
 test("calcule les kilogrammes, la moyenne, les sites et les destinations", () => {
@@ -263,6 +287,29 @@ test("signale poids, date et code invalides sans corriger la source", () => {
   assert.equal(statistics.anomalies.invalidWeights, 1);
   assert.equal(statistics.anomalies.missingCodes, 1);
   assert.equal(statistics.anomalies.invalidDates, 1);
+  assert.deepEqual(statistics.anomalies.invalidDateDetails, [
+    {
+      sourceSite: "FIH",
+      rowNumber: 4,
+      codeColis: "DATE",
+      expediteur: "Jacques NGBANZO",
+      rawDate: "31/02/2026"
+    }
+  ]);
+});
+
+test("limite les détails d’anomalies aux filtres expéditeur, site et destination", () => {
+  const statistics = calculateShipperStatistics(
+    [
+      row({ dateRaw: "31/02/2026", codeColisRaw: "FIH-INVALIDE" }),
+      row({ sourceSite: "LSHI", rowNumber: 2, dateRaw: "32/07/2026", codeColisRaw: "LSHI-INVALIDE" }),
+      row({ rowNumber: 3, expediteurRaw: "Autre Expéditeur", dateRaw: "32/07/2026", codeColisRaw: "AUTRE" })
+    ],
+    { ...baseFilters, site: "FIH", destination: "Kinshasa" }
+  );
+
+  assert.equal(statistics.anomalies.invalidDates, 1);
+  assert.equal(statistics.anomalies.invalidDateDetails[0].codeColis, "FIH-INVALIDE");
 });
 
 test("masque les anomalies globales non attribuables à l’expéditeur recherché", () => {
@@ -409,4 +456,16 @@ test("l’autorisation serveur accepte uniquement l’ADMIN actif lié au JWT", 
     role: "ADMIN",
     agency: null
   });
+});
+
+test("le rapport UI détaille les dates invalides et les doublons par agence", async () => {
+  const view = await readFile(
+    new URL("../src/features/admin/shipper-statistics.tsx", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(view, /Voir les dates invalides/);
+  assert.match(view, /Doublons dans la même agence/);
+  assert.match(view, /Voir les doublons/);
+  assert.doesNotMatch(view, /Codes présents dans plusieurs sites/);
 });

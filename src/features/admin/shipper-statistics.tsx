@@ -17,7 +17,6 @@ import { Button } from "@/components/ui/button";
 import { formatWeight } from "@/lib/format-weight";
 import {
   AdminShippersApiError,
-  hasVisibleShipperAnomalies,
   loadShipperStatistics,
   loadShipperSuggestions
 } from "@/features/admin/shippers";
@@ -406,9 +405,7 @@ function ShipperResults({ statistics }: { statistics: ShipperStatistics }) {
         />
       </div>
 
-      {hasVisibleShipperAnomalies(statistics.anomalies) ? (
-        <AnomalyPanel anomalies={statistics.anomalies} />
-      ) : null}
+      <AnomalyPanel anomalies={statistics.anomalies} />
 
       <GlassPanel className="mt-6 overflow-hidden">
         <div className="border-b border-white/10 p-5 sm:p-6">
@@ -534,12 +531,11 @@ function BreakdownPanel({
 function AnomalyPanel({ anomalies }: { anomalies: ShipperAnomalyReport }) {
   const entries = [
     ["Dates invalides exclues", anomalies.invalidDates],
-    ["Codes colis manquants", anomalies.missingCodes],
-    ["Poids invalides exclus", anomalies.invalidWeights],
-    ["Lignes dupliquées", anomalies.duplicateRows],
-    ["Conflits de poids", anomalies.conflictingWeights],
-    ["Codes présents dans plusieurs sites", anomalies.crossSiteCodes]
-  ].filter(([, count]) => Number(count) > 0);
+    ["Doublons dans la même agence", anomalies.sameAgencyDuplicates],
+    ...(anomalies.missingCodes > 0 ? [["Codes colis manquants", anomalies.missingCodes]] : []),
+    ...(anomalies.invalidWeights > 0 ? [["Poids invalides exclus", anomalies.invalidWeights]] : []),
+    ...(anomalies.conflictingWeights > 0 ? [["Conflits de poids", anomalies.conflictingWeights]] : [])
+  ];
 
   return (
     <div className="mt-4 rounded-lg border border-amber-300/20 bg-amber-300/10 p-4">
@@ -554,6 +550,42 @@ function AnomalyPanel({ anomalies }: { anomalies: ShipperAnomalyReport }) {
           </li>
         ))}
       </ul>
+      {anomalies.invalidDateDetails.length > 0 ? (
+        <details className="mt-4 rounded-lg border border-amber-200/15 bg-slate-950/30 p-3">
+          <summary className="cursor-pointer font-semibold text-amber-100">
+            Voir les dates invalides
+          </summary>
+          <div className="mt-3 space-y-2 text-sm text-amber-50/80">
+            {anomalies.invalidDateDetails.map((detail) => (
+              <p key={`${detail.sourceSite}-${detail.rowNumber}`} className="rounded-md border border-white/10 p-3">
+                <strong>{detail.sourceSite} — {detail.codeColis}</strong>
+                {detail.expediteur ? ` — ${detail.expediteur}` : ""}
+                <br />
+                Date brute : {detail.rawDate ? `“${detail.rawDate}”` : "valeur vide"} · Ligne {detail.rowNumber}
+              </p>
+            ))}
+          </div>
+        </details>
+      ) : null}
+      {anomalies.duplicateDetails.length > 0 ? (
+        <details className="mt-4 rounded-lg border border-amber-200/15 bg-slate-950/30 p-3">
+          <summary className="cursor-pointer font-semibold text-amber-100">
+            Voir les doublons
+          </summary>
+          <div className="mt-3 space-y-2 text-sm text-amber-50/80">
+            {anomalies.duplicateDetails.map((detail) => (
+              <div key={`${detail.sourceSite}-${detail.codeColis}`} className="rounded-md border border-white/10 p-3">
+                <p><strong>{detail.sourceSite} — {detail.codeColis}</strong></p>
+                <p>Occurrences : {detail.occurrences}</p>
+                <p>Dates : {detail.dates.map(formatDateKey).join(", ")}</p>
+                <p>Poids : {detail.weightsKg.map((weight) => weight === null ? "invalide" : formatWeight(weight)).join(" / ")}</p>
+                {detail.shippers.length > 0 ? <p>Expéditeur : {detail.shippers.join(", ")}</p> : null}
+                <p>Lignes : {detail.rowNumbers.join(", ")}</p>
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
     </div>
   );
 }
