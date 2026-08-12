@@ -149,7 +149,7 @@ export function AdminStockagesV2Page() {
   useEffect(() => { void load(); }, [load]);
   if (!data) return <Shell back="/admin" title="Stockages — Administration"><Notice text={message || "Chargement…"} /></Shell>;
   return <Shell back="/admin" title="Stockages — Administration">
-    <Notice text="Stockages V2 en Preview. FIH, LSHI et KLZ restent indépendants et SUSPENDED tant que leur solde initial n’est pas validé. COO est exclu." />
+    <Notice text="Stockage V2 opérationnel — FIH, LSHI et KLZ sont gérés indépendamment par agence. COO est exclu du Stockage destination." />
     <AccountCards accounts={data.accounts} detailsEnabled />
     <div className="grid gap-5 xl:grid-cols-2">
       <AdminCommandForm action="OPENING" title="Solde initial" accounts={data.accounts} onDone={load} />
