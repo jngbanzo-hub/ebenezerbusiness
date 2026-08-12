@@ -529,6 +529,7 @@ function BreakdownPanel({
 }
 
 function AnomalyPanel({ anomalies }: { anomalies: ShipperAnomalyReport }) {
+  const [showInvalidDates, setShowInvalidDates] = useState(true);
   const entries = [
     ["Dates invalides exclues", anomalies.invalidDates],
     ["Doublons dans la même agence", anomalies.sameAgencyDuplicates],
@@ -551,11 +552,17 @@ function AnomalyPanel({ anomalies }: { anomalies: ShipperAnomalyReport }) {
         ))}
       </ul>
       {anomalies.invalidDateDetails.length > 0 ? (
-        <details className="mt-4 rounded-lg border border-amber-200/15 bg-slate-950/30 p-3">
-          <summary className="cursor-pointer font-semibold text-amber-100">
-            Voir les dates invalides
-          </summary>
-          <div className="mt-3 space-y-2 text-sm text-amber-50/80">
+        <div className="mt-4 rounded-lg border border-amber-200/15 bg-slate-950/30 p-3">
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-auto p-0 font-semibold text-amber-100 hover:bg-transparent hover:text-amber-50"
+            aria-expanded={showInvalidDates}
+            onClick={() => setShowInvalidDates((visible) => !visible)}
+          >
+            {showInvalidDates ? "Masquer les dates invalides" : "Voir les dates invalides"}
+          </Button>
+          {showInvalidDates ? <div className="mt-3 space-y-2 text-sm text-amber-50/80">
             {anomalies.invalidDateDetails.map((detail) => (
               <p key={`${detail.sourceSite}-${detail.rowNumber}`} className="rounded-md border border-white/10 p-3">
                 <strong>{detail.sourceSite} — {detail.codeColis}</strong>
@@ -564,8 +571,8 @@ function AnomalyPanel({ anomalies }: { anomalies: ShipperAnomalyReport }) {
                 Date brute : {detail.rawDate ? `“${detail.rawDate}”` : "valeur vide"} · Ligne {detail.rowNumber}
               </p>
             ))}
-          </div>
-        </details>
+          </div> : null}
+        </div>
       ) : null}
       {anomalies.duplicateDetails.length > 0 ? (
         <details className="mt-4 rounded-lg border border-amber-200/15 bg-slate-950/30 p-3">

@@ -287,6 +287,10 @@ test("signale poids, date et code invalides sans corriger la source", () => {
   assert.equal(statistics.anomalies.invalidWeights, 1);
   assert.equal(statistics.anomalies.missingCodes, 1);
   assert.equal(statistics.anomalies.invalidDates, 1);
+  assert.equal(
+    statistics.anomalies.invalidDates,
+    statistics.anomalies.invalidDateDetails.length
+  );
   assert.deepEqual(statistics.anomalies.invalidDateDetails, [
     {
       sourceSite: "FIH",
@@ -309,6 +313,10 @@ test("limite les détails d’anomalies aux filtres expéditeur, site et destina
   );
 
   assert.equal(statistics.anomalies.invalidDates, 1);
+  assert.equal(
+    statistics.anomalies.invalidDates,
+    statistics.anomalies.invalidDateDetails.length
+  );
   assert.equal(statistics.anomalies.invalidDateDetails[0].codeColis, "FIH-INVALIDE");
 });
 
@@ -465,6 +473,9 @@ test("le rapport UI détaille les dates invalides et les doublons par agence", a
   );
 
   assert.match(view, /Voir les dates invalides/);
+  assert.match(view, /Masquer les dates invalides/);
+  assert.match(view, /useState\(true\)/);
+  assert.match(view, /aria-expanded=\{showInvalidDates\}/);
   assert.match(view, /Doublons dans la même agence/);
   assert.match(view, /Voir les doublons/);
   assert.doesNotMatch(view, /Codes présents dans plusieurs sites/);
