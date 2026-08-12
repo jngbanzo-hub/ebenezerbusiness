@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { BarChart3, Boxes, ClipboardCheck, LogOut, PackagePlus, PackageX, RefreshCcw, ShieldCheck, Truck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { GlassPanel } from "@/components/design-system";
+import { signOutAgent } from "@/features/agent/auth";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { formatStockageAnomalies, formatStockageWeight } from "@/features/stockages/presentation";
 import { summarizeArrivalDetails } from "@/features/stockages/arrival-details";
@@ -211,7 +213,17 @@ async function request<T>(url: string, body?: unknown): Promise<T> {
   const response = await fetch(url, { method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store" });
   return readJsonOrThrow<T>(response, "Service Stockages indisponible.");
 }
-function Shell({ back, title, children }: { back: string; title: string; children: React.ReactNode }) { return <main className="min-h-screen bg-slate-950 py-8 text-white"><div className="mx-auto max-w-7xl space-y-6 px-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><Link href={back} className="text-sm text-lime-300">← Retour au tableau de bord</Link><h1 className="mt-2 text-3xl font-bold">{title}</h1></div><Button variant="outline" onClick={() => void getSupabaseBrowserClient().auth.signOut()}><LogOut className="mr-2 h-4 w-4" />Déconnexion</Button></div>{children}</div></main>; }
+function Shell({ back, title, children }: { back: string; title: string; children: React.ReactNode }) {
+  const router = useRouter();
+
+  async function handleSignOut() {
+    await signOutAgent();
+    router.replace("/auth/sign-in");
+    router.refresh();
+  }
+
+  return <main className="min-h-screen bg-slate-950 py-8 text-white"><div className="mx-auto max-w-7xl space-y-6 px-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><Link href={back} className="text-sm text-lime-300">← Retour au tableau de bord</Link><h1 className="mt-2 text-3xl font-bold">{title}</h1></div><Button variant="outline" onClick={handleSignOut}><LogOut className="mr-2 h-4 w-4" />Déconnexion</Button></div>{children}</div></main>;
+}
 function AccountCards({ accounts, detailsEnabled = false }: { accounts: Account[]; detailsEnabled?: boolean }) { return <div className="grid gap-4 md:grid-cols-3">{accounts.map((a) => <div key={a.agency} className="rounded-2xl border border-lime-400/25 bg-slate-900 p-5"><div className="flex justify-between"><h2 className="text-xl font-semibold">{a.agency}</h2><span className={a.status === "ACTIVE" ? "text-lime-300" : "text-amber-300"}>{a.status}</span></div><p className="mt-4 text-3xl font-bold">{a.current_parcel_count} colis</p><p className="text-slate-300">{formatStockageWeight(Number(a.current_weight_kg))}</p>{detailsEnabled && <Link href={`/admin/stockages/${a.agency.toLowerCase()}`} className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-lime-400/30 bg-lime-400/10 px-4 py-2 text-sm font-semibold text-lime-300 transition hover:bg-lime-400/20">Voir les détails →</Link>}</div>)}</div>; }
 function EventTable({ title, rows }: { title: string; rows: EventRow[] }) { return <Panel title={title}><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="text-slate-400"><th>Agence</th><th>Date</th><th>Type</th><th>Colis</th><th>Kg</th><th>Agent</th></tr></thead><tbody>{rows.map((row) => <tr key={row.event_id} className="border-t border-white/10"><td>{row.agency ?? "—"}</td><td>{row.business_date}</td><td>{row.event_type}</td><td>{row.parcel_count_delta}</td><td>{formatStockageWeight(row.weight_kg_delta)}</td><td>{row.actor_name}</td></tr>)}</tbody></table>{!rows.length && <p className="py-5 text-slate-400">Aucun mouvement.</p>}</div></Panel>; }
 function ActivityTable({ rows }: { rows: Activity[] }) { return <Panel title="Activité par Agent"><div className="grid gap-3 md:grid-cols-2">{rows.map((row, index) => <div key={`${row.actor_name}-${row.business_date}-${index}`} className="rounded-xl border border-white/10 p-3"><b>{row.actor_name}</b><p className="text-sm text-slate-300">{row.arrivals} arrivage(s) · {row.deliveries} livraison(s)</p></div>)}{!rows.length && <p className="text-slate-400">Aucune activité.</p>}</div></Panel>; }
