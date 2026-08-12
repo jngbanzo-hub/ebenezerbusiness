@@ -267,7 +267,7 @@ test("exclut tout poids en conflit sans exclure le colis", () => {
   assert.equal(statistics.anomalies.conflictingWeights, 1);
 });
 
-test("signale poids, date et code invalides sans corriger la source", () => {
+test("exclut les dates non rattachables d’une période bornée sans corriger la source", () => {
   const statistics = calculateShipperStatistics(
     [
       row({ poidsRaw: "0" }),
@@ -286,23 +286,26 @@ test("signale poids, date et code invalides sans corriger la source", () => {
   assert.equal(statistics.totalKilogrammes, 0);
   assert.equal(statistics.anomalies.invalidWeights, 1);
   assert.equal(statistics.anomalies.missingCodes, 1);
-  assert.equal(statistics.anomalies.invalidDates, 1);
+  assert.equal(statistics.anomalies.invalidDates, 0);
   assert.equal(
     statistics.anomalies.invalidDates,
     statistics.anomalies.invalidDateDetails.length
   );
-  assert.deepEqual(statistics.anomalies.invalidDateDetails, [
-    {
-      sourceSite: "FIH",
-      rowNumber: 4,
-      codeColis: "DATE",
-      expediteur: "Jacques NGBANZO",
-      rawDate: "31/02/2026"
-    }
-  ]);
+  assert.deepEqual(statistics.anomalies.invalidDateDetails, []);
 });
 
-test("limite les détails d’anomalies aux filtres expéditeur, site et destination", () => {
+test("conserve le détail d’une date invalide uniquement sans période bornée", () => {
+  const statistics = calculateShipperStatistics(
+    [row({ dateRaw: "31/02/2026", codeColisRaw: "FIH-INVALIDE" })],
+    { ...baseFilters, startDate: "", endDate: "" }
+  );
+
+  assert.equal(statistics.anomalies.invalidDates, 1);
+  assert.equal(statistics.anomalies.invalidDates, statistics.anomalies.invalidDateDetails.length);
+  assert.equal(statistics.anomalies.invalidDateDetails[0].codeColis, "FIH-INVALIDE");
+});
+
+test("exclut les dates invalides de toute période précise et respecte site et destination", () => {
   const statistics = calculateShipperStatistics(
     [
       row({ dateRaw: "31/02/2026", codeColisRaw: "FIH-INVALIDE" }),
@@ -312,12 +315,58 @@ test("limite les détails d’anomalies aux filtres expéditeur, site et destina
     { ...baseFilters, site: "FIH", destination: "Kinshasa" }
   );
 
-  assert.equal(statistics.anomalies.invalidDates, 1);
+  assert.equal(statistics.anomalies.invalidDates, 0);
   assert.equal(
     statistics.anomalies.invalidDates,
     statistics.anomalies.invalidDateDetails.length
   );
-  assert.equal(statistics.anomalies.invalidDateDetails[0].codeColis, "FIH-INVALIDE");
+  assert.deepEqual(statistics.anomalies.invalidDateDetails, []);
+});
+
+test("n’inclut pas une date brute d’avril invalide dans un filtre d’août", () => {
+  const statistics = calculateShipperStatistics(
+    [row({ sourceSite: "KLZ", rowNumber: 91, dateRaw: "21/04/0206", codeColisRaw: "AV07826" })],
+    { ...baseFilters, shipper: "Jacques NGBANZO", startDate: "2026-08-03", endDate: "2026-08-09" }
+  );
+
+  assert.equal(statistics.anomalies.invalidDates, 0);
+  assert.deepEqual(statistics.anomalies.invalidDateDetails, []);
+});
+
+test("exclut un doublon même agence hors période", () => {
+  const statistics = calculateShipperStatistics(
+    [
+      row({ rowNumber: 2, dateRaw: "15/04/2026", codeColisRaw: "HORS-PERIODE" }),
+      row({ rowNumber: 3, dateRaw: "16/04/2026", codeColisRaw: "HORS-PERIODE" })
+    ],
+    { ...baseFilters, startDate: "2026-08-03", endDate: "2026-08-09" }
+  );
+
+  assert.equal(statistics.anomalies.sameAgencyDuplicates, 0);
+  assert.deepEqual(statistics.anomalies.duplicateDetails, []);
+});
+
+test("limite les doublons à la période, au site et à la destination actifs", () => {
+  const statistics = calculateShipperStatistics(
+    [
+      row({ rowNumber: 2, dateRaw: "04/08/2026", codeColisRaw: "FIH-AOUT" }),
+      row({ rowNumber: 3, dateRaw: "05/08/2026", codeColisRaw: "FIH-AOUT" }),
+      row({ sourceSite: "LSHI", rowNumber: 2, dateRaw: "04/08/2026", codeColisRaw: "LSHI-AOUT" }),
+      row({ sourceSite: "LSHI", rowNumber: 3, dateRaw: "05/08/2026", codeColisRaw: "LSHI-AOUT" })
+    ],
+    {
+      ...baseFilters,
+      startDate: "2026-08-03",
+      endDate: "2026-08-09",
+      site: "FIH",
+      destination: "Kinshasa"
+    }
+  );
+
+  assert.equal(statistics.anomalies.sameAgencyDuplicates, 1);
+  assert.equal(statistics.anomalies.duplicateDetails.length, 1);
+  assert.equal(statistics.anomalies.duplicateDetails[0].sourceSite, "FIH");
+  assert.equal(statistics.anomalies.duplicateDetails[0].codeColis, "FIH-AOUT");
 });
 
 test("masque les anomalies globales non attribuables à l’expéditeur recherché", () => {

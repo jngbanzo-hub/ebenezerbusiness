@@ -259,6 +259,7 @@ export function calculateShipperStatistics(
   const normalizedTarget = normalizeShipperName(filters.shipper);
   const anomalies = createEmptyAnomalyReport();
   const candidates: CandidateRow[] = [];
+  const hasBoundedPeriod = Boolean(filters.startDate || filters.endDate);
 
   for (const row of rows) {
     const destination = DESTINATION_BY_SITE[row.sourceSite];
@@ -282,14 +283,16 @@ export function calculateShipperStatistics(
 
     const date = parseStrictManifestDate(row.dateRaw);
     if (!date) {
-      anomalies.invalidDates += 1;
-      anomalies.invalidDateDetails.push({
-        sourceSite: row.sourceSite,
-        rowNumber: row.rowNumber,
-        codeColis: normalizeManifestCode(row.codeColisRaw) || "Code manquant",
-        expediteur,
-        rawDate: row.dateRaw
-      });
+      if (!hasBoundedPeriod) {
+        anomalies.invalidDates += 1;
+        anomalies.invalidDateDetails.push({
+          sourceSite: row.sourceSite,
+          rowNumber: row.rowNumber,
+          codeColis: normalizeManifestCode(row.codeColisRaw) || "Code manquant",
+          expediteur,
+          rawDate: row.dateRaw
+        });
+      }
       continue;
     }
 
