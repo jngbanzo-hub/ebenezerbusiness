@@ -529,3 +529,19 @@ test("le rapport UI détaille les dates invalides et les doublons par agence", a
   assert.match(view, /Voir les doublons/);
   assert.doesNotMatch(view, /Codes présents dans plusieurs sites/);
 });
+
+test("place Top bénéficiaires après les statistiques expéditeur et avant les anomalies", async () => {
+  const view = await readFile(
+    new URL("../src/features/admin/shipper-statistics.tsx", import.meta.url),
+    "utf8"
+  );
+  const results = view.slice(view.indexOf("function ShipperResults"));
+  const breakdown = results.indexOf('title="Répartition par destination"');
+  const beneficiaries = results.indexOf("{topBeneficiaries}");
+  const anomalies = results.indexOf("<AnomalyPanel");
+  const parcels = results.indexOf("Détail des colis");
+
+  assert.ok(breakdown >= 0 && breakdown < beneficiaries);
+  assert.ok(beneficiaries < anomalies);
+  assert.ok(anomalies < parcels);
+});

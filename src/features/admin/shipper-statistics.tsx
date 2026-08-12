@@ -173,8 +173,6 @@ export function ShipperStatisticsSection({
         </div>
       </div>
 
-      <TopBeneficiariesSection accessToken={accessToken} />
-
       <GlassPanel className="mt-6 p-5 sm:p-6">
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <label className="relative text-sm font-medium xl:col-span-2">
@@ -354,19 +352,33 @@ export function ShipperStatisticsSection({
           description={searchError}
         />
       ) : statistics ? (
-        <ShipperResults statistics={statistics} />
-      ) : (
-        <ShipperStatePanel
-          icon={PackageSearch}
-          title="Aucune recherche lancée"
-          description="Sélectionnez un expéditeur et une période pour afficher ses statistiques."
+        <ShipperResults
+          statistics={statistics}
+          topBeneficiaries={
+            <TopBeneficiariesSection accessToken={accessToken} />
+          }
         />
+      ) : (
+        <>
+          <ShipperStatePanel
+            icon={PackageSearch}
+            title="Aucune recherche lancée"
+            description="Sélectionnez un expéditeur et une période pour afficher ses statistiques."
+          />
+          <TopBeneficiariesSection accessToken={accessToken} />
+        </>
       )}
     </section>
   );
 }
 
-function ShipperResults({ statistics }: { statistics: ShipperStatistics }) {
+function ShipperResults({
+  statistics,
+  topBeneficiaries
+}: {
+  statistics: ShipperStatistics;
+  topBeneficiaries: React.ReactNode;
+}) {
   return (
     <>
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
@@ -407,6 +419,8 @@ function ShipperResults({ statistics }: { statistics: ShipperStatistics }) {
           }))}
         />
       </div>
+
+      {topBeneficiaries}
 
       <AnomalyPanel anomalies={statistics.anomalies} />
 
