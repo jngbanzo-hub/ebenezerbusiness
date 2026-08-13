@@ -67,7 +67,7 @@ async function getToken(config: Config) {
   const now = Date.now(); if (tokenCache && tokenCache.expiresAt > now + 60000) return tokenCache.token;
   const iat = Math.floor(now / 1000); const unsigned = `${base64(JSON.stringify({ alg: "RS256", typ: "JWT" }))}.${base64(JSON.stringify({ iss: config.clientEmail, scope: GOOGLE_SHEETS_SCOPE, aud: GOOGLE_TOKEN_URL, exp: iat + 3600, iat }))}`;
   const signer = createSign("RSA-SHA256"); signer.update(unsigned); signer.end(); const assertion = `${unsigned}.${base64(signer.sign(config.privateKey))}`;
-  const response = await fetch(GOOGLE_TOKEN_URL, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth2:grant-type:jwt-bearer", assertion }), cache: "no-store" });
+  const response = await fetch(GOOGLE_TOKEN_URL, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }), cache: "no-store" });
   const payload = await response.json() as { access_token?: string; expires_in?: number; error_description?: string };
   if (!response.ok || !payload.access_token) throw new Error(payload.error_description ?? "Authentification Google impossible.");
   tokenCache = { token: payload.access_token, expiresAt: now + (payload.expires_in ?? 3600) * 1000 }; return tokenCache.token;

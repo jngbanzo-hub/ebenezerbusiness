@@ -36,3 +36,18 @@ test("aucun Apps Script de brouillon ne concurrence les formules Sheets", () => 
   assert.equal(existsSync(new URL("../local-preparation/apps-script/shipment-tracking/Code.gs", import.meta.url)), false);
   assert.doesNotMatch(`${server}\n${route}`, /doPost|onEdit|En Transit à Lubumbashi/);
 });
+
+test("OAuth Google utilise le grant JWT bearer officiel", () => {
+  assert.match(server, /urn:ietf:params:oauth:grant-type:jwt-bearer/);
+  assert.doesNotMatch(server, /params:oauth2:grant-type/);
+});
+
+test("la modification en lot vérifie chaque identité et cible seulement la sélection", () => {
+  assert.match(route, /items: z\.array/);
+  assert.match(route, /for \(const item of uniqueItems\)/);
+  assert.match(route, /updateShipmentStatus\(item\.rowNumber, item\.identity/);
+  assert.match(page, /Tout sélectionner/);
+  assert.match(page, /window\.confirm/);
+  assert.match(page, /Mise à jour…/);
+  assert.match(page, /rows\.filter\(\(row\) => selected\.has\(row\.id\)\)/);
+});
