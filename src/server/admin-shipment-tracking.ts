@@ -12,7 +12,7 @@ const GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const envSchema = z.object({
   GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(), GOOGLE_SERVICE_ACCOUNT_JSON_BASE64: z.string().optional(),
   GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(), GOOGLE_SHEETS_CLIENT_EMAIL: z.string().email().optional(),
-  GOOGLE_SHEETS_PRIVATE_KEY: z.string().min(1).optional(), GOOGLE_SHEETS_MANIFEST_SPREADSHEET_ID: z.string().min(1)
+  GOOGLE_SHEETS_PRIVATE_KEY: z.string().min(1).optional(), GOOGLE_SHEETS_SHIPMENT_TRACKING_SPREADSHEET_ID: z.string().min(1)
 });
 type Config = { clientEmail: string; privateKey: string; spreadsheetId: string };
 let tokenCache: { token: string; expiresAt: number } | null = null;
@@ -59,7 +59,7 @@ function getConfig(): Config {
   else if (parsed.data.GOOGLE_APPLICATION_CREDENTIALS) credentials = JSON.parse(readFileSync(parsed.data.GOOGLE_APPLICATION_CREDENTIALS, "utf8"));
   else credentials = { client_email: parsed.data.GOOGLE_SHEETS_CLIENT_EMAIL, private_key: parsed.data.GOOGLE_SHEETS_PRIVATE_KEY };
   if (!credentials.client_email || !credentials.private_key) throw new Error("Identifiants Google Sheets incomplets.");
-  const rawId = parsed.data.GOOGLE_SHEETS_MANIFEST_SPREADSHEET_ID.trim();
+  const rawId = parsed.data.GOOGLE_SHEETS_SHIPMENT_TRACKING_SPREADSHEET_ID.trim();
   return { clientEmail: credentials.client_email, privateKey: credentials.private_key.replace(/^"|"$/g, "").replace(/\\n/g, "\n"), spreadsheetId: rawId.match(/\/spreadsheets\/d\/([^/]+)/)?.[1] ?? rawId };
 }
 

@@ -25,6 +25,11 @@ test("les plages EXPÉDITION ne sont pas doublement citées", () => {
   assert.doesNotMatch(server, /`'\$\{SHIPMENT_TRACKING_SHEET\}'!/);
 });
 
+test("le suivi utilise une source COO dédiée", () => {
+  assert.match(server, /GOOGLE_SHEETS_SHIPMENT_TRACKING_SPREADSHEET_ID/);
+  assert.doesNotMatch(server, /GOOGLE_SHEETS_MANIFEST_SPREADSHEET_ID/);
+});
+
 test("l'identité stable est vérifiée avant écriture", () => {
   assert.match(model, /date, fields\.company, fields\.destination, fields\.groupage/);
   assert.match(server, /target\.identity !== identity/);
