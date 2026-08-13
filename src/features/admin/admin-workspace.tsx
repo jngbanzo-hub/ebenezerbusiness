@@ -571,6 +571,7 @@ const ADMIN_MODULES = [
   { title: "Statistiques par expéditeur", description: "Interrogez MANIFESTE PUBLIC en lecture seule par période et circuit.", href: "/admin/statistiques-expediteurs", icon: BarChart3 }
   ,{ title: "Statistiques du manifeste", description: "Analysez les kilogrammes et volumes mensuels de FIH, LSHI et KLZ.", href: "/admin/statistiques-manifeste", icon: Scale }
   ,{ title: "Statistiques des expéditions", description: "Consultez les expéditions, groupages, compagnies et destinations.", href: "/admin/statistiques-expeditions", icon: Send }
+  ,{ title: "SUIVI DES EXPÉDITIONS", description: "Consultez et mettez à jour le statut des groupages.", href: "/admin/suivi-expeditions", icon: Send }
 ] as const;
 
 function AdminModuleGrid() {
