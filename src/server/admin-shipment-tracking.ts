@@ -18,15 +18,15 @@ type Config = { clientEmail: string; privateKey: string; spreadsheetId: string }
 let tokenCache: { token: string; expiresAt: number } | null = null;
 
 export async function readShipmentTrackingRows() {
-  return parseShipmentTrackingRows(await readRange(`'${SHIPMENT_TRACKING_SHEET}'!A:N`));
+  return parseShipmentTrackingRows(await readRange(`${SHIPMENT_TRACKING_SHEET}!A:N`));
 }
 
 export async function updateShipmentStatus(rowNumber: number, identity: string, status: ShipmentStatus) {
-  const before = parseShipmentTrackingRows(await readRange(`'${SHIPMENT_TRACKING_SHEET}'!A${rowNumber}:N${rowNumber}`, rowNumber));
+  const before = parseShipmentTrackingRows(await readRange(`${SHIPMENT_TRACKING_SHEET}!A${rowNumber}:N${rowNumber}`, rowNumber));
   const target = before[0];
   if (!target || target.rowNumber !== rowNumber || target.identity !== identity) throw new Error("Le groupage ciblé a changé. Rafraîchissez la page.");
   await writeStatusCell(rowNumber, status);
-  const after = parseShipmentTrackingRows(await readRange(`'${SHIPMENT_TRACKING_SHEET}'!A${rowNumber}:N${rowNumber}`, rowNumber));
+  const after = parseShipmentTrackingRows(await readRange(`${SHIPMENT_TRACKING_SHEET}!A${rowNumber}:N${rowNumber}`, rowNumber));
   const confirmed = after[0];
   if (!confirmed || confirmed.identity !== identity || confirmed.status !== status) throw new Error("La valeur réelle de la colonne K ne confirme pas la mise à jour.");
   console.info("[admin-shipment-status-updated]", JSON.stringify({ rowNumber, identity, status }));
@@ -44,7 +44,7 @@ async function readRange(range: string, sourceRowNumber = 1): Promise<unknown[][
 }
 
 async function writeStatusCell(rowNumber: number, status: ShipmentStatus) {
-  const config = getConfig(); const token = await getToken(config); const range = `'${SHIPMENT_TRACKING_SHEET}'!K${rowNumber}`;
+  const config = getConfig(); const token = await getToken(config); const range = `${SHIPMENT_TRACKING_SHEET}!K${rowNumber}`;
   const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, { method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ range, majorDimension: "ROWS", values: [[status]] }), cache: "no-store" });
   const payload = await response.json() as { updatedRange?: string; updatedCells?: number; error?: { message?: string } };
   if (!response.ok || payload.updatedCells !== 1 || !payload.updatedRange?.toUpperCase().endsWith(`!K${rowNumber}`)) throw new Error(payload.error?.message ?? "Écriture de la colonne K impossible.");

@@ -14,10 +14,15 @@ test("lecture et écriture sont Admin-only côté serveur", () => {
 });
 
 test("l'écriture Google est bornée à une cellule EXPÉDITION K et relue", () => {
-  assert.match(server, /const range = `'\$\{SHIPMENT_TRACKING_SHEET\}'!K\$\{rowNumber\}`/);
+  assert.match(server, /const range = `\$\{SHIPMENT_TRACKING_SHEET\}!K\$\{rowNumber\}`/);
   assert.match(server, /updatedCells !== 1/);
   assert.match(server, /confirmed\.status !== status/);
   assert.doesNotMatch(server, /KLZ!|stockage|caisse|encaissement|paiement|transfert|P1/i);
+});
+
+test("les plages EXPÉDITION ne sont pas doublement citées", () => {
+  assert.match(server, /readRange\(`\$\{SHIPMENT_TRACKING_SHEET\}!A:N`\)/);
+  assert.doesNotMatch(server, /`'\$\{SHIPMENT_TRACKING_SHEET\}'!/);
 });
 
 test("l'identité stable est vérifiée avant écriture", () => {
