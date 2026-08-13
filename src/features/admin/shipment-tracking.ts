@@ -9,7 +9,8 @@ export const SHIPMENT_STATUSES = [
   "En Transit à Libreville",
   "En Transit à Brazzaville",
   "En Transit à Lubumbashi",
-  "Arrivé"
+  "Arrivé",
+  "Arrivé à KLZ"
 ] as const;
 
 export type ShipmentStatus = (typeof SHIPMENT_STATUSES)[number];
