@@ -14,10 +14,21 @@ test("lecture et écriture sont Admin-only côté serveur", () => {
 });
 
 test("l'écriture Google est bornée à une cellule EXPÉDITION K et relue", () => {
-  assert.match(server, /const range = `\$\{SHIPMENT_TRACKING_SHEET\}!K\$\{rowNumber\}`/);
-  assert.match(server, /updatedCells !== 1/);
+  assert.match(server, /range: `\$\{SHIPMENT_TRACKING_SHEET\}!K\$\{rowNumber\}`/);
+  assert.match(server, /range: `\$\{SHIPMENT_TRACKING_SHEET\}!L\$\{rowNumber\}`/);
+  assert.match(server, /totalUpdatedCells !== data\.length/);
   assert.match(server, /confirmed\.status !== status/);
   assert.doesNotMatch(server, /KLZ!|stockage|caisse|encaissement|paiement|transfert|P1/i);
+});
+
+test("la date L n'est créée que pour une transition vers Arrivé et reste commune au lot", () => {
+  assert.match(server, /shouldCreateArrivalDate\(target\.status, target\.arrivalDate, status\)/);
+  assert.match(server, /confirmed\.arrivalDate !== arrivalDate/);
+  assert.match(route, /const arrivalDate = getLocalArrivalDate\(\)/);
+  assert.equal((route.match(/getLocalArrivalDate\(\)/g) ?? []).length, 1);
+  assert.match(route, /timeZone: "Africa\/Porto-Novo"/);
+  assert.match(page, /Date d’arrivée/);
+  assert.match(page, /row\.arrivalDate\|\|"—"/);
 });
 
 test("les plages EXPÉDITION ne sont pas doublement citées", () => {

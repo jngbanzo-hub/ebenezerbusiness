@@ -35,10 +35,11 @@ export async function PATCH(request: Request) {
     const auth = await authorizeAdminRequest(request);
     if (!auth.authorized) return failure(auth.status === 401 ? "Session invalide ou expirée." : "Accès interdit.", auth.status);
     const body: unknown = await request.json().catch(() => null);
+    const arrivalDate = getLocalArrivalDate();
     const single = updateSchema.safeParse(body);
     if (single.success) {
       if (!isShipmentStatus(single.data.status)) return failure("Statut ou ligne invalide.", 400);
-      const row = await updateShipmentStatus(single.data.rowNumber, single.data.identity, single.data.status);
+      const row = await updateShipmentStatus(single.data.rowNumber, single.data.identity, single.data.status, arrivalDate);
       return NextResponse.json({ ok: true, row }, { headers: privateHeaders() });
     }
     const batch = batchUpdateSchema.safeParse(body);
@@ -47,7 +48,7 @@ export async function PATCH(request: Request) {
     const results = [];
     for (const item of uniqueItems) {
       try {
-        const row = await updateShipmentStatus(item.rowNumber, item.identity, batch.data.status);
+        const row = await updateShipmentStatus(item.rowNumber, item.identity, batch.data.status, arrivalDate);
         results.push({ ok: true as const, rowNumber: item.rowNumber, row });
       } catch (error) {
         results.push({ ok: false as const, rowNumber: item.rowNumber, message: error instanceof Error ? error.message : "Échec inconnu." });
@@ -61,5 +62,6 @@ export async function PATCH(request: Request) {
 }
 function clean(value: string | null) { return (value ?? "").trim().slice(0, 100); }
 function isDate(value: string) { if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false; const date = new Date(`${value}T00:00:00Z`); return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value; }
+function getLocalArrivalDate(now = new Date()) { return new Intl.DateTimeFormat("fr-FR", { timeZone: "Africa/Porto-Novo", day: "2-digit", month: "2-digit", year: "numeric" }).format(now); }
 function privateHeaders() { return { "Cache-Control": "private, no-store, max-age=0" }; }
 function failure(message: string, status: number) { return NextResponse.json({ message }, { status, headers: privateHeaders() }); }

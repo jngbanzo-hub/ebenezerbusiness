@@ -26,6 +26,7 @@ export type ShipmentTrackingRow = {
   manifestWeight: string;
   parcelCount: string;
   status: string;
+  arrivalDate: string;
 };
 
 export function parseShipmentTrackingRows(rows: unknown[][]): ShipmentTrackingRow[] {
@@ -48,7 +49,8 @@ export function parseShipmentTrackingRows(rows: unknown[][]): ShipmentTrackingRo
       totalWeight: text(row[4]),
       manifestWeight: text(row[9]) || text(row[8]),
       parcelCount: parseParcelCount(row[9], row[13]),
-      status: text(row[10])
+      status: text(row[10]),
+      arrivalDate: text(row[11])
     }];
   });
 }
@@ -68,6 +70,10 @@ export function filterShipmentTrackingRows(rows: ShipmentTrackingRow[], filters:
 
 export function isShipmentStatus(value: unknown): value is ShipmentStatus {
   return typeof value === "string" && SHIPMENT_STATUSES.includes(value as ShipmentStatus);
+}
+
+export function shouldCreateArrivalDate(currentStatus: string, currentArrivalDate: string, nextStatus: ShipmentStatus) {
+  return nextStatus === "Arrivé" && currentStatus !== "Arrivé" && !currentArrivalDate.trim();
 }
 
 export function createShipmentIdentity(fields: Pick<ShipmentTrackingRow, "date" | "company" | "destination" | "groupage">) {

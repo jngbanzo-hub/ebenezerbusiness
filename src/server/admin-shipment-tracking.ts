@@ -5,7 +5,7 @@ import { readFileSync } from "fs";
 
 import { z } from "zod";
 
-import { parseShipmentTrackingRows, SHIPMENT_TRACKING_SHEET, type ShipmentStatus } from "@/features/admin/shipment-tracking";
+import { parseShipmentTrackingRows, SHIPMENT_TRACKING_SHEET, shouldCreateArrivalDate, type ShipmentStatus } from "@/features/admin/shipment-tracking";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
@@ -21,15 +21,17 @@ export async function readShipmentTrackingRows() {
   return parseShipmentTrackingRows(await readRange(`${SHIPMENT_TRACKING_SHEET}!A:N`));
 }
 
-export async function updateShipmentStatus(rowNumber: number, identity: string, status: ShipmentStatus) {
+export async function updateShipmentStatus(rowNumber: number, identity: string, status: ShipmentStatus, arrivalDate: string) {
   const before = parseShipmentTrackingRows(await readRange(`${SHIPMENT_TRACKING_SHEET}!A${rowNumber}:N${rowNumber}`, rowNumber));
   const target = before[0];
   if (!target || target.rowNumber !== rowNumber || target.identity !== identity) throw new Error("Le groupage ciblé a changé. Rafraîchissez la page.");
-  await writeStatusCell(rowNumber, status);
+  const shouldSetArrivalDate = shouldCreateArrivalDate(target.status, target.arrivalDate, status);
+  await writeShipmentCells(rowNumber, status, shouldSetArrivalDate ? arrivalDate : undefined);
   const after = parseShipmentTrackingRows(await readRange(`${SHIPMENT_TRACKING_SHEET}!A${rowNumber}:N${rowNumber}`, rowNumber));
   const confirmed = after[0];
   if (!confirmed || confirmed.identity !== identity || confirmed.status !== status) throw new Error("La valeur réelle de la colonne K ne confirme pas la mise à jour.");
-  console.info("[admin-shipment-status-updated]", JSON.stringify({ rowNumber, identity, status }));
+  if (shouldSetArrivalDate && confirmed.arrivalDate !== arrivalDate) throw new Error("La valeur réelle de la colonne L ne confirme pas la date d’arrivée.");
+  console.info("[admin-shipment-status-updated]", JSON.stringify({ rowNumber, identity, status, arrivalDate: confirmed.arrivalDate }));
   return confirmed;
 }
 
@@ -43,11 +45,13 @@ async function readRange(range: string, sourceRowNumber = 1): Promise<unknown[][
   return [["Date", "Compagnie", "Destination", "", "", "Groupage", "", "", "", "", "Statut"], ...Array.from({ length: Math.max(0, sourceRowNumber - 2) }, () => []), ...(values as unknown[][])];
 }
 
-async function writeStatusCell(rowNumber: number, status: ShipmentStatus) {
-  const config = getConfig(); const token = await getToken(config); const range = `${SHIPMENT_TRACKING_SHEET}!K${rowNumber}`;
-  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, { method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ range, majorDimension: "ROWS", values: [[status]] }), cache: "no-store" });
-  const payload = await response.json() as { updatedRange?: string; updatedCells?: number; error?: { message?: string } };
-  if (!response.ok || payload.updatedCells !== 1 || !payload.updatedRange?.toUpperCase().endsWith(`!K${rowNumber}`)) throw new Error(payload.error?.message ?? "Écriture de la colonne K impossible.");
+async function writeShipmentCells(rowNumber: number, status: ShipmentStatus, arrivalDate?: string) {
+  const config = getConfig(); const token = await getToken(config);
+  const data: Array<{ range: string; majorDimension: "ROWS"; values: string[][] }> = [{ range: `${SHIPMENT_TRACKING_SHEET}!K${rowNumber}`, majorDimension: "ROWS", values: [[status]] }];
+  if (arrivalDate) data.push({ range: `${SHIPMENT_TRACKING_SHEET}!L${rowNumber}`, majorDimension: "ROWS", values: [[arrivalDate]] });
+  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values:batchUpdate`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ valueInputOption: "RAW", data }), cache: "no-store" });
+  const payload = await response.json() as { totalUpdatedCells?: number; error?: { message?: string } };
+  if (!response.ok || payload.totalUpdatedCells !== data.length) throw new Error(payload.error?.message ?? "Écriture des colonnes K/L impossible.");
 }
 
 function getConfig(): Config {
