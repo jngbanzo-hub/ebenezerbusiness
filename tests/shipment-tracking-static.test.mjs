@@ -14,21 +14,28 @@ test("lecture et écriture sont Admin-only côté serveur", () => {
 });
 
 test("l'écriture Google est bornée à une cellule EXPÉDITION K et relue", () => {
-  assert.match(server, /range: `\$\{SHIPMENT_TRACKING_SHEET\}!K\$\{rowNumber\}`/);
-  assert.match(server, /range: `\$\{SHIPMENT_TRACKING_SHEET\}!L\$\{rowNumber\}`/);
-  assert.match(server, /totalUpdatedCells !== data\.length/);
+  assert.match(server, /const range = `\$\{SHIPMENT_TRACKING_SHEET\}!K\$\{rowNumber\}`/);
+  assert.match(server, /updatedCells !== 1/);
   assert.match(server, /confirmed\.status !== status/);
   assert.doesNotMatch(server, /KLZ!|stockage|caisse|encaissement|paiement|transfert|P1/i);
 });
 
-test("la date L n'est créée que pour une transition vers Arrivé et reste commune au lot", () => {
-  assert.match(server, /shouldCreateArrivalDate\(target\.status, target\.arrivalDate, status\)/);
-  assert.match(server, /confirmed\.arrivalDate !== arrivalDate/);
-  assert.match(route, /const arrivalDate = getLocalArrivalDate\(\)/);
-  assert.equal((route.match(/getLocalArrivalDate\(\)/g) ?? []).length, 1);
-  assert.match(route, /timeZone: "Africa\/Porto-Novo"/);
-  assert.match(page, /Date d’arrivée/);
-  assert.match(page, /row\.arrivalDate\|\|"—"/);
+test("la correction ne modifie jamais EXPÉDITION L", () => {
+  assert.doesNotMatch(server, /!L\$\{rowNumber\}|arrivalDate/);
+  assert.doesNotMatch(route, /getLocalArrivalDate|Africa\/Porto-Novo/);
+});
+
+test("les options de filtre viennent des lignes de période, pas du résultat filtré", () => {
+  assert.match(route, /const periodRows = filterShipmentTrackingRows\(sourceRows, \{ from, to \}\)/);
+  assert.match(route, /companies: unique\(periodRows\.map/);
+  assert.match(page, /filterOptions\.companies/);
+  assert.match(page, /RÉINITIALISER LES FILTRES/);
+});
+
+test("les longues identités de groupage et les statuts partagent le schéma canonique", () => {
+  assert.match(route, /const statusSchema = z\.enum\(SHIPMENT_STATUSES\)/);
+  assert.match(route, /identity: z\.string\(\)\.min\(3\)\.max\(100000\)/);
+  assert.match(route, /admin-shipment-tracking-validation-failed/);
 });
 
 test("les plages EXPÉDITION ne sont pas doublement citées", () => {
@@ -71,4 +78,5 @@ test("la modification en lot vérifie chaque identité et cible seulement la sé
   assert.match(page, /window\.confirm/);
   assert.match(page, /Mise à jour…/);
   assert.match(page, /rows\.filter\(\(row\) => selected\.has\(row\.id\)\)/);
+  assert.match(page, /setSelected\(new Set\(\)\); \}, \[filters\]\)/);
 });

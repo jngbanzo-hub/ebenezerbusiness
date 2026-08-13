@@ -1,16 +1,18 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { filterShipmentTrackingRows, isShipmentStatus } from "@/features/admin/shipment-tracking";
+import { filterShipmentTrackingRows, SHIPMENT_STATUSES } from "@/features/admin/shipment-tracking";
 import { authorizeAdminRequest } from "@/server/admin-authorization";
 import { readShipmentTrackingRows, updateShipmentStatus } from "@/server/admin-shipment-tracking";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-const updateSchema = z.object({ rowNumber: z.number().int().min(2).max(100000), identity: z.string().min(3).max(500), status: z.string() }).strict();
+const statusSchema = z.enum(SHIPMENT_STATUSES);
+const itemSchema = z.object({ rowNumber: z.number().int().min(2).max(100000), identity: z.string().min(3).max(100000) }).strict();
+const updateSchema = itemSchema.extend({ status: statusSchema }).strict();
 const batchUpdateSchema = z.object({
-  items: z.array(z.object({ rowNumber: z.number().int().min(2).max(100000), identity: z.string().min(3).max(500) }).strict()).min(1).max(200),
-  status: z.string()
+  items: z.array(itemSchema).min(1).max(200),
+  status: statusSchema
 }).strict();
 
 export async function GET(request: Request) {
@@ -22,8 +24,11 @@ export async function GET(request: Request) {
     const company = clean(params.get("company")) || "ALL"; const destination = clean(params.get("destination")) || "ALL";
     const status = params.get("status")?.trim() || "ALL"; const search = params.get("search")?.trim() || "";
     if ((from && !isDate(from)) || (to && !isDate(to)) || (from && to && from > to) || search.length > 100) return failure("Filtres invalides.", 400);
-    const rows = filterShipmentTrackingRows(await readShipmentTrackingRows(), { from, to, company, destination, status, search });
-    return NextResponse.json({ rows }, { headers: privateHeaders() });
+    const sourceRows = await readShipmentTrackingRows();
+    const periodRows = filterShipmentTrackingRows(sourceRows, { from, to });
+    const rows = filterShipmentTrackingRows(periodRows, { company, destination, status, search });
+    const options = { companies: unique(periodRows.map((row) => row.company)), destinations: unique(periodRows.map((row) => row.destination)) };
+    return NextResponse.json({ rows, options }, { headers: privateHeaders() });
   } catch (error) {
     console.error("[admin-shipment-tracking-read-failed]", error instanceof Error ? error.message : String(error));
     return failure("Le suivi des expéditions est temporairement indisponible.", 503);
@@ -35,20 +40,21 @@ export async function PATCH(request: Request) {
     const auth = await authorizeAdminRequest(request);
     if (!auth.authorized) return failure(auth.status === 401 ? "Session invalide ou expirée." : "Accès interdit.", auth.status);
     const body: unknown = await request.json().catch(() => null);
-    const arrivalDate = getLocalArrivalDate();
     const single = updateSchema.safeParse(body);
     if (single.success) {
-      if (!isShipmentStatus(single.data.status)) return failure("Statut ou ligne invalide.", 400);
-      const row = await updateShipmentStatus(single.data.rowNumber, single.data.identity, single.data.status, arrivalDate);
+      const row = await updateShipmentStatus(single.data.rowNumber, single.data.identity, single.data.status);
       return NextResponse.json({ ok: true, row }, { headers: privateHeaders() });
     }
     const batch = batchUpdateSchema.safeParse(body);
-    if (!batch.success || !isShipmentStatus(batch.data.status)) return failure("Statut ou sélection invalide.", 400);
+    if (!batch.success) {
+      console.error("[admin-shipment-tracking-validation-failed]", JSON.stringify(batch.error.flatten()));
+      return failure("Statut ou sélection invalide.", 400);
+    }
     const uniqueItems = Array.from(new Map(batch.data.items.map((item) => [`${item.rowNumber}:${item.identity}`, item])).values());
     const results = [];
     for (const item of uniqueItems) {
       try {
-        const row = await updateShipmentStatus(item.rowNumber, item.identity, batch.data.status, arrivalDate);
+        const row = await updateShipmentStatus(item.rowNumber, item.identity, batch.data.status);
         results.push({ ok: true as const, rowNumber: item.rowNumber, row });
       } catch (error) {
         results.push({ ok: false as const, rowNumber: item.rowNumber, message: error instanceof Error ? error.message : "Échec inconnu." });
@@ -62,6 +68,6 @@ export async function PATCH(request: Request) {
 }
 function clean(value: string | null) { return (value ?? "").trim().slice(0, 100); }
 function isDate(value: string) { if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false; const date = new Date(`${value}T00:00:00Z`); return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value; }
-function getLocalArrivalDate(now = new Date()) { return new Intl.DateTimeFormat("fr-FR", { timeZone: "Africa/Porto-Novo", day: "2-digit", month: "2-digit", year: "numeric" }).format(now); }
+function unique(values: string[]) { return Array.from(new Set(values.filter(Boolean))).sort(); }
 function privateHeaders() { return { "Cache-Control": "private, no-store, max-age=0" }; }
 function failure(message: string, status: number) { return NextResponse.json({ message }, { status, headers: privateHeaders() }); }
