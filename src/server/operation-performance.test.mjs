@@ -26,6 +26,13 @@ test("instrumente le PATCH expéditions sans modifier son flux séquentiel", () 
   assert.doesNotMatch(`${shipmentRoute}\n${shipmentServer}`, /values:batchUpdate|retry|Promise\.all/);
 });
 
+test("confirme les statuts par une seule relecture ciblée de K", () => {
+  assert.match(shipmentServer, /values:batchGet/);
+  assert.match(shipmentServer, /query\.append\("ranges", `\$\{SHIPMENT_TRACKING_SHEET\}!K\$\{rowNumber\}`\)/);
+  assert.match(shipmentRoute, /updateShipmentStatuses\(uniqueItems/);
+  assert.doesNotMatch(shipmentServer, /parseShipmentTrackingRows\(after/);
+});
+
 test("instrumente les deux écritures sans retry", () => {
   for (const source of [paymentRoute, expenseRoute]) {
     assert.match(source, /Server-Timing/);

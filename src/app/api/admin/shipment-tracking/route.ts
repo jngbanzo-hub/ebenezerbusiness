@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { filterShipmentTrackingRows, SHIPMENT_STATUSES } from "@/features/admin/shipment-tracking";
 import { authorizeAdminRequest } from "@/server/admin-authorization";
-import { readShipmentTrackingRows, updateShipmentStatus } from "@/server/admin-shipment-tracking";
+import { readShipmentTrackingRows, updateShipmentStatus, updateShipmentStatuses } from "@/server/admin-shipment-tracking";
 import { OperationPerformanceTrace } from "@/server/operation-performance";
 
 export const dynamic = "force-dynamic";
@@ -72,15 +72,7 @@ export async function PATCH(request: Request) {
     const uniqueItems = Array.from(new Map(batch.data.items.map((item) => [`${item.rowNumber}:${item.identity}`, item])).values());
     trace.add("validation_selection", performance.now() - selectionStartedAt);
     trace.setItemCount(uniqueItems.length);
-    const results = [];
-    for (const item of uniqueItems) {
-      try {
-        const row = await updateShipmentStatus(item.rowNumber, item.identity, batch.data.status, trace);
-        results.push({ ok: true as const, rowNumber: item.rowNumber, row });
-      } catch (error) {
-        results.push({ ok: false as const, rowNumber: item.rowNumber, message: error instanceof Error ? error.message : "Échec inconnu." });
-      }
-    }
+    const results = await updateShipmentStatuses(uniqueItems, batch.data.status, trace);
     return tracedResponse({ ok: results.every((result) => result.ok), results, succeeded: results.filter((result) => result.ok).length, failed: results.filter((result) => !result.ok).length }, trace, results.every((result) => result.ok) ? "success" : "error");
   } catch (error) {
     trace.complete("error");

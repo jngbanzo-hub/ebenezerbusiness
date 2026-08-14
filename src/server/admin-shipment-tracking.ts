@@ -27,6 +27,41 @@ export async function readShipmentTrackingRows(trace?: OperationPerformanceTrace
 }
 
 export async function updateShipmentStatus(rowNumber: number, identity: string, status: ShipmentStatus, trace?: OperationPerformanceTrace) {
+  const target = await validateAndWriteShipmentStatus(rowNumber, identity, status, trace);
+  const [confirmedStatus] = await confirmStatusCells([rowNumber], trace);
+  if (confirmedStatus !== status) throw new Error("La valeur réelle de la colonne K ne confirme pas la mise à jour.");
+  console.info("[admin-shipment-status-updated]", JSON.stringify({ rowNumber, identity, status }));
+  return { ...target, status };
+}
+
+export async function updateShipmentStatuses(items: Array<{ rowNumber: number; identity: string }>, status: ShipmentStatus, trace?: OperationPerformanceTrace) {
+  const pending: Array<{ rowNumber: number; identity: string; row: Awaited<ReturnType<typeof validateAndWriteShipmentStatus>> }> = [];
+  const failures = new Map<number, string>();
+  for (const item of items) {
+    try {
+      const row = await validateAndWriteShipmentStatus(item.rowNumber, item.identity, status, trace);
+      pending.push({ ...item, row });
+    } catch (error) {
+      failures.set(item.rowNumber, error instanceof Error ? error.message : "Échec inconnu.");
+    }
+  }
+  let confirmedStatuses: string[] = []; let confirmationFailure = "";
+  if (pending.length) {
+    try { confirmedStatuses = await confirmStatusCells(pending.map((item) => item.rowNumber), trace); }
+    catch (error) { confirmationFailure = error instanceof Error ? error.message : "Relecture de la colonne K impossible."; }
+  }
+  return items.map((item) => {
+    const failure = failures.get(item.rowNumber);
+    if (failure) return { ok: false as const, rowNumber: item.rowNumber, message: failure };
+    if (confirmationFailure) return { ok: false as const, rowNumber: item.rowNumber, message: confirmationFailure };
+    const pendingIndex = pending.findIndex((candidate) => candidate.rowNumber === item.rowNumber && candidate.identity === item.identity);
+    if (pendingIndex < 0 || confirmedStatuses[pendingIndex] !== status) return { ok: false as const, rowNumber: item.rowNumber, message: "La valeur réelle de la colonne K ne confirme pas la mise à jour." };
+    console.info("[admin-shipment-status-updated]", JSON.stringify({ rowNumber: item.rowNumber, identity: item.identity, status }));
+    return { ok: true as const, rowNumber: item.rowNumber, row: { ...pending[pendingIndex].row, status } };
+  });
+}
+
+async function validateAndWriteShipmentStatus(rowNumber: number, identity: string, status: ShipmentStatus, trace?: OperationPerformanceTrace) {
   const beforeValues = await readRange(`${SHIPMENT_TRACKING_SHEET}!A${rowNumber}:N${rowNumber}`, rowNumber, trace, "lecture_google");
   const identityStartedAt = performance.now();
   const before = parseShipmentTrackingRows(beforeValues);
@@ -34,14 +69,22 @@ export async function updateShipmentStatus(rowNumber: number, identity: string, 
   if (!target || target.rowNumber !== rowNumber || target.identity !== identity) throw new Error("Le groupage ciblé a changé. Rafraîchissez la page.");
   trace?.add("validation_identite", performance.now() - identityStartedAt);
   await writeStatusCell(rowNumber, status, trace);
-  const afterValues = await readRange(`${SHIPMENT_TRACKING_SHEET}!A${rowNumber}:N${rowNumber}`, rowNumber, trace, "relecture_google");
+  return target;
+}
+
+async function confirmStatusCells(rowNumbers: number[], trace?: OperationPerformanceTrace) {
+  const config = getConfig();
+  const token = trace ? await trace.measure("google_token", () => getToken(config)) : await getToken(config);
+  const query = new URLSearchParams({ majorDimension: "ROWS", valueRenderOption: "FORMATTED_VALUE" });
+  for (const rowNumber of rowNumbers) query.append("ranges", `${SHIPMENT_TRACKING_SHEET}!K${rowNumber}`);
+  const read = () => fetch(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values:batchGet?${query}`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+  const response = trace ? await trace.measure("relecture_google", read) : await read();
+  const payload = await response.json() as { valueRanges?: Array<{ values?: unknown[][] }>; error?: { message?: string } };
+  if (!response.ok) throw new Error(payload.error?.message ?? "Relecture de la colonne K impossible.");
   const confirmationStartedAt = performance.now();
-  const after = parseShipmentTrackingRows(afterValues);
-  const confirmed = after[0];
-  if (!confirmed || confirmed.identity !== identity || confirmed.status !== status) throw new Error("La valeur réelle de la colonne K ne confirme pas la mise à jour.");
+  const statuses = rowNumbers.map((_, index) => String(payload.valueRanges?.[index]?.values?.[0]?.[0] ?? "").trim());
   trace?.add("confirmation_relecture", performance.now() - confirmationStartedAt);
-  console.info("[admin-shipment-status-updated]", JSON.stringify({ rowNumber, identity, status }));
-  return confirmed;
+  return statuses;
 }
 
 async function readRange(range: string, sourceRowNumber = 1, trace?: OperationPerformanceTrace, readStep = "google_sheets"): Promise<unknown[][]> {
