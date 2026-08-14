@@ -54,20 +54,26 @@ export function ShipmentTrackingPage() {
   }
 
   async function updateSelected() {
+    const uiStartedAt = performance.now();
     const targets = rows.filter((row) => selected.has(row.id));
     if (!targets.length || bulkSaving || saving !== null) return;
     if (!window.confirm(`Vous allez modifier ${targets.length} groupage${targets.length === 1 ? "" : "s"} vers « ${bulkStatus} ». Confirmer ?`)) return;
     setBulkSaving(true); setError(""); setSuccess("");
+    let apiCompletedAt = uiStartedAt; let requestId = ""; let serverTiming = ""; let result: "success" | "error" = "error";
     try {
       const response = await fetch("/api/admin/shipment-tracking", { method: "PATCH", headers: { Authorization: `Bearer ${token.current}`, "Content-Type": "application/json" }, body: JSON.stringify({ items: targets.map(({ rowNumber, identity }) => ({ rowNumber, identity })), status: bulkStatus }) });
+      requestId = response.headers.get("X-Request-Id") ?? ""; serverTiming = response.headers.get("Server-Timing") ?? "";
       const body = await readJsonOrThrow<{ results?: Array<{ ok: boolean; rowNumber: number; row?: ShipmentTrackingRow; message?: string }>; succeeded?: number; failed?: number }>(response, "Mise à jour en lot impossible.");
+      apiCompletedAt = performance.now();
       const successfulRows = new Map((body.results ?? []).filter((result) => result.ok && result.row).map((result) => [result.rowNumber, result.row!]));
       setAllRows((current) => current.map((row) => successfulRows.get(row.rowNumber) ?? row));
       setSelected(new Set(targets.filter((row) => !successfulRows.has(row.rowNumber)).map((row) => row.id)));
       const failures = (body.results ?? []).filter((result) => !result.ok);
       setSuccess(`${body.succeeded ?? 0} réussi${body.succeeded === 1 ? "" : "s"} ; ${body.failed ?? failures.length} échoué${body.failed === 1 ? "" : "s"}.`);
       if (failures.length) setError(failures.map((result) => `Ligne ${result.rowNumber} : ${result.message ?? "échec"}`).join(" · "));
+      result = failures.length ? "error" : "success";
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Mise à jour en lot impossible."); } finally { setBulkSaving(false); }
+    requestAnimationFrame(() => console.info(JSON.stringify({ type: "operation_performance_ui", operation: "shipment_tracking_update", requestId, itemCount: targets.length, result, apiMs: roundMs(apiCompletedAt - uiStartedAt), totalMs: roundMs(performance.now() - uiStartedAt), serverTiming })));
   }
 
   function resetFilters() { setFilters((current) => ({ ...current, company: "ALL", destination: "ALL", status: "ALL", search: "" })); setSelected(new Set()); }

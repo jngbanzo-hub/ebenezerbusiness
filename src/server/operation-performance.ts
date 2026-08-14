@@ -8,12 +8,22 @@ export class OperationPerformanceTrace {
   private finished = false;
 
   constructor(
-    private readonly operation: "encaissement" | "depense" | "shipment_tracking" | "arrivages",
+    private readonly operation: "encaissement" | "depense" | "shipment_tracking" | "shipment_tracking_update" | "arrivages",
     private readonly requestId: string,
     private readonly agency: string,
     startedAt = performance.now()
   ) {
     this.startedAt = startedAt;
+  }
+
+  private itemCount?: number;
+
+  setItemCount(value: number) {
+    if (Number.isInteger(value) && value >= 0) this.itemCount = value;
+  }
+
+  requestIdentifier() {
+    return safeLabel(this.requestId);
   }
 
   async measure<T>(step: string, action: () => Promise<T>): Promise<T> {
@@ -39,6 +49,7 @@ export class OperationPerformanceTrace {
       operation: this.operation,
       requestId: safeLabel(this.requestId),
       agency: safeLabel(this.agency),
+      itemCount: this.itemCount,
       result,
       durationsMs: Object.fromEntries(this.durations)
     }));

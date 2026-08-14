@@ -47,35 +47,53 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const trace = new OperationPerformanceTrace("shipment_tracking_update", crypto.randomUUID(), "ADMIN");
   try {
-    const auth = await authorizeAdminRequest(request);
+    const auth = await trace.measure("auth_session", () => authorizeAdminRequest(request));
     if (!auth.authorized) return failure(auth.status === 401 ? "Session invalide ou expirée." : "Accès interdit.", auth.status);
+    const validationStartedAt = performance.now();
     const body: unknown = await request.json().catch(() => null);
     const single = updateSchema.safeParse(body);
     if (single.success) {
-      const row = await updateShipmentStatus(single.data.rowNumber, single.data.identity, single.data.status);
-      return NextResponse.json({ ok: true, row }, { headers: privateHeaders() });
+      trace.add("validation_zod_statut", performance.now() - validationStartedAt);
+      trace.setItemCount(1);
+      const row = await updateShipmentStatus(single.data.rowNumber, single.data.identity, single.data.status, trace);
+      return tracedResponse({ ok: true, row }, trace, "success");
     }
     const batch = batchUpdateSchema.safeParse(body);
+    trace.add("validation_zod_statut", performance.now() - validationStartedAt);
     if (!batch.success) {
       console.error("[admin-shipment-tracking-validation-failed]", JSON.stringify(batch.error.flatten()));
-      return failure("Statut ou sélection invalide.", 400);
+      return tracedResponse({ message: "Statut ou sélection invalide." }, trace, "error", 400);
     }
+    const selectionStartedAt = performance.now();
     const uniqueItems = Array.from(new Map(batch.data.items.map((item) => [`${item.rowNumber}:${item.identity}`, item])).values());
+    trace.add("validation_selection", performance.now() - selectionStartedAt);
+    trace.setItemCount(uniqueItems.length);
     const results = [];
     for (const item of uniqueItems) {
       try {
-        const row = await updateShipmentStatus(item.rowNumber, item.identity, batch.data.status);
+        const row = await updateShipmentStatus(item.rowNumber, item.identity, batch.data.status, trace);
         results.push({ ok: true as const, rowNumber: item.rowNumber, row });
       } catch (error) {
         results.push({ ok: false as const, rowNumber: item.rowNumber, message: error instanceof Error ? error.message : "Échec inconnu." });
       }
     }
-    return NextResponse.json({ ok: results.every((result) => result.ok), results, succeeded: results.filter((result) => result.ok).length, failed: results.filter((result) => !result.ok).length }, { headers: privateHeaders() });
+    return tracedResponse({ ok: results.every((result) => result.ok), results, succeeded: results.filter((result) => result.ok).length, failed: results.filter((result) => !result.ok).length }, trace, results.every((result) => result.ok) ? "success" : "error");
   } catch (error) {
+    trace.complete("error");
     console.error("[admin-shipment-tracking-write-failed]", error instanceof Error ? error.message : String(error));
     return failure("La mise à jour du statut a échoué.", 503);
   }
+}
+function tracedResponse(body: unknown, trace: OperationPerformanceTrace, result: "success" | "error", status = 200) {
+  const responseStartedAt = performance.now();
+  const response = NextResponse.json(body, { status, headers: privateHeaders() });
+  trace.add("construction_reponse", performance.now() - responseStartedAt);
+  trace.complete(result);
+  response.headers.set("Server-Timing", trace.serverTiming());
+  response.headers.set("X-Request-Id", trace.requestIdentifier());
+  return response;
 }
 function clean(value: string | null) { return (value ?? "").trim().slice(0, 100); }
 function isDate(value: string) { if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false; const date = new Date(`${value}T00:00:00Z`); return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value; }
