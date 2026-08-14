@@ -18,7 +18,7 @@ test("journalise uniquement les métadonnées de performance autorisées", () =>
 
 test("instrumente le PATCH expéditions sans modifier son flux séquentiel", () => {
   for (const step of ["auth_session", "validation_zod_statut", "validation_selection", "construction_reponse"]) assert.match(shipmentRoute, new RegExp(step));
-  for (const step of ["google_token", "lecture_google", "validation_identite", "ecriture_google", "relecture_google"]) assert.match(shipmentServer, new RegExp(step));
+  for (const step of ["google_token", "lecture_google", "validation_identite", "ecriture_google", "confirmation_ecriture"]) assert.match(shipmentServer, new RegExp(step));
   assert.match(shipmentPage, /shipment_tracking_update_individual/);
   assert.match(shipmentPage, /shipment_tracking_update_batch/);
   assert.match(shipmentPage, /apiMs/);
@@ -26,11 +26,10 @@ test("instrumente le PATCH expéditions sans modifier son flux séquentiel", () 
   assert.doesNotMatch(`${shipmentRoute}\n${shipmentServer}`, /values:batchUpdate|retry|Promise\.all/);
 });
 
-test("confirme les statuts par une seule relecture ciblée de K", () => {
-  assert.match(shipmentServer, /values:batchGet/);
-  assert.match(shipmentServer, /query\.append\("ranges", `\$\{SHIPMENT_TRACKING_SHEET\}!K\$\{rowNumber\}`\)/);
-  assert.match(shipmentRoute, /updateShipmentStatuses\(uniqueItems/);
-  assert.doesNotMatch(shipmentServer, /parseShipmentTrackingRows\(after/);
+test("confirme le statut avec la réponse officielle de l’écriture", () => {
+  assert.match(shipmentServer, /includeValuesInResponse=true/);
+  assert.match(shipmentServer, /assertShipmentStatusWriteConfirmed/);
+  assert.doesNotMatch(shipmentServer, /values:batchGet|relecture_google|parseShipmentTrackingRows\(after/);
 });
 
 test("instrumente les deux écritures sans retry", () => {
