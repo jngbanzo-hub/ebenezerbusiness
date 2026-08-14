@@ -43,14 +43,20 @@ export function ShipmentTrackingPage() {
 
   async function update(row: ShipmentTrackingRow, status: ShipmentStatus) {
     if (bulkSaving) return;
+    const uiStartedAt = performance.now();
     setSaving(row.rowNumber); setError(""); setSuccess("");
+    let apiCompletedAt = uiStartedAt; let requestId = ""; let serverTiming = ""; let result: "success" | "error" = "error";
     try {
       const response = await fetch("/api/admin/shipment-tracking", { method: "PATCH", headers: { Authorization: `Bearer ${token.current}`, "Content-Type": "application/json" }, body: JSON.stringify({ rowNumber: row.rowNumber, identity: row.identity, status }) });
+      requestId = response.headers.get("X-Request-Id") ?? ""; serverTiming = response.headers.get("Server-Timing") ?? "";
       const body = await readJsonOrThrow<{ row?: ShipmentTrackingRow }>(response, "Mise à jour impossible.");
+      apiCompletedAt = performance.now();
       if (!body.row || body.row.status !== status) throw new Error("La source n’a pas confirmé le nouveau statut.");
       setAllRows((current) => current.map((item) => item.id === row.id ? body.row! : item));
       setSuccess(`Statut réel confirmé dans EXPÉDITION!K${row.rowNumber} : ${body.row.status}.`);
+      result = "success";
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Mise à jour impossible."); } finally { setSaving(null); }
+    requestAnimationFrame(() => console.info(JSON.stringify({ type: "operation_performance_ui", operation: "shipment_tracking_update_individual", requestId, itemCount: 1, result, apiMs: roundMs(apiCompletedAt - uiStartedAt), totalMs: roundMs(performance.now() - uiStartedAt), serverTiming })));
   }
 
   async function updateSelected() {
@@ -73,7 +79,7 @@ export function ShipmentTrackingPage() {
       if (failures.length) setError(failures.map((result) => `Ligne ${result.rowNumber} : ${result.message ?? "échec"}`).join(" · "));
       result = failures.length ? "error" : "success";
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Mise à jour en lot impossible."); } finally { setBulkSaving(false); }
-    requestAnimationFrame(() => console.info(JSON.stringify({ type: "operation_performance_ui", operation: "shipment_tracking_update", requestId, itemCount: targets.length, result, apiMs: roundMs(apiCompletedAt - uiStartedAt), totalMs: roundMs(performance.now() - uiStartedAt), serverTiming })));
+    requestAnimationFrame(() => console.info(JSON.stringify({ type: "operation_performance_ui", operation: "shipment_tracking_update_batch", requestId, itemCount: targets.length, result, apiMs: roundMs(apiCompletedAt - uiStartedAt), totalMs: roundMs(performance.now() - uiStartedAt), serverTiming })));
   }
 
   function resetFilters() { setFilters((current) => ({ ...current, company: "ALL", destination: "ALL", status: "ALL", search: "" })); setSelected(new Set()); }

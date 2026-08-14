@@ -19,7 +19,8 @@ test("journalise uniquement les métadonnées de performance autorisées", () =>
 test("instrumente le PATCH expéditions sans modifier son flux séquentiel", () => {
   for (const step of ["auth_session", "validation_zod_statut", "validation_selection", "construction_reponse"]) assert.match(shipmentRoute, new RegExp(step));
   for (const step of ["google_token", "lecture_google", "validation_identite", "ecriture_google", "relecture_google"]) assert.match(shipmentServer, new RegExp(step));
-  assert.match(shipmentPage, /shipment_tracking_update/);
+  assert.match(shipmentPage, /shipment_tracking_update_individual/);
+  assert.match(shipmentPage, /shipment_tracking_update_batch/);
   assert.match(shipmentPage, /apiMs/);
   assert.match(shipmentPage, /totalMs/);
   assert.doesNotMatch(`${shipmentRoute}\n${shipmentServer}`, /values:batchUpdate|retry|Promise\.all/);

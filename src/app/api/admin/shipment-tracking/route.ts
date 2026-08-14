@@ -56,7 +56,9 @@ export async function PATCH(request: Request) {
     const single = updateSchema.safeParse(body);
     if (single.success) {
       trace.add("validation_zod_statut", performance.now() - validationStartedAt);
+      const selectionStartedAt = performance.now();
       trace.setItemCount(1);
+      trace.add("validation_selection", performance.now() - selectionStartedAt);
       const row = await updateShipmentStatus(single.data.rowNumber, single.data.identity, single.data.status, trace);
       return tracedResponse({ ok: true, row }, trace, "success");
     }
