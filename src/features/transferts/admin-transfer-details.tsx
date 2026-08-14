@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 import { GlassPanel } from "@/components/design-system";
 import { Button } from "@/components/ui/button";
 import {
+  correctAdminTransferAmount,
+  correctAdminTransferBeneficiary,
   correctAdminTransferCode,
   loadAdminTransferDetail,
   revealAdminTransferCode
@@ -26,7 +28,7 @@ export function AdminTransferDetails({
   const [transfer, setTransfer] = useState<TransferSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [showForm, setShowForm] = useState(false);
+  const [correctionKind, setCorrectionKind] = useState<"code" | "amount" | "beneficiary" | null>(null);
   const [showCode, setShowCode] = useState(false);
   const [revealedCode, setRevealedCode] = useState("");
   const [revealingCode, setRevealingCode] = useState(false);
@@ -69,7 +71,7 @@ export function AdminTransferDetails({
   );
   const close = () => {
     setTransfer(null);
-    setShowForm(false);
+    setCorrectionKind(null);
     setShowCode(false);
     setRevealedCode("");
     onClose();
@@ -128,10 +130,14 @@ export function AdminTransferDetails({
               <Item label="Date" value={transfer.sentAt} />
               <Item label="Observation" value={transfer.observation || "—"} />
             </div>
-            {canCorrect && !showForm ? (
-              <Button variant="growth" type="button" onClick={() => setShowForm(true)}>Corriger le code</Button>
+            {canCorrect && !correctionKind ? (
+              <div className="flex flex-wrap gap-2">
+                <Button variant="growth" type="button" onClick={() => setCorrectionKind("code")}>Corriger le code</Button>
+                <Button variant="growth" type="button" onClick={() => setCorrectionKind("amount")}>Corriger le montant</Button>
+                <Button variant="growth" type="button" onClick={() => setCorrectionKind("beneficiary")}>Corriger le bénéficiaire</Button>
+              </div>
             ) : null}
-            {canCorrect && showForm ? (
+            {canCorrect && correctionKind === "code" ? (
               <form
                 className="space-y-3 rounded-lg border border-amber-200/20 p-4"
                 onSubmit={async (event) => {
@@ -149,7 +155,7 @@ export function AdminTransferDetails({
                     });
                     formElement.reset();
                     setShowCode(false);
-                    setShowForm(false);
+                    setCorrectionKind(null);
                     setCorrectionRequestId(crypto.randomUUID());
                     await load();
                     onSuccess();
@@ -169,7 +175,75 @@ export function AdminTransferDetails({
                 <label className="grid gap-1">Motif<input name="motif" required maxLength={500} className="field" /></label>
                 <div className="flex gap-2">
                   <Button variant="growth" type="submit" disabled={pending}>{pending ? "Correction…" : "Confirmer la correction"}</Button>
-                  <Button type="button" variant="outline" onClick={() => { setShowForm(false); setShowCode(false); }}>Annuler</Button>
+                  <Button type="button" variant="outline" onClick={() => { setCorrectionKind(null); setShowCode(false); }}>Annuler</Button>
+                </div>
+              </form>
+            ) : null}
+            {canCorrect && correctionKind === "amount" ? (
+              <form
+                className="space-y-3 rounded-lg border border-amber-200/20 p-4"
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  const formElement = event.currentTarget;
+                  const data = new FormData(formElement);
+                  setPending(true);
+                  setError("");
+                  try {
+                    await correctAdminTransferAmount(token, transfer.transferId, {
+                      newAmount: Number(data.get("newAmount")),
+                      correctionRequestId
+                    });
+                    formElement.reset();
+                    setCorrectionKind(null);
+                    setCorrectionRequestId(crypto.randomUUID());
+                    await load();
+                    onSuccess();
+                  } catch (caught) {
+                    setError(caught instanceof Error ? caught.message : "Correction impossible.");
+                  } finally {
+                    setPending(false);
+                  }
+                }}
+              >
+                <p className="text-amber-100">Montant actuel : {transfer.amount} {transfer.currency}. Les frais restent inchangés.</p>
+                <label className="grid gap-1">Nouveau montant<input name="newAmount" type="number" min="0.01" step="0.01" required className="field" /></label>
+                <div className="flex gap-2">
+                  <Button variant="growth" type="submit" disabled={pending}>{pending ? "Correction…" : "Confirmer la correction"}</Button>
+                  <Button type="button" variant="outline" onClick={() => setCorrectionKind(null)}>Annuler</Button>
+                </div>
+              </form>
+            ) : null}
+            {canCorrect && correctionKind === "beneficiary" ? (
+              <form
+                className="space-y-3 rounded-lg border border-amber-200/20 p-4"
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  const formElement = event.currentTarget;
+                  const data = new FormData(formElement);
+                  setPending(true);
+                  setError("");
+                  try {
+                    await correctAdminTransferBeneficiary(token, transfer.transferId, {
+                      newBeneficiaryName: String(data.get("newBeneficiaryName")),
+                      correctionRequestId
+                    });
+                    formElement.reset();
+                    setCorrectionKind(null);
+                    setCorrectionRequestId(crypto.randomUUID());
+                    await load();
+                    onSuccess();
+                  } catch (caught) {
+                    setError(caught instanceof Error ? caught.message : "Correction impossible.");
+                  } finally {
+                    setPending(false);
+                  }
+                }}
+              >
+                <p className="text-amber-100">Bénéficiaire actuel : {transfer.beneficiaryName}.</p>
+                <label className="grid gap-1">Nouveau bénéficiaire<input name="newBeneficiaryName" required maxLength={200} className="field" /></label>
+                <div className="flex gap-2">
+                  <Button variant="growth" type="submit" disabled={pending}>{pending ? "Correction…" : "Confirmer la correction"}</Button>
+                  <Button type="button" variant="outline" onClick={() => setCorrectionKind(null)}>Annuler</Button>
                 </div>
               </form>
             ) : null}

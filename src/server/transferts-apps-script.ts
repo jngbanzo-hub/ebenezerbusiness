@@ -26,6 +26,9 @@ export const TRANSFERTS_WRITE_ACTIONS = [
 ] as const;
 export type TransfertsWriteAction = (typeof TRANSFERTS_WRITE_ACTIONS)[number];
 export type TransfertsAdminWriteAction = "ADMIN_CORRECT_TRANSFER_CODE";
+export type TransfertsAdminFieldWriteAction =
+  | "ADMIN_CORRECT_TRANSFER_AMOUNT"
+  | "ADMIN_CORRECT_TRANSFER_BENEFICIARY";
 
 export type TransfertsActor = {
   userId: string;
@@ -64,7 +67,7 @@ export async function callTransfertsReadApi(
 }
 
 export async function callTransfertsWriteApi(
-  action: TransfertsWriteAction | TransfertsAdminWriteAction,
+  action: TransfertsWriteAction | TransfertsAdminWriteAction | TransfertsAdminFieldWriteAction,
   actor: TransfertsActor,
   payload: Record<string, unknown>,
   options: { fetcher?: typeof fetch; now?: number; allowAgentDetailCode?: boolean; allowAdminDetailCode?: boolean } = {}
@@ -73,7 +76,7 @@ export async function callTransfertsWriteApi(
 }
 
 async function callTransfertsApi(
-  action: TransfertsReadAction | TransfertsWriteAction | TransfertsAdminWriteAction,
+  action: TransfertsReadAction | TransfertsWriteAction | TransfertsAdminWriteAction | TransfertsAdminFieldWriteAction,
   actor: TransfertsActor,
   payload: Record<string, unknown>,
   options: { fetcher?: typeof fetch; now?: number; allowAgentDetailCode?: boolean; allowAdminDetailCode?: boolean } = {}
@@ -259,7 +262,7 @@ function readTransfertsConfiguration() {
 function validateAppsScriptResponse(
   value: unknown,
   requestId: string,
-  action: TransfertsReadAction | TransfertsWriteAction | TransfertsAdminWriteAction
+  action: TransfertsReadAction | TransfertsWriteAction | TransfertsAdminWriteAction | TransfertsAdminFieldWriteAction
 ): AppsScriptResponse {
   if (!isRecord(value)) throw new TransfertsServiceError("TRANSFERTS_INVALID_RESPONSE");
   if (
@@ -293,12 +296,14 @@ function validateAppsScriptResponse(
 }
 
 function readResponseHasInvalidData(
-  action: TransfertsReadAction | TransfertsWriteAction | TransfertsAdminWriteAction,
+  action: TransfertsReadAction | TransfertsWriteAction | TransfertsAdminWriteAction | TransfertsAdminFieldWriteAction,
   data: unknown
 ) {
   if (
     action === "GET_TRANSFER" ||
     action === "ADMIN_CORRECT_TRANSFER_CODE" ||
+    action === "ADMIN_CORRECT_TRANSFER_AMOUNT" ||
+    action === "ADMIN_CORRECT_TRANSFER_BENEFICIARY" ||
     TRANSFERTS_WRITE_ACTIONS.includes(action as TransfertsWriteAction)
   ) {
     return !isRecord(data);

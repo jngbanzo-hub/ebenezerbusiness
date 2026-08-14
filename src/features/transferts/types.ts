@@ -66,6 +66,16 @@ export type CorrectTransferCodeInput = {
   correctionRequestId: string;
 };
 
+export type CorrectTransferAmountInput = {
+  newAmount: number;
+  correctionRequestId: string;
+};
+
+export type CorrectTransferBeneficiaryInput = {
+  newBeneficiaryName: string;
+  correctionRequestId: string;
+};
+
 export type CreateTransferInput = {
   agencyTo: TransferAgency;
   amount: number;

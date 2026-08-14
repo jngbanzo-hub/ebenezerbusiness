@@ -1,5 +1,7 @@
 import type {
   CreateTransferInput,
+  CorrectTransferAmountInput,
+  CorrectTransferBeneficiaryInput,
   CorrectTransferCodeInput,
   TransferDetailResponse,
   TransferWriteResponse,
@@ -70,6 +72,30 @@ export function correctAdminTransferCode(
 ) {
   return writeTransfer(
     `/api/admin/transferts/${encodeURIComponent(transferId)}/correct-code`,
+    token,
+    input
+  );
+}
+
+export function correctAdminTransferAmount(
+  token: string,
+  transferId: string,
+  input: CorrectTransferAmountInput
+) {
+  return writeTransfer(
+    `/api/admin/transferts/${encodeURIComponent(transferId)}/correct-amount`,
+    token,
+    input
+  );
+}
+
+export function correctAdminTransferBeneficiary(
+  token: string,
+  transferId: string,
+  input: CorrectTransferBeneficiaryInput
+) {
+  return writeTransfer(
+    `/api/admin/transferts/${encodeURIComponent(transferId)}/correct-beneficiary`,
     token,
     input
   );
