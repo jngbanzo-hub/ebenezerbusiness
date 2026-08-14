@@ -4,6 +4,7 @@ import { z } from "zod";
 import { filterShipmentTrackingRows, SHIPMENT_STATUSES } from "@/features/admin/shipment-tracking";
 import { authorizeAdminRequest } from "@/server/admin-authorization";
 import { readShipmentTrackingRows, updateShipmentStatus } from "@/server/admin-shipment-tracking";
+import { OperationPerformanceTrace } from "@/server/operation-performance";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,20 +17,30 @@ const batchUpdateSchema = z.object({
 }).strict();
 
 export async function GET(request: Request) {
+  const requestStartedAt = performance.now();
+  const trace = new OperationPerformanceTrace("shipment_tracking", crypto.randomUUID(), "ADMIN", requestStartedAt);
   try {
-    const auth = await authorizeAdminRequest(request);
+    const auth = await trace.measure("auth_session", () => authorizeAdminRequest(request));
     if (!auth.authorized) return failure(auth.status === 401 ? "Session invalide ou expirée." : "Accès interdit.", auth.status);
     const params = new URL(request.url).searchParams;
     const from = params.get("from") ?? ""; const to = params.get("to") ?? "";
     const company = clean(params.get("company")) || "ALL"; const destination = clean(params.get("destination")) || "ALL";
     const status = params.get("status")?.trim() || "ALL"; const search = params.get("search")?.trim() || "";
     if ((from && !isDate(from)) || (to && !isDate(to)) || (from && to && from > to) || search.length > 100) return failure("Filtres invalides.", 400);
-    const sourceRows = await readShipmentTrackingRows();
+    const sourceRows = await readShipmentTrackingRows(trace);
+    const filteringStartedAt = performance.now();
     const periodRows = filterShipmentTrackingRows(sourceRows, { from, to });
     const rows = filterShipmentTrackingRows(periodRows, { company, destination, status, search });
     const options = { companies: unique(periodRows.map((row) => row.company)), destinations: unique(periodRows.map((row) => row.destination)) };
-    return NextResponse.json({ rows, options }, { headers: privateHeaders() });
+    trace.add("filtres_serveur", performance.now() - filteringStartedAt);
+    const responseStartedAt = performance.now();
+    const response = NextResponse.json({ rows, options }, { headers: privateHeaders() });
+    trace.add("reponse_serveur", performance.now() - responseStartedAt);
+    trace.complete("success");
+    response.headers.set("Server-Timing", trace.serverTiming());
+    return response;
   } catch (error) {
+    trace.complete("error");
     console.error("[admin-shipment-tracking-read-failed]", error instanceof Error ? error.message : String(error));
     return failure("Le suivi des expéditions est temporairement indisponible.", 503);
   }

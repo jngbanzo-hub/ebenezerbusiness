@@ -6,6 +6,7 @@ import { readFileSync } from "fs";
 import { z } from "zod";
 
 import { parseShipmentTrackingRows, SHIPMENT_TRACKING_SHEET, type ShipmentStatus } from "@/features/admin/shipment-tracking";
+import type { OperationPerformanceTrace } from "@/server/operation-performance";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
@@ -17,8 +18,12 @@ const envSchema = z.object({
 type Config = { clientEmail: string; privateKey: string; spreadsheetId: string };
 let tokenCache: { token: string; expiresAt: number } | null = null;
 
-export async function readShipmentTrackingRows() {
-  return parseShipmentTrackingRows(await readRange(`${SHIPMENT_TRACKING_SHEET}!A:N`));
+export async function readShipmentTrackingRows(trace?: OperationPerformanceTrace) {
+  const values = await readRange(`${SHIPMENT_TRACKING_SHEET}!A:N`, 1, trace);
+  const startedAt = performance.now();
+  const rows = parseShipmentTrackingRows(values);
+  trace?.add("parsing_expedition", performance.now() - startedAt);
+  return rows;
 }
 
 export async function updateShipmentStatus(rowNumber: number, identity: string, status: ShipmentStatus) {
@@ -33,9 +38,11 @@ export async function updateShipmentStatus(rowNumber: number, identity: string, 
   return confirmed;
 }
 
-async function readRange(range: string, sourceRowNumber = 1): Promise<unknown[][]> {
-  const config = getConfig(); const token = await getToken(config);
-  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}?majorDimension=ROWS&valueRenderOption=FORMATTED_VALUE`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+async function readRange(range: string, sourceRowNumber = 1, trace?: OperationPerformanceTrace): Promise<unknown[][]> {
+  const config = getConfig();
+  const token = trace ? await trace.measure("google_token", () => getToken(config)) : await getToken(config);
+  const readSheets = () => fetch(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values/${encodeURIComponent(range)}?majorDimension=ROWS&valueRenderOption=FORMATTED_VALUE`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+  const response = trace ? await trace.measure("google_sheets", readSheets) : await readSheets();
   const payload = await response.json() as { values?: unknown[][]; error?: { message?: string } };
   if (!response.ok) throw new Error(payload.error?.message ?? "Lecture du suivi des expéditions impossible.");
   const values = payload.values ?? [];

@@ -33,7 +33,13 @@ export function AgentStockagesArrivalsPage() {
   const [data, setData] = useState<AgentData | null>(null);
   const [message, setMessage] = useState("");
   const load = useCallback(async () => {
-    try { setMessage(""); setData(await request<AgentData>("/api/agent/stockages")); }
+    const startedAt = performance.now();
+    try {
+      setMessage("");
+      const measured = await measuredRead<AgentData>("/api/agent/stockages");
+      setData(measured.data);
+      requestAnimationFrame(() => console.info(JSON.stringify({ type: "operation_performance_ui", operation: "arrivages", agency: measured.data.account.agency, action: "load", totalMs: roundMs(performance.now() - startedAt), serverTiming: measured.serverTiming })));
+    }
     catch (error) { setMessage(error instanceof Error ? error.message : "Stockages indisponible."); }
   }, []);
   useEffect(() => { void load(); }, [load]);
@@ -212,6 +218,11 @@ async function request<T>(url: string, body?: unknown): Promise<T> {
   const response = await fetch(url, { method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store" });
   return readJsonOrThrow<T>(response, "Service Stockages indisponible.");
 }
+async function measuredRead<T>(url: string): Promise<{ data: T; serverTiming: string }> {
+  const response = await authenticatedRead(getSupabaseBrowserClient().auth, url);
+  return { data: await readJsonOrThrow<T>(response, "Service Stockages indisponible."), serverTiming: response.headers.get("Server-Timing") ?? "" };
+}
+function roundMs(value: number) { return Math.round(value * 10) / 10; }
 function Shell({ back, title, children }: { back: string; title: string; children: React.ReactNode }) {
   const router = useRouter();
 

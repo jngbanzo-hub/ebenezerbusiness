@@ -8,7 +8,7 @@ export class OperationPerformanceTrace {
   private finished = false;
 
   constructor(
-    private readonly operation: "encaissement" | "depense",
+    private readonly operation: "encaissement" | "depense" | "shipment_tracking" | "arrivages",
     private readonly requestId: string,
     private readonly agency: string,
     startedAt = performance.now()
