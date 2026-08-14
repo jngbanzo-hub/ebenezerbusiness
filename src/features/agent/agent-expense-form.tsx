@@ -12,6 +12,7 @@ import {
   getOrCreateRequestIdAttempt,
   type RequestIdAttempt
 } from "@/features/agent/request-id-attempt";
+import { logOperationPerformance } from "@/features/agent/operation-performance-client";
 
 const CATEGORIES = [
   "Aéroport",
@@ -130,6 +131,7 @@ export function AgentExpenseForm() {
     }
 
     requestLockRef.current = true;
+    const performanceStartedAt = performance.now();
     setIsSubmitting(true);
     setResult(null);
 
@@ -177,6 +179,7 @@ export function AgentExpenseForm() {
         (payload.code === "DEPENSE_ENREGISTREE" ||
           payload.code === "DEPENSE_DEJA_ENREGISTREE")
       ) {
+        logOperationPerformance({ operation: "depense", requestId: attempt.requestId, agency: "agent", startedAt: performanceStartedAt, response, result: "success" });
         const alreadyRecorded =
           payload.code === "DEPENSE_DEJA_ENREGISTREE";
         setResult({
@@ -201,6 +204,7 @@ export function AgentExpenseForm() {
             : "Le service Dépenses est indisponible."
       );
     } catch (error) {
+      logOperationPerformance({ operation: "depense", requestId: attemptRef.current?.requestId ?? "unknown", agency: "agent", startedAt: performanceStartedAt, result: "error" });
       setResult({
         type: "error",
         text:

@@ -32,6 +32,7 @@ import {
 } from "@/features/agent/payment-request-id";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { getVerifiedAgentWriteToken } from "@/features/stockages/verified-agent-token";
+import { logOperationPerformance } from "@/features/agent/operation-performance-client";
 import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 import {
   PAYMENT_MODES,
@@ -193,6 +194,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
     }
 
     paymentLockRef.current = true;
+    const performanceStartedAt = performance.now();
     setIsSaving(true);
 
     try {
@@ -248,6 +250,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
             paymentRequestId: attempt.paymentRequestId
           });
       paymentAttemptRef.current = null;
+      logOperationPerformance({ operation: "encaissement", requestId: attempt.paymentRequestId, agency: profile.agence, startedAt: performanceStartedAt, result: "success" });
       setMessage({
         type: "success",
         text:
@@ -268,6 +271,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
       setObservation("");
       setModePaiement("ESPECES");
     } catch (error) {
+      logOperationPerformance({ operation: "encaissement", requestId: paymentAttemptRef.current?.paymentRequestId ?? "unknown", agency: profile?.agence ?? "unknown", startedAt: performanceStartedAt, result: error instanceof AgentApiError && error.code === "PAIEMENT_DEJA_ENREGISTRE" ? "success" : "error" });
       if (error instanceof AgentApiError && error.code === "PAIEMENT_DEJA_ENREGISTRE") {
         paymentAttemptRef.current = null;
         setMessage({ type: "success", text: "Ce paiement a déjà été enregistré." });

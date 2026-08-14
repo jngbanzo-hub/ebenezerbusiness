@@ -7,6 +7,7 @@ import {
   attachConfirmedExpenseDebit,
   CashExpenseDebitError
 } from "@/server/cash-expense-debit";
+import type { OperationPerformanceTrace } from "@/server/operation-performance";
 
 const AGENT_EXPENSE_ACTIONS = [
   "ENREGISTRER_DEPENSE",
@@ -169,15 +170,18 @@ export async function readAdminExpenses(
 
 export async function forwardAgentExpenseRequest(
   identity: AuthorizedAgentIdentity,
-  value: unknown
+  value: unknown,
+  trace?: OperationPerformanceTrace
 ): Promise<unknown> {
+  const validationStartedAt = performance.now();
   const request = validateAgentExpenseRequest(value);
+  trace?.add("validation", performance.now() - validationStartedAt);
   const { url, apiKey } = readExpensesAppsScriptConfiguration();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
 
   try {
-    const response = await fetch(url, {
+    const callAppsScript = () => fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -198,6 +202,9 @@ export async function forwardAgentExpenseRequest(
       redirect: "follow",
       signal: controller.signal
     });
+    const response = trace
+      ? await trace.measure("apps_script_ecriture", callAppsScript)
+      : await callAppsScript();
 
     if (!response.ok) {
       throw new Error("Le service Dépenses a refusé la requête.");
@@ -210,7 +217,9 @@ export async function forwardAgentExpenseRequest(
 
     const result: unknown = await response.json();
     try {
-      return await attachConfirmedExpenseDebit(identity, request, result);
+      return trace
+        ? await trace.measure("caisse", () => attachConfirmedExpenseDebit(identity, request, result))
+        : await attachConfirmedExpenseDebit(identity, request, result);
     } catch (error) {
       if (error instanceof CashExpenseDebitError) {
         throw new AgentExpenseRequestError(

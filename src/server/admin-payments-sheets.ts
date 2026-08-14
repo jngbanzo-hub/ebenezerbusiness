@@ -9,6 +9,7 @@ import {
   type AdminPayment,
   type AdminSite
 } from "@/features/admin/types";
+import type { OperationPerformanceTrace } from "@/server/operation-performance";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
@@ -55,9 +56,11 @@ type GoogleSheetsBatchResponse = {
 
 let tokenCache: { token: string; expiresAt: number } | null = null;
 
-export async function readAdminPayments(): Promise<AdminPayment[]> {
+export async function readAdminPayments(trace?: OperationPerformanceTrace): Promise<AdminPayment[]> {
   const config = getAdminGoogleSheetsConfig();
-  const valueRanges = await readPaymentSheetRanges(config);
+  const valueRanges = trace
+    ? await trace.measure("google_sheets", () => readPaymentSheetRanges(config))
+    : await readPaymentSheetRanges(config);
   const payments: AdminPayment[] = [];
 
   for (const site of ADMIN_SITES) {

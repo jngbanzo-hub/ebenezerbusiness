@@ -7,6 +7,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { Parcel } from "@/features/agent/types";
 import { readAdminPayments } from "@/server/admin-payments-sheets";
 import { StockagesV2Error, type StorageAgency } from "@/server/stockages-v2";
+import type { OperationPerformanceTrace } from "@/server/operation-performance";
 
 const STANDARD_RATES_USD_PER_KG: Readonly<Record<StorageAgency, number>> = {
   FIH: 9,
@@ -22,15 +23,19 @@ const DESTINATION_NAMES: Readonly<Record<StorageAgency, string>> = {
 
 export async function resolveDestinationPaymentParcel(
   trackingCode: string,
-  agency: StorageAgency
+  agency: StorageAgency,
+  trace?: OperationPerformanceTrace
 ): Promise<Readonly<Parcel>> {
   const code = normalizeTrackingCode(trackingCode);
-  const { data: parcel, error } = await serviceClient()
-    .from("stockage_parcels")
-    .select("tracking_code,agency,canonical_weight_kg,delivery_status,created_at")
-    .eq("tracking_code", code)
-    .eq("agency", agency)
-    .maybeSingle();
+  const readStorage = async () => await serviceClient()
+      .from("stockage_parcels")
+      .select("tracking_code,agency,canonical_weight_kg,delivery_status,created_at")
+      .eq("tracking_code", code)
+      .eq("agency", agency)
+      .maybeSingle();
+  const { data: parcel, error } = trace
+    ? await trace.measure("stockage", readStorage)
+    : await readStorage();
 
   if (error) throw new StockagesV2Error("STORAGE_READ_FAILED", 503);
   if (!parcel || parcel.delivery_status !== "AVAILABLE") {
@@ -42,7 +47,7 @@ export async function resolveDestinationPaymentParcel(
     throw new StockagesV2Error("INVALID_CANONICAL_WEIGHT", 409);
   }
 
-  const payments = await readAdminPayments();
+  const payments = await readAdminPayments(trace);
   const matching = payments.filter(
     (payment) =>
       normalizeTrackingCode(payment.codeColis) === code &&
@@ -75,8 +80,9 @@ export async function recordDestinationPayment(input: {
   observation: string;
   paymentRequestId: string;
   agentAccessToken: string;
-}) {
-  const parcel = await resolveDestinationPaymentParcel(input.trackingCode, input.agency);
+}, trace?: OperationPerformanceTrace) {
+  const parcel = await resolveDestinationPaymentParcel(input.trackingCode, input.agency, trace);
+  const validationStartedAt = performance.now();
   if (parcel.soldeRestant <= 0) throw new StockagesV2Error("PARCEL_ALREADY_PAID", 409);
   validateUuid(input.paymentRequestId);
   const paymentMode = requiredPaymentMode(input.paymentMode);
@@ -103,7 +109,8 @@ export async function recordDestinationPayment(input: {
   if (!url || !secret || !input.agentAccessToken) throw new StockagesV2Error("AGENT_SERVICE_UNAVAILABLE", 503);
   const timestamp = Date.now().toString();
   const signature = createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
-  const response = await fetch(`${url}/functions/v1/paiements-agents-enregistrer-paiement`, {
+  trace?.add("validation_metier", performance.now() - validationStartedAt);
+  const invokePayment = () => fetch(`${url}/functions/v1/paiements-agents-enregistrer-paiement`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${input.agentAccessToken}`,
@@ -114,6 +121,9 @@ export async function recordDestinationPayment(input: {
     body,
     cache: "no-store"
   });
+  const response = trace
+    ? await trace.measure("orchestration_paiement", invokePayment)
+    : await invokePayment();
   const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok || !payload || payload.success === false) {
     const code = typeof payload?.error === "string" ? payload.error : typeof payload?.code === "string" ? payload.code : "AGENT_SERVICE_UNAVAILABLE";
