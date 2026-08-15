@@ -285,7 +285,7 @@ function TrackingFeedbackMessage({
   );
 }
 
-function TrackingResultCard({ result }: { result: TrackingResult }) {
+export function TrackingResultCard({ result }: { result: TrackingResult }) {
   const visual = statusConfig[result.statusVisual];
   const StatusIcon = visual.icon;
 
