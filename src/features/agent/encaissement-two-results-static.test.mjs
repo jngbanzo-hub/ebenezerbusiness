@@ -30,3 +30,19 @@ test("conserve le scanner et les chemins de paiement existants", () => {
   assert.match(workspace, /saveDestinationPayment/);
   assert.doesNotMatch(workspace, /assign_qr_label_server|INITIAL_ASSIGNMENT/);
 });
+
+test("le scanner résout le QR puis réutilise strictement la recherche existante", () => {
+  assert.match(workspace, /resolveQrById\(getSupabaseBrowserClient\(\)\.auth, qrId\)/);
+  assert.match(workspace, /runEncaissementSearch\(candidate\.trackingCode, candidate\.agency\)/);
+  assert.match(workspace, /runEncaissementSearch\(codeColis, sourceAgency\)/);
+  assert.doesNotMatch(workspace, /QR_RESOLVER_INACTIVE_MESSAGE|service d’association QR n’est pas encore activé/);
+});
+
+test("traite les états QR sans lancer de paiement", () => {
+  assert.match(workspace, /candidate\.status === "UNASSIGNED"/);
+  assert.match(workspace, /association au colis en attente/);
+  assert.match(workspace, /candidate\.status === "REVOKED"/);
+  assert.match(workspace, /QR inconnu\/non reconnu/);
+  const qrHandler = workspace.slice(workspace.indexOf("async function handleQrRead"), workspace.indexOf("async function handlePayment"));
+  assert.doesNotMatch(qrHandler, /savePayment|saveDestinationPayment/);
+});

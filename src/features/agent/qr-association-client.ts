@@ -49,6 +49,19 @@ export async function resolveQrCandidate(
   return readResponse<QrCandidate>(response);
 }
 
+export async function resolveQrById(
+  auth: BrowserAuth,
+  qrId: string,
+  fetcher: Fetcher = fetch
+): Promise<QrCandidate> {
+  const match = /^EEBQR([0-9]{6,})$/.exec(qrId.trim().toUpperCase());
+  const displayNumber = match ? Number(match[1]) : Number.NaN;
+  if (!Number.isSafeInteger(displayNumber) || displayNumber <= 0) {
+    throw new AuthenticatedRequestError("QR inconnu/non reconnu.", 400, "INVALID_QR_ID");
+  }
+  return resolveQrCandidate(auth, displayNumber, fetcher);
+}
+
 export async function submitQrAssociation(
   auth: BrowserAuth,
   payload: QrAssignmentPayload,
@@ -84,7 +97,7 @@ export function messageForQrError(code: string) {
     ACCESS_DENIED: "Votre session a expiré ou votre compte n’est pas autorisé.",
     INVALID_QR_DISPLAY_NUMBER: "Le numéro QR est invalide.",
     INVALID_QR_COMMAND: "Les informations d’association sont invalides.",
-    QR_NOT_FOUND: "Ce QR est inconnu.",
+    QR_NOT_FOUND: "QR inconnu/non reconnu.",
     QR_NOT_UNASSIGNED: "Ce QR est déjà associé ou révoqué.",
     QR_AGENCY_ACCESS_DENIED: "Vous ne pouvez pas associer un QR pour cette agence.",
     IDENTITY_NOT_FOUND: "Ce code colis est introuvable dans le MANIFESTE officiel.",

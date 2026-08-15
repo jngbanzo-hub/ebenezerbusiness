@@ -1,6 +1,3 @@
-export const QR_RESOLVER_INACTIVE_MESSAGE =
-  "QR lu avec succès. Le service d’association QR n’est pas encore activé. Utilisez la recherche manuelle pour le moment.";
-
 export type EncaissementQrResolution = Readonly<{
   agency: "FIH" | "LSHI" | "KLZ";
   trackingCode: string;

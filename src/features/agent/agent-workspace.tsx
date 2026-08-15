@@ -12,8 +12,8 @@ import { manifestStatusLabel } from "@/lib/manifest-status";
 import { getAllowedDestinations } from "@/features/agent/agencies";
 import { getAgentProfile, signOutAgent } from "@/features/agent/auth";
 import { AgentApiError, saveDestinationPayment, savePayment, searchAgentManifestControl, searchDestinationParcel, searchParcel, type AgentManifestSearchRow } from "@/features/agent/functions";
-import { QR_RESOLVER_INACTIVE_MESSAGE } from "@/features/agent/encaissement-qr-contract";
 import { EncaissementQrScanner } from "@/features/agent/encaissement-qr-scanner";
+import { resolveQrById } from "@/features/agent/qr-association-client";
 import { formatParcelArrivalDate } from "@/features/agent/parcel-arrival-date";
 import { parcelStatusLabel } from "@/features/agent/parcel-status-label";
 import {
@@ -35,7 +35,7 @@ import {
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { getVerifiedAgentWriteToken } from "@/features/stockages/verified-agent-token";
 import { logOperationPerformance } from "@/features/agent/operation-performance-client";
-import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
+import { authenticatedRead, AuthenticatedRequestError, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 import {
   PAYMENT_MODES,
   DESTINATIONS,
@@ -149,8 +149,15 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
 
   async function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    await runEncaissementSearch(codeColis, sourceAgency);
+  }
+
+  async function runEncaissementSearch(
+    requestedCode: string,
+    requestedSourceAgency: DestinationCode
+  ) {
     if (searchLockRef.current) return;
-    if (!profile || !DESTINATIONS.includes(sourceAgency)) {
+    if (!profile || !DESTINATIONS.includes(requestedSourceAgency)) {
       setMessage({ type: "error", text: "Agence source invalide." });
       return;
     }
@@ -169,8 +176,8 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
     setIsSearching(true);
 
     try {
-      const normalizedCode = codeColis.trim().toUpperCase();
-      const destinationAgency = profile.agence === "COTONOU" ? sourceAgency : profile.agence;
+      const normalizedCode = requestedCode.trim().toUpperCase();
+      const destinationAgency = profile.agence === "COTONOU" ? requestedSourceAgency : profile.agence;
       if (profile.agence !== "COTONOU") {
         const [storageOutcome, manifestOutcome] = await Promise.allSettled([
           searchDestinationParcel(normalizedCode),
@@ -209,7 +216,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
         return;
       }
 
-      const response = await searchParcel({ destinationCode: sourceAgency, codeColis: normalizedCode });
+      const response = await searchParcel({ destinationCode: requestedSourceAgency, codeColis: normalizedCode });
       const foundParcel = parseParcelResponse(response);
       if (searchId !== activeSearchIdRef.current) return;
       if (
@@ -232,6 +239,46 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
         searchLockRef.current = false;
         setIsSearching(false);
       }
+    }
+  }
+
+  async function handleQrRead(qrId: string) {
+    if (!profile || searchLockRef.current) return;
+    setMessage(null);
+    try {
+      const candidate = await resolveQrById(getSupabaseBrowserClient().auth, qrId);
+      if (candidate.status === "UNASSIGNED") {
+        setMessage({
+          type: "success",
+          text: "QR Eben Ezer Business valide — association au colis en attente."
+        });
+        return;
+      }
+      if (candidate.status === "REVOKED") {
+        setMessage({ type: "error", text: "Ce QR n’est pas utilisable." });
+        return;
+      }
+      if (!candidate.agency || !candidate.trackingCode) {
+        setMessage({ type: "error", text: "QR inconnu/non reconnu." });
+        return;
+      }
+      if (profile.agence !== "COTONOU" && profile.agence !== candidate.agency) {
+        setMessage({ type: "error", text: "Ce QR appartient à une autre agence." });
+        return;
+      }
+
+      setSourceAgency(candidate.agency);
+      setCodeColis(candidate.trackingCode);
+      await runEncaissementSearch(candidate.trackingCode, candidate.agency);
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error instanceof AuthenticatedRequestError && error.code === "QR_NOT_FOUND"
+          ? "QR inconnu/non reconnu."
+          : error instanceof Error
+            ? error.message
+            : "QR inconnu/non reconnu."
+      });
     }
   }
 
@@ -470,11 +517,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
                 <PackageSearch className="h-4 w-4" />
                 {isSearching ? "Recherche…" : "Rechercher"}
               </Button>
-              <EncaissementQrScanner
-                onQrRead={() => {
-                  setMessage({ type: "success", text: QR_RESOLVER_INACTIVE_MESSAGE });
-                }}
-              />
+              <EncaissementQrScanner onQrRead={(qrId) => void handleQrRead(qrId)} />
             </form>
           </GlassPanel>
 

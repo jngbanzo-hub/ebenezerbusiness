@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createQrAssignmentRequestId,
   messageForQrError,
+  resolveQrById,
   resolveQrCandidate,
   submitQrAssociation
 } from "./qr-association-client";
@@ -22,6 +23,34 @@ test("prévalide un QR UNASSIGNED avec la session active sans mutation", async (
   });
   assert.equal(method, "GET");
   assert.equal(candidate.version, 1);
+});
+
+test("résout un qrId scanné par le résolveur Agent officiel", async () => {
+  const candidate = await resolveQrById(activeAuth, "EEBQR000013", async (input) => {
+    assert.equal(String(input), "/api/agent/qr/resolve?displayNumber=13");
+    return Response.json({
+      qrId: "EEBQR000013",
+      displayNumber: 13,
+      status: "ASSIGNED",
+      agency: "KLZ",
+      trackingCode: "AT09426",
+      version: 2
+    });
+  });
+  assert.equal(candidate.agency, "KLZ");
+  assert.equal(candidate.trackingCode, "AT09426");
+});
+
+test("refuse un identifiant QR non officiel avant tout appel réseau", async () => {
+  let called = false;
+  await assert.rejects(
+    resolveQrById(activeAuth, "QR-013", async () => {
+      called = true;
+      return Response.json({});
+    }),
+    /QR inconnu\/non reconnu/
+  );
+  assert.equal(called, false);
 });
 
 test("refuse une session expirée avant tout fetch", async () => {
