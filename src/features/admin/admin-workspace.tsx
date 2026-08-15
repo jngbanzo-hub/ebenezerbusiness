@@ -16,6 +16,7 @@ import {
   LoaderCircle,
   LogOut,
   PackageSearch,
+  QrCode,
   Scale,
   Send,
   ShieldX
@@ -562,6 +563,7 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
 }
 
 const ADMIN_MODULES = [
+  { title: "Gestion des associations QR", description: "Recherchez, auditez, corrigez ou révoquez exceptionnellement un QR.", href: "/admin/qr-associations", icon: QrCode },
   { title: "Rapport synthèse du jour", description: "Consultez la synthèse quotidienne Encaissements, Dépenses, Caisse et Stockages.", href: "/admin/rapport-journalier", icon: ClipboardList },
   { title: "Encaissements", description: "Consultez les paiements, filtres, totaux et statistiques par agent.", href: "/admin/encaissements", icon: CreditCard },
   { title: "Caisse", description: "Supervisez les caisses FIH, LSHI et KLZ et leurs contrôles Admin.", href: "/admin/caisse", icon: Banknote },

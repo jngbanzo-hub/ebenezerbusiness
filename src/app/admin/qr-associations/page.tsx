@@ -1,0 +1,2 @@
+import type {Metadata} from "next"; import {AdminQrManagement} from "@/features/admin/admin-qr-management"; import {createPageMetadata} from "@/lib/seo";
+export const metadata:Metadata=createPageMetadata({title:"Gestion des associations QR",description:"Correction et révocation QR réservées aux administrateurs.",path:"/admin/qr-associations",noIndex:true}); export default function Page(){return <AdminQrManagement/>;}
