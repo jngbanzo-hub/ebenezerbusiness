@@ -12,6 +12,8 @@ import { getAllowedDestinations } from "@/features/agent/agencies";
 import { getAgentProfile, signOutAgent } from "@/features/agent/auth";
 import { AgentApiError, saveDestinationPayment, savePayment, searchDestinationParcel, searchParcel } from "@/features/agent/functions";
 import { AgentManifestControl } from "@/features/agent/agent-manifest-page";
+import { QR_RESOLVER_INACTIVE_MESSAGE } from "@/features/agent/encaissement-qr-contract";
+import { EncaissementQrScanner } from "@/features/agent/encaissement-qr-scanner";
 import { formatParcelArrivalDate } from "@/features/agent/parcel-arrival-date";
 import { parcelStatusLabel } from "@/features/agent/parcel-status-label";
 import {
@@ -393,7 +395,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
         <div className="mx-auto mt-8 grid max-w-4xl gap-6">
           <GlassPanel className="p-5 sm:p-6">
             <h2 className="text-xl font-semibold">Rechercher un colis</h2>
-            <form onSubmit={handleSearch} className="mt-5 grid gap-4 sm:grid-cols-[1fr_1.5fr_auto] sm:items-end">
+            <form onSubmit={handleSearch} className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1.5fr_auto_auto] lg:items-end">
               <label className="text-sm font-medium">
                 Agence source
                 <select
@@ -422,6 +424,11 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
                 <PackageSearch className="h-4 w-4" />
                 {isSearching ? "Recherche…" : "Rechercher"}
               </Button>
+              <EncaissementQrScanner
+                onQrRead={() => {
+                  setMessage({ type: "success", text: QR_RESOLVER_INACTIVE_MESSAGE });
+                }}
+              />
             </form>
           </GlassPanel>
 
