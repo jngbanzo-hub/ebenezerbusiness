@@ -8,14 +8,16 @@ function client() {
   return createClient(url,key,{auth:{autoRefreshToken:false,persistSession:false}}).schema("public");
 }
 
-export async function readAdminQr(selector:string) {
-  const normalized=selector.trim().toUpperCase();
-  const query=client().from("qr_labels").select("qr_id,display_number,status,agency,tracking_code,version,created_at,created_by,assigned_at,assigned_by,revoked_at,revoked_by");
-  const {data:label,error}=/^\d+$/.test(normalized)?await query.eq("display_number",Number(normalized)).maybeSingle():await query.eq("qr_id",normalized).maybeSingle();
-  if(error) throw new Error("QR_SERVICE_UNAVAILABLE"); if(!label) return null;
-  const {data:audit,error:auditError}=await client().from("qr_audit_events").select("event_id,action,old_agency,old_tracking_code,new_agency,new_tracking_code,old_status,new_status,reason,actor_id,actor_role,actor_agency,occurred_at,request_id,version_before,version_after").eq("qr_id",label.qr_id).order("occurred_at",{ascending:true});
-  if(auditError) throw new Error("QR_SERVICE_UNAVAILABLE");
-  return {label,audit:audit??[]};
+export async function readAdminQr(actorId:string,selector:string) {
+  const {data,error}=await client().rpc("read_qr_admin_server",{
+    p_actor_id:actorId,
+    p_selector:selector.trim().toUpperCase()
+  });
+  if(error){
+    console.error("[admin-qr] read_qr_admin_server failed",{code:error.code,message:error.message});
+    throw new Error("QR_SERVICE_UNAVAILABLE");
+  }
+  return data;
 }
 
 export async function correctAdminQr(input:{actorId:string;qrId:string;agency:string;trackingCode:string;reason:string;expectedVersion:number;requestId:string}) {
