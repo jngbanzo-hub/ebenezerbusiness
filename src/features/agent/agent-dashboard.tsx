@@ -228,9 +228,12 @@ export function AgentDashboard() {
   }
 
   const operations = OPERATIONS
-    .filter((operation) => profile.agence === "COTONOU"
-      ? !["caisse", "rapport-journalier", "statistiques-reception"].includes(operation.key)
-      : operation.key !== "rapport-coo")
+    .filter((operation) => {
+      if (operation.key === "qr-association") return profile.agence === "COTONOU";
+      return profile.agence === "COTONOU"
+        ? !["caisse", "rapport-journalier", "statistiques-reception"].includes(operation.key)
+        : operation.key !== "rapport-coo";
+    })
     .map((operation) => profile.agence === "COTONOU" && operation.key === "stockage"
       ? {
           ...operation,

@@ -8,10 +8,10 @@ import { Container, GlassPanel } from "@/components/design-system";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatWeight } from "@/lib/format-weight";
+import { manifestStatusLabel } from "@/lib/manifest-status";
 import { getAllowedDestinations } from "@/features/agent/agencies";
 import { getAgentProfile, signOutAgent } from "@/features/agent/auth";
-import { AgentApiError, saveDestinationPayment, savePayment, searchDestinationParcel, searchParcel } from "@/features/agent/functions";
-import { AgentManifestControl } from "@/features/agent/agent-manifest-page";
+import { AgentApiError, saveDestinationPayment, savePayment, searchAgentManifestControl, searchDestinationParcel, searchParcel, type AgentManifestSearchRow } from "@/features/agent/functions";
 import { QR_RESOLVER_INACTIVE_MESSAGE } from "@/features/agent/encaissement-qr-contract";
 import { EncaissementQrScanner } from "@/features/agent/encaissement-qr-scanner";
 import { formatParcelArrivalDate } from "@/features/agent/parcel-arrival-date";
@@ -48,6 +48,15 @@ import {
 const fieldClassName =
   "mt-2 h-11 w-full rounded-md border border-white/15 bg-white/[0.05] px-3 text-white outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/25 disabled:cursor-not-allowed disabled:opacity-60";
 
+type StorageSearchResult =
+  | { state: "FOUND"; parcel: Parcel }
+  | { state: "NOT_FOUND"; code: string }
+  | { state: "ERROR"; code: string };
+type ManifestSearchResult =
+  | { state: "FOUND"; agency: string; row: AgentManifestSearchRow }
+  | { state: "NOT_FOUND"; agency: string; code: string }
+  | { state: "ERROR"; code: string };
+
 export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCode?: string }) {
   const router = useRouter();
   const [profile, setProfile] = useState<AgentProfile | null>(null);
@@ -59,6 +68,8 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
       : ""
   );
   const [parcel, setParcel] = useState<Parcel | null>(null);
+  const [storageSearchResult, setStorageSearchResult] = useState<StorageSearchResult | null>(null);
+  const [manifestSearchResult, setManifestSearchResult] = useState<ManifestSearchResult | null>(null);
   const [routingQuote, setRoutingQuote] = useState<{ trackingCode: string; routingReference: string; origin: string; destination: string; weightKg: number; rateUsdPerKg: number; amountExpectedUsd: number; readiness: { ready: boolean; code: string | null; message: string | null }; resume: { state: string; resumable: boolean; paymentRequestId?: string } | null } | null>(null);
   const [parcelAction, setParcelAction] = useState<{ totalPaid: number; paymentSites: string[]; physicallyPresent: boolean; delivered: boolean; fullyPaidAtCooOnly: boolean } | null>(null);
   const [montantPaye, setMontantPaye] = useState("");
@@ -148,6 +159,8 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
     const searchId = ++activeSearchIdRef.current;
     setMessage(null);
     setParcel(null);
+    setStorageSearchResult(null);
+    setManifestSearchResult(null);
     setRoutingQuote(null);
     setParcelAction(null);
     paymentAttemptRef.current = null;
@@ -158,9 +171,45 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
     try {
       const normalizedCode = codeColis.trim().toUpperCase();
       const destinationAgency = profile.agence === "COTONOU" ? sourceAgency : profile.agence;
-      const response = profile.agence === "COTONOU"
-        ? await searchParcel({ destinationCode: sourceAgency, codeColis: normalizedCode })
-        : await searchDestinationParcel(normalizedCode);
+      if (profile.agence !== "COTONOU") {
+        const [storageOutcome, manifestOutcome] = await Promise.allSettled([
+          searchDestinationParcel(normalizedCode),
+          searchAgentManifestControl(normalizedCode)
+        ]);
+        if (searchId !== activeSearchIdRef.current) return;
+
+        if (manifestOutcome.status === "fulfilled") {
+          setManifestSearchResult(manifestOutcome.value.row
+            ? { state: "FOUND", agency: manifestOutcome.value.agency, row: manifestOutcome.value.row }
+            : { state: "NOT_FOUND", agency: manifestOutcome.value.agency, code: normalizedCode });
+        } else {
+          setManifestSearchResult({ state: "ERROR", code: normalizedCode });
+        }
+
+        if (storageOutcome.status === "rejected") {
+          if (storageOutcome.reason instanceof AgentApiError && storageOutcome.reason.code === "PARCEL_NOT_IN_AGENCY_STORAGE") {
+            setStorageSearchResult({ state: "NOT_FOUND", code: normalizedCode });
+          } else {
+            setStorageSearchResult({ state: "ERROR", code: normalizedCode });
+          }
+          return;
+        }
+
+        const foundParcel = parseParcelResponse(storageOutcome.value);
+        if (
+          foundParcel.codeColis.toUpperCase() !== normalizedCode ||
+          foundParcel.destinationCode !== profile.agence
+        ) {
+          throw new Error("La réponse de recherche ne correspond pas au colis demandé.");
+        }
+        setStorageSearchResult({ state: "FOUND", parcel: foundParcel });
+        setParcel(foundParcel);
+        setParcelAction(await loadParcelAction(foundParcel.codeColis));
+        setMontantPaye(String(foundParcel.soldeRestant));
+        return;
+      }
+
+      const response = await searchParcel({ destinationCode: sourceAgency, codeColis: normalizedCode });
       const foundParcel = parseParcelResponse(response);
       if (searchId !== activeSearchIdRef.current) return;
       if (
@@ -170,10 +219,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
         throw new Error("La réponse de recherche ne correspond pas au colis demandé.");
       }
       setParcel(foundParcel);
-      if (profile.agence !== "COTONOU") {
-        setParcelAction(await loadParcelAction(foundParcel.codeColis));
-      }
-      setMontantPaye(profile.agence === "COTONOU" ? "" : String(foundParcel.soldeRestant));
+      setMontantPaye("");
     } catch (error) {
       if (searchId === activeSearchIdRef.current) {
         setMessage({
@@ -454,6 +500,44 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
             </p>
           ) : null}
 
+          {profile.agence !== "COTONOU" && (storageSearchResult || manifestSearchResult) ? (
+            <section className="grid gap-6 lg:grid-cols-2" aria-label="Résultats de la recherche colis">
+              <GlassPanel className="p-5 sm:p-6">
+                <h2 className="text-xl font-semibold">Encaissement / Stockage V2</h2>
+                <p className="mt-2 text-sm text-muted-foreground">Source opérationnelle pour l’admissibilité à l’encaissement.</p>
+                <div className="mt-5 overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="text-muted-foreground"><tr><th>Code</th><th>Présent</th><th>Encaissement</th><th>Poids</th></tr></thead>
+                    <tbody><tr className="border-t border-white/10">
+                      <td className="py-3">{storageSearchResult?.state === "FOUND" ? storageSearchResult.parcel.codeColis : storageSearchResult?.code ?? codeColis.trim().toUpperCase()}</td>
+                      <td>{storageSearchResult?.state === "FOUND" ? "OUI" : storageSearchResult?.state === "NOT_FOUND" ? "NON" : "INDISPONIBLE"}</td>
+                      <td>{storageSearchResult?.state === "FOUND" ? "ADMISSIBILITÉ À VÉRIFIER" : storageSearchResult?.state === "NOT_FOUND" ? "NON ENCAISSABLE ACTUELLEMENT" : "INDISPONIBLE"}</td>
+                      <td>{storageSearchResult?.state === "FOUND" ? formatWeight(storageSearchResult.parcel.poidsKg) : "—"}</td>
+                    </tr></tbody>
+                  </table>
+                </div>
+                {storageSearchResult?.state === "NOT_FOUND" ? <p className="mt-4 rounded-md border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">Ce colis n’est pas présent dans le Stockage de votre agence et n’est pas encaissable actuellement.</p> : null}
+              </GlassPanel>
+
+              <GlassPanel className="p-5 sm:p-6">
+                <h2 className="text-xl font-semibold">Vérification MANIFESTE PUBLIC</h2>
+                <p className="mt-2 text-sm text-muted-foreground">Information de contrôle uniquement — ne décide pas de l’encaissement.</p>
+                <div className="mt-5 overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="text-muted-foreground"><tr><th>Date</th><th>Code</th><th>Destination</th><th>Poids</th><th>Statut</th></tr></thead>
+                    <tbody><tr className="border-t border-white/10">
+                      <td className="py-3">{manifestSearchResult?.state === "FOUND" ? manifestSearchResult.row.date || "—" : "—"}</td>
+                      <td>{manifestSearchResult?.state === "FOUND" ? manifestSearchResult.row.trackingCode : manifestSearchResult?.code ?? codeColis.trim().toUpperCase()}</td>
+                      <td>{manifestSearchResult?.state === "FOUND" ? manifestSearchResult.row.sourceSite : manifestSearchResult?.state === "NOT_FOUND" ? manifestSearchResult.agency : profile.agence}</td>
+                      <td>{manifestSearchResult?.state === "FOUND" ? formatWeight(manifestSearchResult.row.weightKg) : "—"}</td>
+                      <td>{manifestSearchResult?.state === "FOUND" ? manifestStatusLabel(manifestSearchResult.row.status) : manifestSearchResult?.state === "NOT_FOUND" ? "INTROUVABLE" : "INDISPONIBLE"}</td>
+                    </tr></tbody>
+                  </table>
+                </div>
+              </GlassPanel>
+            </section>
+          ) : null}
+
           {parcel ? (
             <GlassPanel className="p-5 sm:p-6" glow="growth">
               <h2 className="text-xl font-semibold">
@@ -556,7 +640,6 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
             </GlassPanel>
           ) : null}
         </div>
-        {profile.agence !== "COTONOU" ? <AgentManifestControl /> : null}
       </Container>
     </main>
   );

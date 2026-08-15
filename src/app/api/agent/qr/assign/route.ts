@@ -44,11 +44,7 @@ export async function POST(request: Request) {
 
     const parsed = commandSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return fail("INVALID_QR_COMMAND", 400);
-    if (
-      actor.role === "AGENT" &&
-      actor.site !== "COO" &&
-      actor.site !== parsed.data.agency
-    ) {
+    if (actor.role === "AGENT" && actor.site !== "COO") {
       return fail("QR_AGENCY_ACCESS_DENIED", 403);
     }
 

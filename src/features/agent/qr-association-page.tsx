@@ -112,6 +112,21 @@ export function QrAssociationPage() {
 
   const agencyLocked = profile?.site !== "COO";
 
+  if (profile && profile.site !== "COO") {
+    return (
+      <main className="grid min-h-screen place-items-center bg-ebe-night px-4 text-white">
+        <GlassPanel className="w-full max-w-lg p-6 text-center">
+          <ShieldCheck className="mx-auto h-8 w-8 text-amber-200" />
+          <h1 className="mt-4 text-xl font-semibold">Opération réservée à COO</h1>
+          <p className="mt-3 text-sm text-muted-foreground">
+            L’association initiale d’un QR est une opération d’origine disponible uniquement à Cotonou.
+          </p>
+          <Button asChild variant="outline" className="mt-6"><Link href="/agent">Retour à l’Espace Agent</Link></Button>
+        </GlassPanel>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-ebe-night py-8 text-white sm:py-12">
       <Container className="max-w-3xl">

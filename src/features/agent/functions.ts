@@ -17,6 +17,7 @@ const ERROR_MESSAGES = {
   COMPTE_DESACTIVE: "Votre accès Agent a été désactivé.",
   ACCES_REFUSE: "Accès Agent refusé.",
   COLIS_INTROUVABLE: "Aucun colis ne correspond à ce code pour la destination sélectionnée.",
+  PARCEL_NOT_IN_AGENCY_STORAGE: "Ce colis n’est pas présent dans le Stockage de votre agence.",
   DESTINATION_INVALIDE: "Destination invalide. Choisissez Kinshasa, Lubumbashi ou Kolwezi.",
   AGENCE_INVALIDE: "Agence invalide.",
   MONTANT_INVALIDE: "Le montant payé est invalide.",
@@ -130,12 +131,45 @@ export async function searchDestinationParcel(trackingCode: string) {
     {}
   );
   const payload = await response.json().catch(() => null) as
-    | { parcel?: Record<string, unknown>; message?: string }
+    | { parcel?: Record<string, unknown>; message?: string; code?: string }
     | null;
   if (!response.ok || !payload?.parcel) {
-    throw new Error(payload?.message ?? "Recherche Encaissements indisponible.");
+    const code = payload?.code && payload.code in ERROR_MESSAGES
+      ? payload.code as AgentApiErrorCode
+      : null;
+    throw new AgentApiError(
+      code ? ERROR_MESSAGES[code] : payload?.message ?? "Recherche Encaissements indisponible.",
+      code
+    );
   }
   return payload.parcel;
+}
+
+export type AgentManifestSearchRow = {
+  date: string;
+  trackingCode: string;
+  weightKg: number;
+  status: string;
+  sourceSite: string;
+};
+
+export async function searchAgentManifestControl(trackingCode: string) {
+  const params = new URLSearchParams({ code: trackingCode, page: "1", pageSize: "25" });
+  const response = await authenticatedRead(
+    getSupabaseBrowserClient().auth,
+    `/api/agent/manifest?${params}`,
+    {}
+  );
+  const payload = await response.json().catch(() => null) as
+    | { agency?: string; rows?: AgentManifestSearchRow[] }
+    | null;
+  if (!response.ok || !payload?.agency || !Array.isArray(payload.rows)) {
+    throw new Error("Vérification du MANIFESTE PUBLIC indisponible.");
+  }
+  const exact = payload.rows.find(
+    (row) => row.trackingCode.trim().toUpperCase() === trackingCode.trim().toUpperCase()
+  );
+  return { agency: payload.agency, row: exact ?? null };
 }
 
 export function savePayment(payload: {
