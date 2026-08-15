@@ -14,6 +14,31 @@ type BarcodeDetectorConstructor = {
   getSupportedFormats?: () => Promise<string[]>;
 };
 
+async function withCameraTimeout<T>(promise: Promise<T>, code: string, delayMs: number) {
+  let timeoutId: number | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeoutId = window.setTimeout(() => reject(new Error(code)), delayMs);
+      })
+    ]);
+  } finally {
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+  }
+}
+
+async function playCameraStream(video: HTMLVideoElement, stream: MediaStream) {
+  video.muted = true;
+  video.autoplay = true;
+  video.setAttribute("muted", "true");
+  video.setAttribute("autoplay", "true");
+  video.setAttribute("playsinline", "true");
+  video.srcObject = stream;
+
+  await withCameraTimeout(video.play(), "CAMERA_START_TIMEOUT", 8_000);
+}
+
 export type PublicQrApiResponse =
   | { state: "INVALID" | "UNKNOWN" | "UNAVAILABLE" }
   | { state: "UNASSIGNED" | "REVOKED" | "TRACKING_NOT_FOUND"; qrId: string }
@@ -150,17 +175,28 @@ export function PublicQrScanner({
       const video = videoRef.current;
       if (!video) throw new Error("CAMERA_UNAVAILABLE");
 
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const streamRequest = navigator.mediaDevices.getUserMedia({
         audio: false,
         video: { facingMode: { ideal: "environment" } }
       });
+      void streamRequest
+        .then((lateStream) => {
+          if (sessionRef.current !== session) {
+            lateStream.getTracks().forEach((track) => track.stop());
+          }
+        })
+        .catch(() => undefined);
+      const stream = await withCameraTimeout(
+        streamRequest,
+        "CAMERA_PERMISSION_TIMEOUT",
+        12_000
+      );
       if (sessionRef.current !== session) {
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
       streamRef.current = stream;
-      video.srcObject = stream;
-      await video.play();
+      await playCameraStream(video, stream);
       setIsStarting(false);
 
       const Detector = (
@@ -184,15 +220,11 @@ export function PublicQrScanner({
         if (result) acceptDecodedValue(result.getText());
       });
     } catch (cause) {
+      sessionRef.current += 1;
       stopCamera();
       setIsStarting(false);
-      const denied =
-        cause instanceof DOMException &&
-        (cause.name === "NotAllowedError" || cause.name === "SecurityError");
       setError(
-        denied
-          ? "Accès à la caméra refusé. Autorisez la caméra ou utilisez la recherche manuelle."
-          : "Caméra indisponible. Utilisez la recherche manuelle pour le moment."
+        "Impossible d’ouvrir la caméra. Vérifiez l’autorisation caméra de votre navigateur puis réessayez."
       );
     }
   }, [acceptDecodedValue, isOpen, scanWithNativeDetector, stopCamera]);

@@ -17,11 +17,17 @@ test("la caméra arrière, le refus, la fermeture et l'arrêt des pistes sont g�
   assert.match(scanner, /navigator\.mediaDevices\?\.getUserMedia/);
   assert.match(scanner, /import\("@zxing\/browser"\)/);
   assert.match(scanner, /facingMode: \{ ideal: "environment" \}/);
-  assert.match(scanner, /NotAllowedError/);
+  assert.match(scanner, /video\.setAttribute\("playsinline", "true"\)/);
+  assert.match(scanner, /video\.setAttribute\("muted", "true"\)/);
+  assert.match(scanner, /video\.setAttribute\("autoplay", "true"\)/);
+  assert.match(scanner, /CAMERA_START_TIMEOUT/);
+  assert.match(scanner, /CAMERA_PERMISSION_TIMEOUT/);
+  assert.match(scanner, /lateStream\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
   assert.match(scanner, /track\.stop\(\)/);
   assert.match(scanner, /sessionRef\.current !== session/);
   assert.match(scanner, /aria-label="Fermer le scanner"/);
   assert.match(scanner, /handledRef\.current/);
+  assert.match(scanner, /Impossible d’ouvrir la caméra\. Vérifiez l’autorisation caméra de votre navigateur puis réessayez\./);
 });
 
 test("le scan appelle seulement le résolveur public sans workflow métier", () => {
