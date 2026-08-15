@@ -29,14 +29,74 @@ async function withCameraTimeout<T>(promise: Promise<T>, code: string, delayMs: 
 }
 
 async function playCameraStream(video: HTMLVideoElement, stream: MediaStream) {
+  video.srcObject = stream;
   video.muted = true;
   video.autoplay = true;
   video.setAttribute("muted", "true");
   video.setAttribute("autoplay", "true");
   video.setAttribute("playsinline", "true");
-  video.srcObject = stream;
 
+  if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
+    await waitForVideoEvent(video, "loadedmetadata", 6_000);
+  }
   await withCameraTimeout(video.play(), "CAMERA_START_TIMEOUT", 8_000);
+  await waitForUsableVideoFrame(video, stream, 6_000);
+}
+
+function waitForVideoEvent(
+  video: HTMLVideoElement,
+  eventName: "loadedmetadata",
+  delayMs: number
+) {
+  return new Promise<void>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("CAMERA_METADATA_TIMEOUT"));
+    }, delayMs);
+    const onReady = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error("CAMERA_METADATA_ERROR"));
+    };
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      video.removeEventListener(eventName, onReady);
+      video.removeEventListener("error", onError);
+    };
+    video.addEventListener(eventName, onReady, { once: true });
+    video.addEventListener("error", onError, { once: true });
+  });
+}
+
+function waitForUsableVideoFrame(
+  video: HTMLVideoElement,
+  stream: MediaStream,
+  delayMs: number
+) {
+  return new Promise<void>((resolve, reject) => {
+    const deadline = performance.now() + delayMs;
+    const checkFrame = () => {
+      if (
+        video.srcObject === stream &&
+        video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+        !video.paused &&
+        video.videoWidth > 0 &&
+        video.videoHeight > 0
+      ) {
+        resolve();
+        return;
+      }
+      if (performance.now() >= deadline) {
+        reject(new Error("CAMERA_FRAME_TIMEOUT"));
+        return;
+      }
+      requestAnimationFrame(checkFrame);
+    };
+    requestAnimationFrame(checkFrame);
+  });
 }
 
 export type PublicQrApiResponse =
@@ -175,28 +235,40 @@ export function PublicQrScanner({
       const video = videoRef.current;
       if (!video) throw new Error("CAMERA_UNAVAILABLE");
 
-      const streamRequest = navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { facingMode: { ideal: "environment" } }
-      });
-      void streamRequest
-        .then((lateStream) => {
-          if (sessionRef.current !== session) {
-            lateStream.getTracks().forEach((track) => track.stop());
-          }
-        })
-        .catch(() => undefined);
-      const stream = await withCameraTimeout(
-        streamRequest,
-        "CAMERA_PERMISSION_TIMEOUT",
-        12_000
-      );
+      const requestStream = async (videoConstraints: MediaTrackConstraints | true) => {
+        const streamRequest = navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: videoConstraints
+        });
+        void streamRequest
+          .then((lateStream) => {
+            if (sessionRef.current !== session) {
+              lateStream.getTracks().forEach((track) => track.stop());
+            }
+          })
+          .catch(() => undefined);
+        return withCameraTimeout(streamRequest, "CAMERA_PERMISSION_TIMEOUT", 12_000);
+      };
+
+      let stream = await requestStream({ facingMode: { ideal: "environment" } });
       if (sessionRef.current !== session) {
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
       streamRef.current = stream;
-      await playCameraStream(video, stream);
+      try {
+        await playCameraStream(video, stream);
+      } catch {
+        stream.getTracks().forEach((track) => track.stop());
+        if (video.srcObject === stream) video.srcObject = null;
+        stream = await requestStream(true);
+        if (sessionRef.current !== session) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        streamRef.current = stream;
+        await playCameraStream(video, stream);
+      }
       setIsStarting(false);
 
       const Detector = (

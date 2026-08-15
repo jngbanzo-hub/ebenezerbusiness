@@ -22,6 +22,13 @@ test("la caméra arrière, le refus, la fermeture et l'arrêt des pistes sont g�
   assert.match(scanner, /video\.setAttribute\("autoplay", "true"\)/);
   assert.match(scanner, /CAMERA_START_TIMEOUT/);
   assert.match(scanner, /CAMERA_PERMISSION_TIMEOUT/);
+  assert.match(scanner, /CAMERA_METADATA_TIMEOUT/);
+  assert.match(scanner, /CAMERA_FRAME_TIMEOUT/);
+  assert.match(scanner, /video\.readyState >= HTMLMediaElement\.HAVE_CURRENT_DATA/);
+  assert.match(scanner, /video\.videoWidth > 0/);
+  assert.match(scanner, /video\.videoHeight > 0/);
+  assert.match(scanner, /video\.srcObject === stream/);
+  assert.match(scanner, /requestStream\(true\)/);
   assert.match(scanner, /lateStream\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
   assert.match(scanner, /track\.stop\(\)/);
   assert.match(scanner, /sessionRef\.current !== session/);
