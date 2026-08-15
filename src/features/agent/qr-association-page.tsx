@@ -7,6 +7,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { Container, GlassPanel } from "@/components/design-system";
 import { Button } from "@/components/ui/button";
 import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
+import { QrBatchAssociation } from "@/features/agent/qr-batch-association";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import {
   createQrAssignmentRequestId,
@@ -30,6 +31,7 @@ export function QrAssociationPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState<QrCandidate | null>(null);
+  const [mode, setMode] = useState<"simple" | "batch">("simple");
 
   useEffect(() => {
     void (async () => {
@@ -139,6 +141,12 @@ export function QrAssociationPage() {
         </header>
 
         <GlassPanel className="mt-7 p-6" glow="growth">
+          <nav className="mb-6 grid grid-cols-2 gap-3" aria-label="Mode d’association QR">
+            <Button type="button" variant={mode === "simple" ? "growth" : "outline"} onClick={() => setMode("simple")} aria-pressed={mode === "simple"}>Mode simple</Button>
+            <Button type="button" variant={mode === "batch" ? "growth" : "outline"} onClick={() => setMode("batch")} aria-pressed={mode === "batch"}>Association en série</Button>
+          </nav>
+
+          {mode === "simple" ? <>
           <form onSubmit={handlePrevalidate} className="space-y-5">
             <label className="block text-sm">Numéro QR visible
               <input value={displayNumber} onChange={(e) => { setDisplayNumber(e.target.value.replace(/^0+/, "")); invalidate(); }} inputMode="numeric" placeholder="013" className="mt-2 h-11 w-full rounded-md border border-white/15 bg-ebe-night px-3 text-white placeholder:text-muted-foreground disabled:opacity-70" disabled={busy}/>
@@ -183,6 +191,7 @@ export function QrAssociationPage() {
               <p className="mt-3">QR {String(success.displayNumber).padStart(3, "0")} — {success.agency} + {success.trackingCode}</p>
             </section>
           )}
+          </> : <QrBatchAssociation />}
         </GlassPanel>
       </Container>
     </main>
