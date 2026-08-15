@@ -12,6 +12,7 @@ import {
   LoaderCircle,
   LogOut,
   ReceiptText,
+  ScanLine,
   Scale,
   ShieldX,
   UserRound
@@ -43,6 +44,15 @@ const AGENCY_LABELS: Record<Agency, string> = {
 };
 
 const OPERATIONS = [
+  {
+    key: "qr-association",
+    title: "Associer un QR",
+    description: "Associer un numéro QR visible à l’identité certifiée d’un colis",
+    icon: ScanLine,
+    available: true,
+    href: "/agent/qr-association",
+    actionLabel: "OUVRIR"
+  },
   {
     key: "statistiques-reception",
     title: "Statistiques de Réception",
