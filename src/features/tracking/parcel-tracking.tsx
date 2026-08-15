@@ -21,6 +21,10 @@ import {
   trackingSites,
   type TrackingFormValues
 } from "@/features/tracking/tracking-validation";
+import {
+  PublicQrScanner,
+  type PublicQrApiResponse
+} from "@/features/tracking/public-qr-scanner";
 import { cn } from "@/lib/utils";
 
 type TrackingApiResponse =
@@ -99,6 +103,25 @@ export function ParcelTracking() {
           "Le service de suivi est temporairement indisponible. Veuillez réessayer ou contacter notre service client."
       });
     }
+  }
+
+  function onQrResolved(resolution: PublicQrApiResponse) {
+    if (resolution.state === "ASSIGNED") {
+      setTrackingFeedback(null);
+      setResult(resolution.result);
+      return;
+    }
+
+    setResult(null);
+    const messages: Record<Exclude<PublicQrApiResponse["state"], "ASSIGNED">, TrackingFeedback> = {
+      UNASSIGNED: { tone: "info", message: "QR Eben Ezer Business valide — association au colis en attente." },
+      REVOKED: { tone: "error", message: "Ce QR Eben Ezer Business n’est pas utilisable." },
+      UNKNOWN: { tone: "error", message: "Ce QR ne correspond pas à un QR Eben Ezer Business utilisable." },
+      INVALID: { tone: "error", message: "QR Eben Ezer Business non reconnu." },
+      TRACKING_NOT_FOUND: { tone: "error", message: "Aucun colis trouvé avec ce QR. Contactez notre service client." },
+      UNAVAILABLE: { tone: "error", message: "Le service de suivi est temporairement indisponible. Veuillez réessayer." }
+    };
+    setTrackingFeedback(messages[resolution.state]);
   }
 
   return (
@@ -202,6 +225,16 @@ export function ParcelTracking() {
             Choisissez votre site, puis saisissez simplement votre Tracking ID : MR00126, JL00126 ou JN00126.
           </p>
         </form>
+
+        <div className="my-5 flex items-center gap-4" aria-hidden="true">
+          <span className="h-px flex-1 bg-white/10" />
+          <span className="text-xs font-semibold uppercase text-muted-foreground">ou</span>
+          <span className="h-px flex-1 bg-white/10" />
+        </div>
+        <div className="flex flex-col items-center gap-2 text-center">
+          <PublicQrScanner onResolved={onQrResolved} />
+          <p className="text-xs text-muted-foreground">Scannez le QR officiel apposé sur votre colis.</p>
+        </div>
 
         <TrackingFeedbackMessage
           message={formErrorMessage ?? trackingFeedback?.message}

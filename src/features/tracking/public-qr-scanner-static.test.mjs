@@ -1,0 +1,40 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const scanner = readFileSync(new URL("./public-qr-scanner.tsx", import.meta.url), "utf8");
+const tracking = readFileSync(new URL("./parcel-tracking.tsx", import.meta.url), "utf8");
+
+test("le scanner accepte uniquement le QR canonique ou son URL officielle", () => {
+  assert.match(scanner, /\^EEBQR\[0-9\]\{6,\}\$/);
+  assert.match(scanner, /url\.hostname !== "www\.ebenezerbusiness\.com"/);
+  assert.ok(scanner.includes("url.pathname.match(/^\\/q\\/(EEBQR[0-9]{6,})\\/?$/)"));
+  assert.match(scanner, /url\.search !== ""/);
+  assert.match(scanner, /url\.hash !== ""/);
+});
+
+test("la caméra arrière, le refus, la fermeture et l'arrêt des pistes sont gérés", () => {
+  assert.match(scanner, /navigator\.mediaDevices\?\.getUserMedia/);
+  assert.match(scanner, /import\("@zxing\/browser"\)/);
+  assert.match(scanner, /facingMode: \{ ideal: "environment" \}/);
+  assert.match(scanner, /NotAllowedError/);
+  assert.match(scanner, /track\.stop\(\)/);
+  assert.match(scanner, /sessionRef\.current !== session/);
+  assert.match(scanner, /aria-label="Fermer le scanner"/);
+  assert.match(scanner, /handledRef\.current/);
+});
+
+test("le scan appelle seulement le résolveur public sans workflow métier", () => {
+  assert.match(scanner, /fetch\(`\/api\/qr\/\$\{encodeURIComponent\(qrId\)\}`/);
+  assert.match(scanner, /cache: "no-store"/);
+  assert.doesNotMatch(`${scanner}\n${tracking}`, /api\/agent|Encaissement|savePayment|Stockage|MANIFESTE|EXPÉDITION/);
+});
+
+test("la recherche manuelle reste présente et ASSIGNED réutilise TrackingResultCard", () => {
+  assert.match(tracking, /onSubmit=\{handleSubmit\(onSubmit\)\}/);
+  assert.match(tracking, /trackingSite/);
+  assert.match(tracking, /trackingCode/);
+  assert.match(tracking, /<TrackingResultCard result=\{result\}/);
+  assert.match(tracking, /resolution\.state === "ASSIGNED"/);
+  assert.match(tracking, /QR Eben Ezer Business valide — association au colis en attente\./);
+});
