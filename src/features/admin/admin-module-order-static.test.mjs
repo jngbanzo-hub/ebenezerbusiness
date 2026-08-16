@@ -6,6 +6,7 @@ const source = readFileSync(new URL("./admin-workspace.tsx", import.meta.url), "
 const moduleSection = source.slice(source.indexOf("const ADMIN_MODULES"), source.indexOf("] as const;", source.indexOf("const ADMIN_MODULES")));
 const expected = [
   "Rapport synthèse du jour",
+  "Recherche globale colis",
   "Encaissements",
   "Dépenses",
   "Caisse",
@@ -24,7 +25,7 @@ test("les cartes Admin suivent exactement l’ordre UX demandé", () => {
 });
 
 test("les routes restent inchangées et État du système suit les cartes", () => {
-  for (const route of ["rapport-journalier", "encaissements", "depenses", "caisse", "stockages", "transferts", "statistiques-expediteurs", "statistiques-manifeste", "statistiques-expeditions", "suivi-expeditions", "qr-associations"]) {
+  for (const route of ["rapport-journalier", "recherche-globale-colis", "encaissements", "depenses", "caisse", "stockages", "transferts", "statistiques-expediteurs", "statistiques-manifeste", "statistiques-expeditions", "suivi-expeditions", "qr-associations"]) {
     assert.match(moduleSection, new RegExp(`/admin/${route}`));
   }
   assert.match(source, /<AdminModuleGrid \/><AdminSystemStatus/);
