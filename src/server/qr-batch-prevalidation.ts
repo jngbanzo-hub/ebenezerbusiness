@@ -138,20 +138,25 @@ const defaultDependencies: QrBatchPrevalidationDependencies = {
   findActiveAssignment
 };
 
-async function resolveQr(displayNumber: number, bearerToken: string): Promise<ResolvedQr | null> {
+async function resolveQr(displayNumber: number, _bearerToken: string): Promise<ResolvedQr | null> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
-  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim();
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   if (!url || !key) throw new Error("QR_SERVICE_UNAVAILABLE");
   const client = createClient(url, key, {
-    auth: { autoRefreshToken: false, persistSession: false },
-    global: { headers: { Authorization: `Bearer ${bearerToken}` } }
+    auth: { autoRefreshToken: false, persistSession: false }
   }).schema("public");
-  const { data, error } = await client.rpc("resolve_qr_display_number", {
-    p_display_number: displayNumber
+  const { data, error } = await client.rpc("read_qr_manifest_registry_server", {
+    p_display_numbers: [displayNumber]
   });
-  if (error) throw new Error("QR_SERVICE_UNAVAILABLE");
-  if (!data || data.status === "UNKNOWN") return null;
-  return data as ResolvedQr;
+  if (error || !data || typeof data !== "object") throw new Error("QR_SERVICE_UNAVAILABLE");
+  const row = Array.isArray(data.registry) ? data.registry[0] : undefined;
+  if (!row) return null;
+  return {
+    qrId: String(row.qrId),
+    displayNumber: Number(row.displayNumber),
+    status: String(row.status) as ResolvedQr["status"],
+    version: Number(row.version)
+  };
 }
 
 async function findActiveAssignment(agency: QrAgency, trackingCode: string) {
@@ -161,13 +166,13 @@ async function findActiveAssignment(agency: QrAgency, trackingCode: string) {
   const client = createClient(url, key, {
     auth: { autoRefreshToken: false, persistSession: false }
   }).schema("public");
-  const { data, error } = await client
-    .from("qr_labels")
-    .select("qr_id")
-    .eq("agency", agency)
-    .eq("tracking_code", trackingCode)
-    .eq("status", "ASSIGNED")
-    .maybeSingle();
-  if (error) throw new Error("QR_SERVICE_UNAVAILABLE");
-  return data?.qr_id ?? null;
+  const { data, error } = await client.rpc("read_qr_manifest_registry_server", {
+    p_display_numbers: []
+  });
+  if (error || !data || typeof data !== "object") throw new Error("QR_SERVICE_UNAVAILABLE");
+  const assignments = Array.isArray(data.activeAssignments) ? data.activeAssignments : [];
+  const match = assignments.find((row: Record<string, unknown>) =>
+    String(row.agency) === agency && String(row.trackingCode) === trackingCode
+  );
+  return match ? String(match.qrId) : null;
 }

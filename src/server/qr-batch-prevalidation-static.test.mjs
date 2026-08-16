@@ -15,6 +15,7 @@ test("couvre les refus et doublons requis ligne par ligne", () => {
 test("certifie le MANIFESTE et recherche les collisions sans mutation", () => {
   assert.match(service, /dependencies\.certify/);
   assert.match(service, /findActiveAssignment/);
-  assert.match(service, /\.eq\("status", "ASSIGNED"\)/);
+  assert.match(service, /rpc\("read_qr_manifest_registry_server"/);
+  assert.doesNotMatch(service, /\.from\("qr_labels"\)/);
   assert.doesNotMatch(service, /\.update\(|\.insert\(|\.delete\(|assign_qr_label_server/);
 });
