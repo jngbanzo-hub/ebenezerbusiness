@@ -15,7 +15,7 @@ export type AdminGlobalParcelSearchResult = {
   code: string;
   found: boolean;
   manifest: SourceResult<{ agency: string; date: string; weightKg: number | null; status: string; rowNumber: number }>;
-  storage: SourceResult<{ agency: string; weightKg: number; status: string; createdAt: string; updatedAt: string; lastEvent: { type: string; occurredAt: string } | null }>;
+  storage: SourceResult<{ agency: string; weightKg: number; status: string; createdAt: string; updatedAt: string; lastEvent: { type: string; occurredAt: string } | null; events: Array<{ type: string; occurredAt: string }> }>;
   payments: SourceResult<AdminPayment>;
   qr: SourceResult<{ qrId: string; displayNumber: number; status: string; version: number; agency: string | null; trackingCode: string | null; assignedAt: string | null; audit: Array<{ action: string; occurredAt: string }> }>;
 };
@@ -68,8 +68,8 @@ async function searchStorage(code: string) {
   ]);
   if (parcelError || eventError) throw new Error("STORAGE_UNAVAILABLE");
   return (parcels ?? []).map((parcel) => {
-    const event = (events ?? []).find((candidate) => candidate.agency === parcel.agency);
-    return { agency: String(parcel.agency), weightKg: Number(parcel.canonical_weight_kg), status: String(parcel.delivery_status), createdAt: String(parcel.created_at), updatedAt: String(parcel.updated_at), lastEvent: event ? { type: String(event.event_type), occurredAt: String(event.occurred_at) } : null };
+    const parcelEvents = (events ?? []).filter((candidate) => candidate.agency === parcel.agency).map((event) => ({ type: String(event.event_type), occurredAt: String(event.occurred_at) }));
+    return { agency: String(parcel.agency), weightKg: Number(parcel.canonical_weight_kg), status: String(parcel.delivery_status), createdAt: String(parcel.created_at), updatedAt: String(parcel.updated_at), lastEvent: parcelEvents[0] ?? null, events: parcelEvents };
   });
 }
 
