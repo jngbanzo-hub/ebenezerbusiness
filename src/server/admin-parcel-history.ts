@@ -2,12 +2,15 @@ import "server-only";
 
 import type { AdminGlobalParcelSearchResult } from "@/server/admin-global-parcel-search";
 import { searchAdminParcelGlobally } from "@/server/admin-global-parcel-search";
+import { determineParcelConsistency } from "@/server/admin-parcel-consistency";
 
 export type ParcelHistoryEvent = { id: string; occurredAt: string | null; type: string; source: "MANIFESTE" | "STOCKAGE V2" | "ENCAISSEMENTS" | "QR"; agency: string; detail: string; status: string };
 export type AdminParcelHistory = {
   code: string; found: boolean;
   current: { destination: string | null; weightKg: number | null; status: string | null; qr: string | null; payment: string | null; storage: string | null; lastActivity: string | null };
   datedEvents: ParcelHistoryEvent[]; undatedEvents: ParcelHistoryEvent[];
+  consistency: "COHERENT" | "MULTIPLE_MANIFEST_MATCHES" | "INCONSISTENT";
+  manifestMatches: { count: number; details: string[] };
   inconsistencies: string[];
   sources: Record<"manifest" | "storage" | "payments" | "qr", { state: "FOUND" | "ABSENT" | "UNAVAILABLE_TEMPORARILY" }>;
 };
@@ -31,13 +34,14 @@ export function buildAdminParcelHistory(result: AdminGlobalParcelSearchResult): 
 
   const datedEvents = events.filter((event) => event.occurredAt).sort((a, b) => String(a.occurredAt).localeCompare(String(b.occurredAt)));
   const undatedEvents = events.filter((event) => !event.occurredAt);
-  const qr = result.qr.matches[0]; const storage = result.storage.matches[0]; const payment = newestPayment(result.payments.matches); const manifest = newestManifest(result.manifest.matches);
-  const agencies = new Set([...result.manifest.matches.map((item) => item.agency), ...result.storage.matches.map((item) => item.agency), ...result.payments.matches.map((item) => item.agenceEncaissement), ...result.qr.matches.map((item) => item.agency).filter(Boolean) as string[]]);
-  const inconsistencies = agencies.size > 1 ? [`Destinations/agences observées : ${Array.from(agencies).join(", ")}.`] : [];
+  const qr = result.qr.matches[0]; const storage = result.storage.matches[0]; const payment = newestPayment(result.payments.matches);
+  const manifestAgencies = new Set(result.manifest.matches.map((item) => item.agency));
+  const manifest = manifestAgencies.size === 1 ? newestManifest(result.manifest.matches) : undefined;
+  const consistency = determineParcelConsistency({ manifest: result.manifest.matches, qr: result.qr.matches, storage: result.storage.matches });
   return {
     code: result.code, found: result.found,
     current: { destination: qr?.agency ?? manifest?.agency ?? storage?.agency ?? null, weightKg: manifest?.weightKg ?? storage?.weightKg ?? null, status: manifest?.status ?? storage?.status ?? null, qr: qr ? String(qr.displayNumber).padStart(3, "0") : null, payment: payment?.statutPaiement ?? null, storage: storage?.status ?? null, lastActivity: datedEvents.at(-1)?.occurredAt ?? null },
-    datedEvents, undatedEvents, inconsistencies,
+    datedEvents, undatedEvents, consistency: consistency.state, manifestMatches: { count: consistency.manifestMatchCount, details: consistency.manifestDetails }, inconsistencies: consistency.inconsistencies,
     sources: { manifest: { state: result.manifest.state }, storage: { state: result.storage.state }, payments: { state: result.payments.state }, qr: { state: result.qr.state } }
   };
 }
