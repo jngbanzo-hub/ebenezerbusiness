@@ -34,7 +34,11 @@ test("la caméra arrière, le refus, la fermeture et l'arrêt des pistes sont g�
   assert.match(scanner, /sessionRef\.current !== session/);
   assert.match(scanner, /aria-label="Fermer le scanner"/);
   assert.match(scanner, /handledRef\.current/);
-  assert.match(scanner, /Impossible d’ouvrir la caméra\. Vérifiez l’autorisation caméra de votre navigateur puis réessayez\./);
+  assert.match(scanner, /Accès à la caméra refusé\. Autorisez la caméra dans les réglages de votre navigateur puis réessayez\./);
+  assert.match(scanner, /Aucune caméra accessible n’a été détectée\. Utilisez la recherche manuelle\./);
+  assert.match(scanner, /Impossible d’accéder à la caméra\. Vérifiez les autorisations de votre navigateur puis réessayez\./);
+  assert.match(scanner, /Réessayer la caméra/);
+  assert.match(scanner, /startLockRef\.current/);
 });
 
 test("le scan appelle seulement le résolveur public sans workflow métier", () => {

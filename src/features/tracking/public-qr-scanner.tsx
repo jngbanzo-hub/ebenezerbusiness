@@ -28,6 +28,22 @@ async function withCameraTimeout<T>(promise: Promise<T>, code: string, delayMs: 
   }
 }
 
+export function publicCameraErrorMessage(cause: unknown) {
+  if (
+    cause instanceof DOMException &&
+    (cause.name === "NotAllowedError" || cause.name === "SecurityError")
+  ) {
+    return "Accès à la caméra refusé. Autorisez la caméra dans les réglages de votre navigateur puis réessayez.";
+  }
+  if (
+    cause instanceof DOMException &&
+    (cause.name === "NotFoundError" || cause.name === "DevicesNotFoundError")
+  ) {
+    return "Aucune caméra accessible n’a été détectée. Utilisez la recherche manuelle.";
+  }
+  return "Impossible d’accéder à la caméra. Vérifiez les autorisations de votre navigateur puis réessayez.";
+}
+
 async function playCameraStream(video: HTMLVideoElement, stream: MediaStream) {
   video.srcObject = stream;
   video.muted = true;
@@ -140,6 +156,7 @@ export function PublicQrScanner({
   const animationFrameRef = useRef<number | null>(null);
   const handledRef = useRef(false);
   const sessionRef = useRef(0);
+  const startLockRef = useRef(false);
 
   const stopCamera = useCallback(() => {
     if (animationFrameRef.current !== null) {
@@ -221,9 +238,11 @@ export function PublicQrScanner({
   );
 
   const startScanner = useCallback(async () => {
-    if (isOpen) return;
+    if (startLockRef.current || isResolving) return;
+    startLockRef.current = true;
     const session = sessionRef.current + 1;
     sessionRef.current = session;
+    stopCamera();
     setIsOpen(true);
     setIsStarting(true);
     setError("");
@@ -295,11 +314,11 @@ export function PublicQrScanner({
       sessionRef.current += 1;
       stopCamera();
       setIsStarting(false);
-      setError(
-        "Impossible d’ouvrir la caméra. Vérifiez l’autorisation caméra de votre navigateur puis réessayez."
-      );
+      setError(publicCameraErrorMessage(cause));
+    } finally {
+      startLockRef.current = false;
     }
-  }, [acceptDecodedValue, isOpen, scanWithNativeDetector, stopCamera]);
+  }, [acceptDecodedValue, isResolving, scanWithNativeDetector, stopCamera]);
 
   useEffect(() => stopCamera, [stopCamera]);
 
@@ -334,7 +353,8 @@ export function PublicQrScanner({
             </div>
 
             {error ? <p role="alert" className="mt-4 rounded-md border border-red-400/25 bg-red-400/10 p-3 text-sm text-red-200">{error}</p> : null}
-            <div className="mt-5 flex justify-end">
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
+              {error ? <Button type="button" variant="growth" onClick={() => void startScanner()} disabled={isStarting || isResolving}><ScanLine className="h-4 w-4" />Réessayer la caméra</Button> : null}
               <Button type="button" variant="outline" onClick={closeScanner}><Camera className="h-4 w-4" />Retour à la recherche manuelle</Button>
             </div>
           </section>
