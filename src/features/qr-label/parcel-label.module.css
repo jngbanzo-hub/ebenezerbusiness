@@ -1,0 +1,453 @@
+.previewPage {
+  min-height: 100vh;
+  padding: 40px 24px 92px;
+  background:
+    radial-gradient(circle at 10% 10%, rgba(163, 230, 53, 0.12), transparent 26rem),
+    linear-gradient(145deg, #06111f, #0a1c35 58%, #07111f);
+}
+
+.previewPage + :global(aside[aria-label="Informations officielles Eben Ezer Business"]) {
+  display: none;
+}
+
+.previewHeader {
+  width: min(100%, 210mm);
+  margin: 0 auto 22px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.previewKicker {
+  margin: 0 0 5px;
+  color: #a3e635;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.previewTitle {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(1.35rem, 3vw, 2rem);
+  line-height: 1.08;
+}
+
+.previewMeta {
+  margin: 7px 0 0;
+  color: #9fb1c8;
+  font-size: 0.86rem;
+}
+
+.printButton {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 16px;
+  border: 1px solid rgba(163, 230, 53, 0.55);
+  border-radius: 999px;
+  background: #a3e635;
+  color: #071426;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 12px 35px rgba(163, 230, 53, 0.18);
+}
+
+.printButton:hover {
+  background: #b6ef5f;
+}
+
+.previewCanvas {
+  width: min-content;
+  margin: 0 auto;
+  box-shadow: 0 32px 90px rgba(0, 0, 0, 0.48);
+}
+
+.label {
+  box-sizing: border-box;
+  width: 210mm;
+  height: 148mm;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  color: #071b34;
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.header {
+  height: 29mm;
+  flex: 0 0 29mm;
+  display: grid;
+  grid-template-columns: 48mm 1fr 48mm;
+  align-items: center;
+  background: #071b34;
+}
+
+.logoPanel {
+  height: 21mm;
+  margin-left: 7mm;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2.5mm;
+  background: #fff;
+}
+
+.logo {
+  width: 34mm;
+  height: auto;
+  object-fit: contain;
+}
+
+.headerCopy {
+  padding-left: 7mm;
+}
+
+.headerCopy p {
+  margin: 0 0 1mm;
+  color: #a3e635;
+  font-size: 2.55mm;
+  font-weight: 850;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.headerCopy h1 {
+  margin: 0;
+  color: #fff;
+  font-size: 6.6mm;
+  font-weight: 900;
+  line-height: 0.98;
+  letter-spacing: -0.025em;
+  text-transform: uppercase;
+}
+
+.headerCopy span {
+  display: block;
+  margin-top: 1.7mm;
+  color: #c8d5e5;
+  font-size: 2.5mm;
+  font-weight: 650;
+}
+
+.headerIdentity {
+  align-self: stretch;
+  padding-right: 7mm;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.headerIdentity span {
+  color: #9bb0c7;
+  font-size: 2.25mm;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.headerIdentity strong {
+  margin-top: 1.5mm;
+  color: #fff;
+  font-size: 3.6mm;
+  letter-spacing: 0.04em;
+}
+
+.labelBody {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 69mm;
+}
+
+.manualFields {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 0.6mm solid #071b34;
+}
+
+.fullField {
+  height: 25mm;
+  flex: 0 0 25mm;
+}
+
+.twoColumnFields {
+  height: 25mm;
+  flex: 0 0 25mm;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 0.4mm solid #d8e0e9;
+}
+
+.manualField {
+  box-sizing: border-box;
+  padding: 4mm 6mm 3mm;
+  background: #fff;
+}
+
+.twoColumnFields .manualField + .manualField {
+  border-left: 0.4mm solid #d8e0e9;
+}
+
+.fieldLabel {
+  margin: 0;
+  color: #071b34;
+  font-size: 2.8mm;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.writeLine {
+  display: block;
+  height: 10mm;
+  margin-top: 1.7mm;
+  border-bottom: 0.55mm solid #708095;
+}
+
+.contactPanel {
+  flex: 1;
+  min-height: 20mm;
+  padding: 3.5mm 6mm;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4mm;
+  border-top: 0.6mm solid #071b34;
+  background: #071b34;
+}
+
+.contactLabel {
+  margin: 0;
+  color: #a3e635;
+  font-size: 2.2mm;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.contacts {
+  margin: 1.3mm 0 0;
+  color: #ffffff;
+  font-size: 3.05mm;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.contactSite {
+  margin: 0;
+  color: #ffffff;
+  font-size: 2.9mm;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.contactNumbers {
+  flex: 1 1 auto;
+}
+
+.digitalContact {
+  flex: 0 0 auto;
+  padding-left: 5mm;
+  border-left: 0.35mm solid rgba(255, 255, 255, 0.24);
+}
+
+.socialLine {
+  margin-top: 1.8mm;
+  display: flex;
+  align-items: center;
+  gap: 1.5mm;
+  color: #ffffff;
+}
+
+.socialIcon {
+  width: 4.8mm;
+  height: 4.8mm;
+  flex: 0 0 4.8mm;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0.3mm solid rgba(255, 255, 255, 0.58);
+  border-radius: 1.2mm;
+  background: #ffffff;
+  color: #071b34;
+}
+
+.socialIcon svg {
+  width: 3.3mm;
+  height: 3.3mm;
+  fill: currentColor;
+}
+
+.youtubeIcon {
+  border-color: #ff0033;
+  background: #ff0033;
+  color: #ffffff;
+}
+
+.socialName {
+  font-size: 2.45mm;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.qrSection {
+  padding: 3.5mm 6mm 3mm;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #a3e635;
+}
+
+.scanTitle {
+  margin: 0 0 2mm;
+  color: #071b34;
+  font-size: 3.4mm;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.qrFrame {
+  position: relative;
+  box-sizing: border-box;
+  width: 49mm;
+  padding: 2mm;
+  border: 0.7mm solid #071b34;
+  border-radius: 2.5mm;
+  background: #fff;
+}
+
+.qrLogoOverlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12mm;
+  height: 8mm;
+  padding: 0.8mm;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translate(-50%, -50%);
+  border-radius: 1mm;
+  background: #fff;
+}
+
+.qrLogoOverlay img {
+  width: 100%;
+  height: auto;
+}
+
+.qrImage {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.qrIdentity {
+  margin-top: 2mm;
+  display: inline-flex;
+  align-items: center;
+  gap: 2mm;
+  padding: 1.4mm 2.8mm;
+  border-radius: 1.8mm;
+  background: #071b34;
+  color: #fff;
+}
+
+.qrIdentity span {
+  font-size: 2.1mm;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.qrIdentity strong {
+  color: #a3e635;
+  font-size: 5.5mm;
+  line-height: 1;
+}
+
+.qrId {
+  margin: 1.5mm 0 0;
+  color: #071b34;
+  font-size: 2.6mm;
+  font-weight: 850;
+  letter-spacing: 0.055em;
+}
+
+.footer {
+  height: 9mm;
+  flex: 0 0 9mm;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3mm;
+  background: #071b34;
+  color: #fff;
+  font-size: 2.3mm;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.footerDot {
+  width: 1.5mm;
+  height: 1.5mm;
+  border-radius: 50%;
+  background: #a3e635;
+}
+
+@media (max-width: 900px) {
+  .previewPage {
+    padding: 24px 0 80px;
+    overflow-x: auto;
+  }
+
+  .previewHeader {
+    width: 210mm;
+    padding: 0 16px;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@page {
+  size: A5 landscape;
+  margin: 0;
+}
+
+@media print {
+  .previewPage {
+    min-height: 0;
+    padding: 0;
+    background: #fff;
+  }
+
+  .previewHeader {
+    display: none;
+  }
+
+  .previewCanvas {
+    width: 210mm;
+    margin: 0;
+    box-shadow: none;
+  }
+
+  .label {
+    break-after: avoid;
+    break-inside: avoid;
+  }
+}
