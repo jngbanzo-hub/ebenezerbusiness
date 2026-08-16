@@ -53,6 +53,15 @@ test("refuse un identifiant QR non officiel avant tout appel réseau", async () 
   assert.equal(called, false);
 });
 
+test("retourne un message neutre pour un numéro QR inconnu", async () => {
+  await assert.rejects(
+    resolveQrCandidate(activeAuth, 999999, async () =>
+      Response.json({ state: "ERROR", code: "QR_NOT_FOUND" }, { status: 404 })
+    ),
+    /QR inconnu\/non reconnu/
+  );
+});
+
 test("refuse une session expirée avant tout fetch", async () => {
   let called = false;
   await assert.rejects(

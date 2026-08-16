@@ -31,6 +31,17 @@ test("affiche une alerte dédiée avec l’identité actuelle pour un QR ASSIGNE
   assert.match(component, /if \(resolved\.status === "ASSIGNED"\) setUsedQr\(resolved\)/);
 });
 
+test("ajoute une recherche rapide strictement en lecture via le résolveur Agent", () => {
+  assert.match(component, /Rechercher un QR/);
+  assert.match(component, /013 ou EEBQR000013/);
+  assert.match(component, /resolveQrById/);
+  assert.match(component, /resolveQrCandidate/);
+  assert.match(component, /QR LIBRE — AUCUN COLIS ASSOCIÉ/);
+  assert.match(component, /QR RÉVOQUÉ — NON UTILISABLE/);
+  assert.ok(component.indexOf("Rechercher un QR") < component.indexOf("Nouveaux QR détectés dans le MANIFESTE"));
+  assert.doesNotMatch(component.slice(component.indexOf("handleQrSearch"), component.indexOf("if (profile")), /submitQrAssociation|handleConfirm/);
+});
+
 test("utilise seulement les routes serveur avec la session existante", () => {
   assert.match(client, /authenticatedRead/);
   assert.match(client, /\/api\/agent\/qr\/resolve/);

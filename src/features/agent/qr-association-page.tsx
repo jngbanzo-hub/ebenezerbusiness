@@ -13,6 +13,7 @@ import {
   createQrAssignmentRequestId,
   loadManifestQrCandidates,
   messageForQrError,
+  resolveQrById,
   resolveQrCandidate,
   submitQrAssociation,
   type ManifestQrCandidate,
@@ -40,6 +41,10 @@ export function QrAssociationPage() {
   const [manifestError, setManifestError] = useState("");
   const [manifestOpen, setManifestOpen] = useState(false);
   const [batchInput, setBatchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResult, setSearchResult] = useState<QrCandidate | null>(null);
+  const [searchBusy, setSearchBusy] = useState(false);
+  const [searchError, setSearchError] = useState("");
 
   async function refreshManifestCandidates() {
     setManifestBusy(true);
@@ -147,6 +152,31 @@ export function QrAssociationPage() {
     setManifestOpen(false);
   }
 
+  async function handleQrSearch(event: FormEvent) {
+    event.preventDefault();
+    const query = searchQuery.trim().toUpperCase();
+    setSearchResult(null);
+    setSearchError("");
+    if (!query) {
+      setSearchError("Saisissez un numéro QR ou un qrId.");
+      return;
+    }
+    setSearchBusy(true);
+    try {
+      const resolved = /^EEBQR[0-9]{6,}$/.test(query)
+        ? await resolveQrById(getSupabaseBrowserClient().auth, query)
+        : /^[0-9]+$/.test(query) && Number(query) > 0
+          ? await resolveQrCandidate(getSupabaseBrowserClient().auth, Number(query))
+          : null;
+      if (!resolved) setSearchError("QR inconnu/non reconnu.");
+      else setSearchResult(resolved);
+    } catch {
+      setSearchError("QR inconnu/non reconnu.");
+    } finally {
+      setSearchBusy(false);
+    }
+  }
+
   if (profile && profile.site !== "COO") {
     return (
       <main className="grid min-h-screen place-items-center bg-ebe-night px-4 text-white">
@@ -174,6 +204,32 @@ export function QrAssociationPage() {
         </header>
 
         <GlassPanel className="mt-7 p-6" glow="growth">
+          <section className="mb-6 rounded-xl border border-white/15 bg-white/5 p-4" aria-label="Rechercher un QR">
+            <h2 className="text-lg font-semibold">Rechercher un QR</h2>
+            <p className="mt-1 text-xs text-muted-foreground">Consultation du registre QR en lecture seule.</p>
+            <form onSubmit={handleQrSearch} className="mt-4 flex flex-col gap-3 sm:flex-row">
+              <label className="sr-only" htmlFor="qr-quick-search">Numéro visible ou qrId</label>
+              <input id="qr-quick-search" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="013 ou EEBQR000013" className="h-11 flex-1 rounded-md border border-white/15 bg-ebe-night px-3 text-white placeholder:text-muted-foreground" disabled={searchBusy}/>
+              <Button type="submit" variant="outline" disabled={searchBusy}>
+                {searchBusy ? <LoaderCircle className="h-4 w-4 animate-spin"/> : null}Rechercher
+              </Button>
+            </form>
+            {searchError ? <p role="alert" className="mt-4 rounded-md border border-white/10 bg-white/5 p-3 text-sm text-muted-foreground">{searchError}</p> : null}
+            {searchResult ? <section className="mt-4 rounded-lg border border-accent/25 bg-ebe-night/70 p-4" aria-label="Résultat de la recherche QR">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-lg font-bold">QR {String(searchResult.displayNumber).padStart(3, "0")}</h3>
+                <span className="rounded-full border border-white/15 px-3 py-1 text-xs font-bold">{searchResult.status}</span>
+              </div>
+              <p className="mt-1 font-mono text-sm text-muted-foreground">{searchResult.qrId}</p>
+              {searchResult.status === "ASSIGNED" ? <dl className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+                <div><dt className="text-muted-foreground">Destination</dt><dd className="font-semibold">{searchResult.agency ?? "—"}</dd></div>
+                <div><dt className="text-muted-foreground">Code colis</dt><dd className="font-semibold">{searchResult.trackingCode ?? "—"}</dd></div>
+                <div><dt className="text-muted-foreground">Version</dt><dd className="font-semibold">{searchResult.version}</dd></div>
+              </dl> : searchResult.status === "UNASSIGNED"
+                ? <p className="mt-4 font-bold text-accent">QR LIBRE — AUCUN COLIS ASSOCIÉ</p>
+                : <p className="mt-4 font-bold text-amber-200">QR RÉVOQUÉ — NON UTILISABLE</p>}
+            </section> : null}
+          </section>
           <section className="mb-6 rounded-xl border border-accent/25 bg-accent/10 p-4" aria-label="Nouveaux QR détectés dans le MANIFESTE">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
