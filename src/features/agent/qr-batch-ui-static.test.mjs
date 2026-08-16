@@ -19,6 +19,9 @@ test("prévisualise chaque ligne et exige une confirmation explicite", () => {
   }
   assert.match(batch, /Je confirme explicitement/);
   assert.match(batch, /Confirmer les associations valides/);
+  assert.ok(batch.indexOf("Je confirme explicitement") < batch.indexOf("Correspondances QR → colis"));
+  assert.match(batch, /\{readyCount \? <section/);
+  assert.match(batch, /disabled=\{busy \|\| !confirmed\}/);
 });
 
 test("réutilise la mutation officielle avec un requestId par ligne", () => {

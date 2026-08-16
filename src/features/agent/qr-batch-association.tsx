@@ -114,6 +114,13 @@ export function QrBatchAssociation({
 
   return (
     <section className="space-y-5" aria-label="Association QR en série">
+      {readyCount ? <section className="rounded-xl border border-accent/30 bg-accent/10 p-4">
+        <label className="flex items-start gap-3 text-sm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} disabled={busy} className="mt-1"/><span>Je confirme explicitement l’association indépendante des seules lignes PRÊTES.</span></label>
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+          <Button type="button" variant="growth" disabled={busy || !confirmed} onClick={() => void handleConfirm()}><CheckCircle2 className="h-4 w-4"/>Confirmer les associations valides</Button>
+          <Button type="button" variant="outline" disabled={busy} onClick={invalidate}>Annuler</Button>
+        </div>
+      </section> : null}
       <label className="block text-sm">Correspondances QR → colis
         <textarea
           value={input}
@@ -141,13 +148,6 @@ export function QrBatchAssociation({
             </table>
           </div>
           <p className="rounded-md border border-white/10 bg-white/5 p-3 text-sm"><strong>{readyCount}</strong> ligne(s) prête(s) · <strong>{errorCount}</strong> ligne(s) en erreur ou terminée(s)</p>
-          {readyCount ? <section className="rounded-xl border border-accent/30 bg-accent/10 p-4">
-            <label className="flex items-start gap-3 text-sm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} disabled={busy} className="mt-1"/><span>Je confirme explicitement l’association indépendante des seules lignes PRÊTES.</span></label>
-            <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-              <Button type="button" variant="growth" disabled={busy || !confirmed} onClick={() => void handleConfirm()}><CheckCircle2 className="h-4 w-4"/>Confirmer les associations valides</Button>
-              <Button type="button" variant="outline" disabled={busy} onClick={invalidate}>Annuler</Button>
-            </div>
-          </section> : null}
         </>
       ) : null}
     </section>
