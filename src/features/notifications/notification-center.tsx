@@ -10,10 +10,10 @@ import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticate
 
 type Item = { id: string; type: string; title: string; message: string; agency: string; actorName: string; occurredAt: string; read: boolean };
 
-export function NotificationBell({ href }: { href: string }) {
+export function NotificationBell({ href, endpoint="/api/notifications?filter=unread", label="Notifications" }: { href: string; endpoint?: string; label?: string }) {
   const [count, setCount] = useState(0);
-  useEffect(() => { void request("/api/notifications?filter=unread").then((value) => setCount(Number(value.unreadCount ?? 0))).catch(() => undefined); }, []);
-  return <Button asChild type="button" variant="outline"><a href={href} aria-label={`Notifications${count ? `, ${count} non lues` : ""}`}><Bell className="h-4 w-4"/>Notifications{count > 0 ? <span className="rounded-full bg-accent px-2 py-0.5 text-xs font-bold text-ebe-night">{count}</span> : null}</a></Button>;
+  useEffect(() => { void request(endpoint).then((value) => setCount(Number(value.count ?? value.unreadCount ?? 0))).catch(() => undefined); }, [endpoint]);
+  return <Button asChild type="button" variant="outline"><a href={href} aria-label={`${label}${count ? `, ${count}` : ""}`}><Bell className="h-4 w-4"/>{label}{count > 0 ? <span className="rounded-full bg-accent px-2 py-0.5 text-xs font-bold text-ebe-night">{count}</span> : null}</a></Button>;
 }
 
 export function NotificationCenter({ backHref }: { backHref: string }) {

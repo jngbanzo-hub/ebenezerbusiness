@@ -1,2 +1,2 @@
-import { NotificationCenter } from "@/features/notifications/notification-center";
-export default function AdminNotificationsPage() { return <NotificationCenter backHref="/admin"/>; }
+import { AdminAlertCenter } from "@/features/admin/admin-alert-center";
+export default function AdminNotificationsPage() { return <AdminAlertCenter/>; }

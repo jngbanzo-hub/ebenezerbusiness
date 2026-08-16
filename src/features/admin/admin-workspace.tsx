@@ -300,7 +300,7 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
           </div>
           <div className="flex flex-wrap gap-3">
             {module !== "home" ? <Button asChild type="button" variant="outline"><Link href="/admin">Retour au tableau de bord Admin</Link></Button> : null}
-            <NotificationBell href="/admin/notifications" />
+            <NotificationBell href="/admin/notifications" endpoint="/api/admin/alerts" label="Notifications" />
             <Button type="button" variant="outline" onClick={handleSignOut}>
               <LogOut className="h-4 w-4" />
               Se déconnecter
