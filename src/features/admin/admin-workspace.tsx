@@ -563,17 +563,17 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
 }
 
 const ADMIN_MODULES = [
-  { title: "Gestion des associations QR", description: "Recherchez, auditez, corrigez ou révoquez exceptionnellement un QR.", href: "/admin/qr-associations", icon: QrCode },
   { title: "Rapport synthèse du jour", description: "Consultez la synthèse quotidienne Encaissements, Dépenses, Caisse et Stockages.", href: "/admin/rapport-journalier", icon: ClipboardList },
   { title: "Encaissements", description: "Consultez les paiements, filtres, totaux et statistiques par agent.", href: "/admin/encaissements", icon: CreditCard },
-  { title: "Caisse", description: "Supervisez les caisses FIH, LSHI et KLZ et leurs contrôles Admin.", href: "/admin/caisse", icon: Banknote },
   { title: "Dépenses", description: "Accédez au module Dépenses sans le mélanger aux opérations de Caisse.", href: "/admin/depenses", icon: ClipboardList },
+  { title: "Caisse", description: "Supervisez les caisses FIH, LSHI et KLZ et leurs contrôles Admin.", href: "/admin/caisse", icon: Banknote },
   { title: "Stockages", description: "Consultez les mouvements, états et audits du module Stockages.", href: "/admin/stockages", icon: Boxes },
   { title: "Transferts", description: "Supervisez le module Transferts dans son périmètre totalement isolé.", href: "/admin/transferts", icon: ArrowRightLeft },
   { title: "Statistiques par expéditeur", description: "Interrogez MANIFESTE PUBLIC en lecture seule par période et circuit.", href: "/admin/statistiques-expediteurs", icon: BarChart3 }
   ,{ title: "Statistiques du manifeste", description: "Analysez les kilogrammes et volumes mensuels de FIH, LSHI et KLZ.", href: "/admin/statistiques-manifeste", icon: Scale }
   ,{ title: "Statistiques des expéditions", description: "Consultez les expéditions, groupages, compagnies et destinations.", href: "/admin/statistiques-expeditions", icon: Send }
   ,{ title: "SUIVI DES EXPÉDITIONS", description: "Consultez et mettez à jour le statut des groupages.", href: "/admin/suivi-expeditions", icon: Send }
+  ,{ title: "Gestion des associations QR", description: "Recherchez, auditez, corrigez ou révoquez exceptionnellement un QR.", href: "/admin/qr-associations", icon: QrCode }
 ] as const;
 
 function AdminModuleGrid() {
