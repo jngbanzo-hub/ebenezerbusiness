@@ -31,6 +31,15 @@ test("détecte les lignes valides FIH, LSHI et KLZ sans mutation", () => {
   assert.deepEqual(result.map((line) => line.agency), ["FIH", "LSHI", "KLZ"]);
 });
 
+test("normalise 002 ou 2 vers le numéro visible 002", () => {
+  const result = evaluateManifestQrCandidates([
+    source({ qrNumber: "002" }),
+    source({ rowNumber: 3, qrNumber: "2", trackingCode: "OTHER2" })
+  ], [qr(2)], []);
+  assert.deepEqual(result.map((line) => line.displayNumber), ["002", "002"]);
+  assert.deepEqual(result.map((line) => line.result), ["DUPLICATE_QR_IN_MANIFEST", "DUPLICATE_QR_IN_MANIFEST"]);
+});
+
 test("ignore H vide et signale les champs obligatoires absents", () => {
   const result = evaluateManifestQrCandidates([
     source({ qrNumber: "" }),

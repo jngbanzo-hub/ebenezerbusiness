@@ -48,34 +48,30 @@ async function readManifestQrSourceRows(): Promise<ManifestQrSourceRow[]> {
 async function readQrRegistry(numbers: number[]): Promise<ManifestQrRegistryRow[]> {
   if (!numbers.length) return [];
   const client = serviceClient();
-  const rows: ManifestQrRegistryRow[] = [];
-  for (let index = 0; index < numbers.length; index += 500) {
-    const { data, error } = await client
-      .from("qr_labels")
-      .select("qr_id,display_number,status,version")
-      .in("display_number", numbers.slice(index, index + 500));
-    if (error) throw new Error("QR_SERVICE_UNAVAILABLE");
-    rows.push(...(data ?? []).map((row) => ({
-      qrId: String(row.qr_id),
-      displayNumber: Number(row.display_number),
-      status: String(row.status) as ManifestQrRegistryRow["status"],
-      version: Number(row.version)
-    })));
-  }
-  return rows;
+  const { data, error } = await client.rpc("read_qr_manifest_registry_server", {
+    p_display_numbers: numbers
+  });
+  if (error || !data || typeof data !== "object") throw new Error("QR_SERVICE_UNAVAILABLE");
+  const registry = Array.isArray(data.registry) ? data.registry : [];
+  return registry.map((row: Record<string, unknown>) => ({
+    qrId: String(row.qrId),
+    displayNumber: Number(row.displayNumber),
+    status: String(row.status) as ManifestQrRegistryRow["status"],
+    version: Number(row.version)
+  }));
 }
 
 async function readActiveParcelAssignments(): Promise<ActiveParcelAssignment[]> {
-  const { data, error } = await serviceClient()
-    .from("qr_labels")
-    .select("qr_id,agency,tracking_code")
-    .eq("status", "ASSIGNED");
-  if (error) throw new Error("QR_SERVICE_UNAVAILABLE");
-  return (data ?? []).flatMap((row) => {
+  const { data, error } = await serviceClient().rpc("read_qr_manifest_registry_server", {
+    p_display_numbers: []
+  });
+  if (error || !data || typeof data !== "object") throw new Error("QR_SERVICE_UNAVAILABLE");
+  const assignments = Array.isArray(data.activeAssignments) ? data.activeAssignments : [];
+  return assignments.flatMap((row: Record<string, unknown>) => {
     const agency = String(row.agency) as ManifestSite;
-    const trackingCode = String(row.tracking_code ?? "");
+    const trackingCode = String(row.trackingCode ?? "");
     return MANIFEST_SITES.includes(agency) && trackingCode
-      ? [{ qrId: String(row.qr_id), agency, trackingCode }]
+      ? [{ qrId: String(row.qrId), agency, trackingCode }]
       : [];
   });
 }
