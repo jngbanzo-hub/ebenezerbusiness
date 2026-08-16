@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 import { QrBatchAssociation } from "@/features/agent/qr-batch-association";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { QrStockSummaryCards } from "@/features/qr-label/qr-stock-summary";
 import {
   createQrAssignmentRequestId,
   loadManifestQrCandidates,
@@ -204,6 +205,7 @@ export function QrAssociationPage() {
         </header>
 
         <GlassPanel className="mt-7 p-6" glow="growth">
+          {profile?.site === "COO" ? <div className="mb-6"><QrStockSummaryCards endpoint="/api/agent/qr/stock-summary" /></div> : null}
           <section className="mb-6 rounded-xl border border-white/15 bg-white/5 p-4" aria-label="Rechercher un QR">
             <h2 className="text-lg font-semibold">Rechercher un QR</h2>
             <p className="mt-1 text-xs text-muted-foreground">Consultation du registre QR en lecture seule.</p>
