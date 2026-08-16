@@ -7,6 +7,8 @@ const migration = readFileSync(new URL("../../supabase/migrations/20260816193000
 
 test("la détection MANIFESTE passe par un RPC service-only en lecture", () => {
   assert.match(server, /rpc\("read_qr_manifest_registry_server"/);
+  assert.match(server, /readCanonicalManifestRange\(`\$\{agency\}!A:H`\)/);
+  assert.doesNotMatch(server, /readAdminManifestRange/);
   assert.doesNotMatch(server, /\.from\("qr_labels"\)/);
   assert.match(migration, /language sql[\s\S]*stable[\s\S]*security definer/i);
   assert.match(migration, /grant execute on function public\.read_qr_manifest_registry_server\(bigint\[\]\)[\s\S]*to service_role/i);

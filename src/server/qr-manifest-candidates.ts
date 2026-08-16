@@ -3,7 +3,7 @@ import "server-only";
 import { createClient } from "@supabase/supabase-js";
 
 import { MANIFEST_SITES, type ManifestSite } from "@/features/admin/types";
-import { readAdminManifestRange } from "@/server/admin-manifest-sheets";
+import { readCanonicalManifestRange } from "@/server/admin-manifest-sheets";
 import {
   evaluateManifestQrCandidates,
   normalizeQrNumber,
@@ -31,7 +31,7 @@ export async function readManifestQrCandidates() {
 async function readManifestQrSourceRows(): Promise<ManifestQrSourceRow[]> {
   const ranges = await Promise.all(MANIFEST_SITES.map(async (agency) => ({
     agency,
-    values: await readAdminManifestRange(`${agency}!A:H`)
+    values: await readCanonicalManifestRange(`${agency}!A:H`)
   })));
   return ranges.flatMap(({ agency, values }) => values.flatMap((row, index) => {
     if (isHeader(row) || row.every((cell) => String(cell ?? "").trim() === "")) return [];

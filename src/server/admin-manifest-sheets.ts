@@ -117,6 +117,19 @@ async function readManifestRows(config: ManifestGoogleSheetsConfig): Promise<Man
 
 export async function readAdminManifestRange(range: string): Promise<unknown[][]> {
   const config = getManifestGoogleSheetsConfig();
+  return readManifestRange(config, range);
+}
+
+export async function readCanonicalManifestRange(range: string): Promise<unknown[][]> {
+  const config = getManifestGoogleSheetsConfig();
+  const spreadsheetId = emptyToUndefined(process.env.GOOGLE_SHEETS_PAYMENTS_SOURCE_SPREADSHEET_ID);
+  if (!spreadsheetId) {
+    throw new Error("Configuration de la source canonique MANIFESTE incomplète.");
+  }
+  return readManifestRange({ ...config, spreadsheetId: normalizeSpreadsheetId(spreadsheetId) }, range);
+}
+
+async function readManifestRange(config: ManifestGoogleSheetsConfig, range: string): Promise<unknown[][]> {
   const accessToken = await getGoogleAccessToken(config);
   const spreadsheetId = encodeURIComponent(config.spreadsheetId);
   const searchParams = new URLSearchParams({
