@@ -57,7 +57,11 @@ async function readQrRegistry(numbers: number[]): Promise<ManifestQrRegistryRow[
     qrId: String(row.qrId),
     displayNumber: Number(row.displayNumber),
     status: String(row.status) as ManifestQrRegistryRow["status"],
-    version: Number(row.version)
+    version: Number(row.version),
+    agency: MANIFEST_SITES.includes(String(row.agency) as ManifestSite)
+      ? String(row.agency) as ManifestSite
+      : undefined,
+    trackingCode: typeof row.trackingCode === "string" ? row.trackingCode : undefined
   }));
 }
 

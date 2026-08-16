@@ -23,6 +23,14 @@ test("prévalide avant d’exposer la confirmation humaine", () => {
   assert.ok(component.indexOf("setCandidate(resolved)") < component.indexOf("handleConfirm"));
 });
 
+test("affiche une alerte dédiée avec l’identité actuelle pour un QR ASSIGNED", () => {
+  assert.match(component, /QR DÉJÀ UTILISÉ/);
+  assert.match(component, /usedQr\.qrId/);
+  assert.match(component, /usedQr\.agency/);
+  assert.match(component, /usedQr\.trackingCode/);
+  assert.match(component, /if \(resolved\.status === "ASSIGNED"\) setUsedQr\(resolved\)/);
+});
+
 test("utilise seulement les routes serveur avec la session existante", () => {
   assert.match(client, /authenticatedRead/);
   assert.match(client, /\/api\/agent\/qr\/resolve/);

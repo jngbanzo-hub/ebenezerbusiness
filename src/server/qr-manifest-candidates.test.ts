@@ -55,9 +55,25 @@ test("refuse QR inconnu, QR déjà associé et colis déjà associé", () => {
     source({ qrNumber: "999999" }),
     source({ rowNumber: 3, qrNumber: "013", trackingCode: "AT09426", agency: "KLZ" }),
     source({ rowNumber: 4, qrNumber: "104", trackingCode: "USED104" })
-  ], [qr(13, "ASSIGNED"), qr(104)], [{ qrId: "EEBQR000999", agency: "FIH", trackingCode: "USED104" }]);
+  ], [{ ...qr(13, "ASSIGNED"), agency: "KLZ", trackingCode: "AT09426" }, qr(104)], [{ qrId: "EEBQR000999", agency: "FIH", trackingCode: "USED104" }]);
   assert.deepEqual(result.map((line) => line.result), ["QR_UNKNOWN", "QR_ALREADY_ASSIGNED", "PARCEL_ALREADY_ASSIGNED"]);
+  assert.equal(result[1]?.currentAgency, "KLZ");
+  assert.equal(result[1]?.currentTrackingCode, "AT09426");
   assert.equal(result.some((line) => line.ready), false);
+});
+
+test("isole ASSIGNED et REVOKED sans bloquer une autre ligne UNASSIGNED", () => {
+  const result = evaluateManifestQrCandidates([
+    source({ qrNumber: "002", trackingCode: "AT11126" }),
+    source({ rowNumber: 3, qrNumber: "013", agency: "KLZ", trackingCode: "NEW013" }),
+    source({ rowNumber: 4, qrNumber: "014", trackingCode: "AT11426" })
+  ], [
+    qr(2),
+    { ...qr(13, "ASSIGNED"), agency: "KLZ", trackingCode: "AT09426" },
+    qr(14, "REVOKED")
+  ], []);
+  assert.deepEqual(result.map((line) => line.result), ["READY", "QR_ALREADY_ASSIGNED", "QR_REVOKED"]);
+  assert.deepEqual(result.map((line) => line.ready), [true, false, false]);
 });
 
 test("refuse le même QR et le même colis saisis deux fois", () => {

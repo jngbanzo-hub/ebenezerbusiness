@@ -24,6 +24,13 @@ test("prévisualise chaque ligne et exige une confirmation explicite", () => {
   assert.match(batch, /disabled=\{busy \|\| !confirmed\}/);
 });
 
+test("met en évidence un QR déjà utilisé avec sa destination et son code actuels", () => {
+  assert.match(batch, /QR DÉJÀ UTILISÉ/);
+  assert.match(batch, /line\.currentAgency/);
+  assert.match(batch, /line\.currentTrackingCode/);
+  assert.match(batch, /line\.result === "QR_ALREADY_ASSIGNED"/);
+});
+
 test("réutilise la mutation officielle avec un requestId par ligne", () => {
   assert.match(batch, /for \(const line of readyLines\)/);
   assert.match(batch, /const requestId = createQrAssignmentRequestId\(\)/);

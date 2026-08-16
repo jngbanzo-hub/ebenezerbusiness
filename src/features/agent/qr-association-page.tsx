@@ -32,6 +32,7 @@ export function QrAssociationPage() {
   const [requestId, setRequestId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [usedQr, setUsedQr] = useState<QrCandidate | null>(null);
   const [success, setSuccess] = useState<QrCandidate | null>(null);
   const [mode, setMode] = useState<"simple" | "batch">("simple");
   const [manifestCandidates, setManifestCandidates] = useState<ManifestQrCandidate[]>([]);
@@ -73,6 +74,7 @@ export function QrAssociationPage() {
     setRequestId("");
     setSuccess(null);
     setError("");
+    setUsedQr(null);
   }
 
   async function handlePrevalidate(event: FormEvent) {
@@ -92,7 +94,8 @@ export function QrAssociationPage() {
     try {
       const resolved = await resolveQrCandidate(getSupabaseBrowserClient().auth, number);
       if (resolved.status !== "UNASSIGNED") {
-        setError(resolved.status === "REVOKED" ? "Ce QR est révoqué." : "Ce QR est déjà associé.");
+        if (resolved.status === "ASSIGNED") setUsedQr(resolved);
+        else setError("Ce QR est révoqué.");
         return;
       }
       setTrackingCode(code);
@@ -187,8 +190,8 @@ export function QrAssociationPage() {
               {manifestCandidates.length ? <div className="overflow-x-auto rounded-lg border border-white/10">
                 <table className="w-full min-w-[760px] text-left text-sm">
                   <thead className="bg-white/5 text-muted-foreground"><tr><th className="p-3">Date</th><th>QR visible</th><th>Destination</th><th>Code colis</th><th>État QR</th><th>Prévalidation</th></tr></thead>
-                  <tbody>{manifestCandidates.map((line) => <tr key={`${line.agency}:${line.rowNumber}`} className="border-t border-white/10">
-                    <td className="p-3">{line.date || "—"}</td><td>{line.displayNumber || line.qrNumber}</td><td>{line.agency}</td><td>{line.trackingCode || "—"}</td><td>{line.qrStatus ?? "—"}</td><td className={line.ready ? "text-accent" : "text-amber-200"}>{MANIFEST_RESULT_LABELS[line.result] ?? line.result}</td>
+                  <tbody>{manifestCandidates.map((line) => <tr key={`${line.agency}:${line.rowNumber}`} className={line.result === "QR_ALREADY_ASSIGNED" ? "border-t border-red-300/30 bg-red-500/15" : "border-t border-white/10"}>
+                    <td className="p-3">{line.date || "—"}</td><td>{line.displayNumber || line.qrNumber}</td><td>{line.agency}</td><td>{line.trackingCode || "—"}</td><td>{line.qrStatus === "ASSIGNED" ? <span className="font-bold text-red-100">QR DÉJÀ UTILISÉ<br/><span className="font-normal">{line.currentAgency ?? "—"} · {line.currentTrackingCode ?? "—"}</span></span> : line.qrStatus ?? "—"}</td><td className={line.ready ? "text-accent" : "text-amber-200"}>{MANIFEST_RESULT_LABELS[line.result] ?? line.result}</td>
                   </tr>)}</tbody>
                 </table>
               </div> : <p className="text-sm text-muted-foreground">Aucune valeur QR détectée dans la colonne H.</p>}
@@ -220,6 +223,18 @@ export function QrAssociationPage() {
           </form>
 
           {error && <p role="alert" className="mt-5 rounded-md border border-red-300/30 bg-red-400/10 p-3 text-sm text-red-100">{error}</p>}
+
+          {usedQr && (
+            <section role="alert" className="mt-5 rounded-xl border-2 border-red-300 bg-red-500/20 p-5 text-red-50 shadow-lg shadow-red-950/30">
+              <h2 className="text-xl font-black tracking-wide">QR DÉJÀ UTILISÉ</h2>
+              <dl className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+                <div><dt className="text-red-100/75">QR</dt><dd className="font-bold">{String(usedQr.displayNumber).padStart(3, "0")}</dd></div>
+                <div><dt className="text-red-100/75">qrId</dt><dd className="font-bold">{usedQr.qrId}</dd></div>
+                <div><dt className="text-red-100/75">Destination actuelle</dt><dd className="font-bold">{usedQr.agency ?? "—"}</dd></div>
+                <div><dt className="text-red-100/75">Code colis actuel</dt><dd className="font-bold">{usedQr.trackingCode ?? "—"}</dd></div>
+              </dl>
+            </section>
+          )}
 
           {candidate && (
             <section className="mt-6 rounded-xl border border-accent/30 bg-accent/10 p-5" aria-label="Confirmation de l’association">
@@ -258,7 +273,7 @@ const MANIFEST_RESULT_LABELS: Record<string, string> = {
   MISSING_TRACKING_CODE: "CODE COLIS MANQUANT",
   INVALID_QR_NUMBER: "NUMÉRO QR INVALIDE",
   QR_UNKNOWN: "QR INCONNU",
-  QR_ALREADY_ASSIGNED: "QR DÉJÀ ASSOCIÉ",
+  QR_ALREADY_ASSIGNED: "QR DÉJÀ UTILISÉ",
   QR_REVOKED: "QR RÉVOQUÉ",
   PARCEL_ALREADY_ASSIGNED: "COLIS DÉJÀ ASSOCIÉ",
   DUPLICATE_QR_IN_MANIFEST: "QR EN DOUBLON DANS LE MANIFESTE",

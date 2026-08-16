@@ -25,6 +25,8 @@ export type ManifestQrRegistryRow = {
   displayNumber: number;
   status: "UNASSIGNED" | "ASSIGNED" | "REVOKED";
   version: number;
+  agency?: ManifestSite;
+  trackingCode?: string;
 };
 
 export type ActiveParcelAssignment = {
@@ -38,6 +40,8 @@ export type ManifestQrCandidate = ManifestQrSourceRow & {
   qrId?: string;
   qrStatus?: ManifestQrRegistryRow["status"];
   version?: number;
+  currentAgency?: ManifestSite;
+  currentTrackingCode?: string;
   ready: boolean;
   result: ManifestQrCandidateResult;
 };
@@ -68,7 +72,14 @@ export function evaluateManifestQrCandidates(
     }
     const qr = registry.get(Number(normalizedNumber));
     if (!qr) return { ...base, result: "QR_UNKNOWN" };
-    const withQr = { ...base, qrId: qr.qrId, qrStatus: qr.status, version: qr.version };
+    const withQr = {
+      ...base,
+      qrId: qr.qrId,
+      qrStatus: qr.status,
+      version: qr.version,
+      currentAgency: qr.agency,
+      currentTrackingCode: qr.trackingCode
+    };
     if (qr.status === "ASSIGNED") return { ...withQr, result: "QR_ALREADY_ASSIGNED" };
     if (qr.status === "REVOKED") return { ...withQr, result: "QR_REVOKED" };
     if (assignedParcels.has(parcelKey(row.agency, row.trackingCode))) {

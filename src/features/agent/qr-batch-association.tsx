@@ -23,7 +23,7 @@ const RESULT_LABELS: Record<string, string> = {
   READY: "PRÊT",
   INVALID_QR_NUMBER: "QR INVALIDE",
   QR_UNKNOWN: "QR INCONNU",
-  QR_ALREADY_ASSIGNED: "QR DÉJÀ ASSOCIÉ",
+  QR_ALREADY_ASSIGNED: "QR DÉJÀ UTILISÉ",
   QR_REVOKED: "QR RÉVOQUÉ",
   INVALID_CODE: "CODE INTROUVABLE",
   INVALID_AGENCY: "AGENCE INVALIDE",
@@ -142,8 +142,8 @@ export function QrBatchAssociation({
           <div className="overflow-x-auto rounded-xl border border-white/10">
             <table className="w-full min-w-[900px] text-left text-sm">
               <thead className="bg-white/5 text-muted-foreground"><tr><th className="p-3">N° QR</th><th>qrId</th><th>Destination</th><th>Code colis</th><th>État QR</th><th>MANIFESTE</th><th>Doublon</th><th>Résultat</th></tr></thead>
-              <tbody>{lines.map((line) => <tr key={line.lineNumber} className="border-t border-white/10">
-                <td className="p-3">{line.displayNumber || "—"}</td><td>{line.qrId ?? "—"}</td><td>{line.agency || "—"}</td><td>{line.trackingCode || "—"}</td><td>{line.qrStatus ?? "—"}</td><td>{line.manifestCertified ? "CERTIFIÉ" : "NON"}</td><td>{line.duplicate ? "OUI" : "NON"}</td><td className={line.ready ? "text-accent" : "text-amber-200"}>{line.finalResult ?? RESULT_LABELS[line.result] ?? line.result}</td>
+              <tbody>{lines.map((line) => <tr key={line.lineNumber} className={line.result === "QR_ALREADY_ASSIGNED" ? "border-t border-red-300/30 bg-red-500/15" : "border-t border-white/10"}>
+                <td className="p-3">{line.displayNumber || "—"}</td><td>{line.qrId ?? "—"}</td><td>{line.agency || "—"}</td><td>{line.trackingCode || "—"}</td><td>{line.qrStatus ?? "—"}</td><td>{line.manifestCertified ? "CERTIFIÉ" : "NON"}</td><td>{line.duplicate ? "OUI" : "NON"}</td><td className={line.ready ? "text-accent" : "text-amber-200"}>{line.result === "QR_ALREADY_ASSIGNED" ? <span className="font-bold text-red-100">QR DÉJÀ UTILISÉ<br/><span className="font-normal">Actuel : {line.currentAgency ?? "—"} · {line.currentTrackingCode ?? "—"}</span></span> : line.finalResult ?? RESULT_LABELS[line.result] ?? line.result}</td>
               </tr>)}</tbody>
             </table>
           </div>

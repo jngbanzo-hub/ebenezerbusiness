@@ -41,6 +41,8 @@ export type QrBatchPrevalidationLine = {
   trackingCode: string;
   qrStatus?: "UNASSIGNED" | "ASSIGNED" | "REVOKED";
   version?: number;
+  currentAgency?: QrAgency;
+  currentTrackingCode?: string;
   manifestCertified: boolean;
   duplicate: boolean;
   ready: boolean;
@@ -57,6 +59,8 @@ export type ManifestQrCandidate = {
   qrId?: string;
   qrStatus?: "UNASSIGNED" | "ASSIGNED" | "REVOKED";
   version?: number;
+  currentAgency?: QrAgency;
+  currentTrackingCode?: string;
   ready: boolean;
   result: string;
 };

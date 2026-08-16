@@ -35,6 +35,8 @@ export type QrBatchPrevalidationResult = {
   trackingCode: string;
   qrStatus?: "UNASSIGNED" | "ASSIGNED" | "REVOKED";
   version?: number;
+  currentAgency?: QrAgency;
+  currentTrackingCode?: string;
   manifestCertified: boolean;
   duplicate: boolean;
   ready: boolean;
@@ -46,6 +48,8 @@ type ResolvedQr = {
   displayNumber: number;
   status: "UNASSIGNED" | "ASSIGNED" | "REVOKED";
   version: number;
+  agency?: QrAgency;
+  trackingCode?: string;
 };
 
 export type QrBatchPrevalidationDependencies = {
@@ -92,7 +96,14 @@ export async function prevalidateQrBatch(
     try {
       const qr = await dependencies.resolve(Number(qrKey), bearerToken);
       if (!qr) return { ...base, result: "QR_UNKNOWN" as const };
-      const withQr = { ...base, qrId: qr.qrId, qrStatus: qr.status, version: qr.version };
+      const withQr = {
+        ...base,
+        qrId: qr.qrId,
+        qrStatus: qr.status,
+        version: qr.version,
+        currentAgency: qr.agency,
+        currentTrackingCode: qr.trackingCode
+      };
       if (qr.status === "ASSIGNED") return { ...withQr, result: "QR_ALREADY_ASSIGNED" as const };
       if (qr.status === "REVOKED") return { ...withQr, result: "QR_REVOKED" as const };
 
@@ -155,7 +166,11 @@ async function resolveQr(displayNumber: number, _bearerToken: string): Promise<R
     qrId: String(row.qrId),
     displayNumber: Number(row.displayNumber),
     status: String(row.status) as ResolvedQr["status"],
-    version: Number(row.version)
+    version: Number(row.version),
+    agency: ["FIH", "LSHI", "KLZ"].includes(String(row.agency))
+      ? String(row.agency) as QrAgency
+      : undefined,
+    trackingCode: typeof row.trackingCode === "string" ? row.trackingCode : undefined
   };
 }
 
