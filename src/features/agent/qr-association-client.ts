@@ -47,6 +47,20 @@ export type QrBatchPrevalidationLine = {
   result: string;
 };
 
+export type ManifestQrCandidate = {
+  agency: QrAgency;
+  rowNumber: number;
+  date: string;
+  trackingCode: string;
+  qrNumber: string;
+  displayNumber: string;
+  qrId?: string;
+  qrStatus?: "UNASSIGNED" | "ASSIGNED" | "REVOKED";
+  version?: number;
+  ready: boolean;
+  result: string;
+};
+
 type Fetcher = typeof fetch;
 
 export async function resolveQrCandidate(
@@ -116,6 +130,19 @@ export async function prevalidateQrBatch(
   );
   const payload = await readResponse<{ lines: QrBatchPrevalidationLine[] }>(response);
   return payload.lines;
+}
+
+export async function loadManifestQrCandidates(
+  auth: BrowserAuth,
+  fetcher: Fetcher = fetch
+): Promise<{ candidates: ManifestQrCandidate[]; readyCount: number }> {
+  const response = await authenticatedRead(
+    auth,
+    "/api/agent/qr/manifest-candidates",
+    {},
+    fetcher
+  );
+  return readResponse<{ candidates: ManifestQrCandidate[]; readyCount: number }>(response);
 }
 
 export function createQrAssignmentRequestId(randomUuid = crypto.randomUUID) {

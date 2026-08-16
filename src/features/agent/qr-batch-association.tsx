@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, LoaderCircle, ShieldCheck } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
@@ -32,14 +32,26 @@ const RESULT_LABELS: Record<string, string> = {
   SOURCE_UNAVAILABLE: "SOURCE INDISPONIBLE"
 };
 
-export function QrBatchAssociation() {
-  const [input, setInput] = useState("");
+export function QrBatchAssociation({
+  initialInput = "",
+  onAssignmentsCompleted
+}: {
+  initialInput?: string;
+  onAssignmentsCompleted?: () => void;
+}) {
+  const [input, setInput] = useState(initialInput);
   const [lines, setLines] = useState<FinalLine[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const readyCount = useMemo(() => lines.filter((line) => line.ready && !line.finalResult).length, [lines]);
   const errorCount = lines.length - readyCount;
+
+  useEffect(() => {
+    if (!initialInput) return;
+    setInput(initialInput);
+    invalidate();
+  }, [initialInput]);
 
   function invalidate() {
     setLines([]);
@@ -97,6 +109,7 @@ export function QrBatchAssociation() {
     }
     setBusy(false);
     setConfirmed(false);
+    onAssignmentsCompleted?.();
   }
 
   return (

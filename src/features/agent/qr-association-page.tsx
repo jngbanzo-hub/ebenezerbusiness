@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, CheckCircle2, LoaderCircle, QrCode, ShieldCheck } from "lucide-react";
+import { ArrowLeft, BellRing, CheckCircle2, LoaderCircle, QrCode, ShieldCheck } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 
 import { Container, GlassPanel } from "@/components/design-system";
@@ -11,9 +11,11 @@ import { QrBatchAssociation } from "@/features/agent/qr-batch-association";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import {
   createQrAssignmentRequestId,
+  loadManifestQrCandidates,
   messageForQrError,
   resolveQrCandidate,
   submitQrAssociation,
+  type ManifestQrCandidate,
   type QrAgency,
   type QrCandidate
 } from "@/features/agent/qr-association-client";
@@ -32,6 +34,24 @@ export function QrAssociationPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState<QrCandidate | null>(null);
   const [mode, setMode] = useState<"simple" | "batch">("simple");
+  const [manifestCandidates, setManifestCandidates] = useState<ManifestQrCandidate[]>([]);
+  const [manifestBusy, setManifestBusy] = useState(false);
+  const [manifestError, setManifestError] = useState("");
+  const [manifestOpen, setManifestOpen] = useState(false);
+  const [batchInput, setBatchInput] = useState("");
+
+  async function refreshManifestCandidates() {
+    setManifestBusy(true);
+    setManifestError("");
+    try {
+      const result = await loadManifestQrCandidates(getSupabaseBrowserClient().auth);
+      setManifestCandidates(result.candidates);
+    } catch (cause) {
+      setManifestError(cause instanceof Error ? cause.message : "Lecture des nouveaux QR impossible.");
+    } finally {
+      setManifestBusy(false);
+    }
+  }
 
   useEffect(() => {
     void (async () => {
@@ -41,6 +61,7 @@ export function QrAssociationPage() {
         const value = await readJsonOrThrow<Profile>(response, "Profil Agent indisponible.");
         setProfile(value);
         if (value.site !== "COO") setAgency(value.site);
+        if (value.site === "COO") await refreshManifestCandidates();
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : "Profil Agent indisponible.");
       }
@@ -113,6 +134,15 @@ export function QrAssociationPage() {
   }
 
   const agencyLocked = profile?.site !== "COO";
+  const readyManifestCandidates = manifestCandidates.filter((line) => line.ready);
+
+  function loadCandidatesIntoBatch() {
+    setBatchInput(readyManifestCandidates
+      .map((line) => `${line.displayNumber} | ${line.agency} | ${line.trackingCode}`)
+      .join("\n"));
+    setMode("batch");
+    setManifestOpen(false);
+  }
 
   if (profile && profile.site !== "COO") {
     return (
@@ -141,6 +171,30 @@ export function QrAssociationPage() {
         </header>
 
         <GlassPanel className="mt-7 p-6" glow="growth">
+          <section className="mb-6 rounded-xl border border-accent/25 bg-accent/10 p-4" aria-label="Nouveaux QR détectés dans le MANIFESTE">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="flex items-center gap-2 font-semibold"><BellRing className="h-4 w-4 text-accent"/>Nouveaux QR à associer ({readyManifestCandidates.length})</p>
+                <p className="mt-1 text-xs text-muted-foreground">Lecture seule de la colonne H des feuilles FIH, LSHI et KLZ.</p>
+              </div>
+              <Button type="button" variant="outline" disabled={manifestBusy} onClick={() => setManifestOpen((value) => !value)}>
+                {manifestBusy ? <LoaderCircle className="h-4 w-4 animate-spin"/> : null}
+                {manifestOpen ? "Masquer" : "Voir les lignes"}
+              </Button>
+            </div>
+            {manifestError ? <p role="alert" className="mt-3 text-sm text-amber-200">{manifestError}</p> : null}
+            {manifestOpen ? <div className="mt-4 space-y-4">
+              {manifestCandidates.length ? <div className="overflow-x-auto rounded-lg border border-white/10">
+                <table className="w-full min-w-[760px] text-left text-sm">
+                  <thead className="bg-white/5 text-muted-foreground"><tr><th className="p-3">Date</th><th>QR visible</th><th>Destination</th><th>Code colis</th><th>État QR</th><th>Prévalidation</th></tr></thead>
+                  <tbody>{manifestCandidates.map((line) => <tr key={`${line.agency}:${line.rowNumber}`} className="border-t border-white/10">
+                    <td className="p-3">{line.date || "—"}</td><td>{line.displayNumber || line.qrNumber}</td><td>{line.agency}</td><td>{line.trackingCode || "—"}</td><td>{line.qrStatus ?? "—"}</td><td className={line.ready ? "text-accent" : "text-amber-200"}>{MANIFEST_RESULT_LABELS[line.result] ?? line.result}</td>
+                  </tr>)}</tbody>
+                </table>
+              </div> : <p className="text-sm text-muted-foreground">Aucune valeur QR détectée dans la colonne H.</p>}
+              <Button type="button" variant="growth" className="w-full" disabled={!readyManifestCandidates.length} onClick={loadCandidatesIntoBatch}>Charger dans Association en série</Button>
+            </div> : null}
+          </section>
           <nav className="mb-6 grid grid-cols-2 gap-3" aria-label="Mode d’association QR">
             <Button type="button" variant={mode === "simple" ? "growth" : "outline"} onClick={() => setMode("simple")} aria-pressed={mode === "simple"}>Mode simple</Button>
             <Button type="button" variant={mode === "batch" ? "growth" : "outline"} onClick={() => setMode("batch")} aria-pressed={mode === "batch"}>Association en série</Button>
@@ -191,9 +245,22 @@ export function QrAssociationPage() {
               <p className="mt-3">QR {String(success.displayNumber).padStart(3, "0")} — {success.agency} + {success.trackingCode}</p>
             </section>
           )}
-          </> : <QrBatchAssociation />}
+          </> : <QrBatchAssociation initialInput={batchInput} onAssignmentsCompleted={() => void refreshManifestCandidates()} />}
         </GlassPanel>
       </Container>
     </main>
   );
 }
+
+const MANIFEST_RESULT_LABELS: Record<string, string> = {
+  READY: "PRÊT",
+  MISSING_DATE: "DATE MANQUANTE",
+  MISSING_TRACKING_CODE: "CODE COLIS MANQUANT",
+  INVALID_QR_NUMBER: "NUMÉRO QR INVALIDE",
+  QR_UNKNOWN: "QR INCONNU",
+  QR_ALREADY_ASSIGNED: "QR DÉJÀ ASSOCIÉ",
+  QR_REVOKED: "QR RÉVOQUÉ",
+  PARCEL_ALREADY_ASSIGNED: "COLIS DÉJÀ ASSOCIÉ",
+  DUPLICATE_QR_IN_MANIFEST: "QR EN DOUBLON DANS LE MANIFESTE",
+  DUPLICATE_PARCEL_IN_MANIFEST: "COLIS EN DOUBLON DANS LE MANIFESTE"
+};
