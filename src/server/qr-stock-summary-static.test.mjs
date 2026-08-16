@@ -7,6 +7,7 @@ const service = readFileSync(new URL("./qr-stock-summary.ts", import.meta.url), 
 const agentRoute = readFileSync(new URL("../app/api/agent/qr/stock-summary/route.ts", import.meta.url), "utf8");
 const adminRoute = readFileSync(new URL("../app/api/admin/qr/stock-summary/route.ts", import.meta.url), "utf8");
 const cards = readFileSync(new URL("../features/qr-label/qr-stock-summary.tsx", import.meta.url), "utf8");
+const alert = readFileSync(new URL("../features/qr-label/qr-stock-alert.ts", import.meta.url), "utf8");
 
 test("agrège exclusivement qr_labels en lecture seule", () => {
   assert.match(sql, /from public\.qr_labels/i);
@@ -27,4 +28,12 @@ test("RPC service-only et routes protégées", () => {
 
 test("affiche les quatre compteurs", () => {
   for (const label of ["QR libres", "QR associés", "QR révoqués", "Total QR"]) assert.match(cards, new RegExp(label));
+});
+
+test("l’alerte est informative et ne déclenche aucune réservation", () => {
+  assert.match(alert, /unassigned <= 100/);
+  assert.match(alert, /unassigned <= 200/);
+  assert.match(alert, /STOCK QR TRÈS FAIBLE/);
+  assert.match(alert, /STOCK QR FAIBLE/);
+  assert.doesNotMatch(cards + alert, /reserveQr|reserve_qr|fetch\([^)]*POST/);
 });
