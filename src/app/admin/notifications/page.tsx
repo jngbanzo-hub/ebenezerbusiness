@@ -1,2 +1,2 @@
-import { AdminAlertCenter } from "@/features/admin/admin-alert-center";
-export default function AdminNotificationsPage() { return <AdminAlertCenter/>; }
+import { AdminNotifications } from "@/features/admin/admin-notifications";
+export default function AdminNotificationsPage() { return <AdminNotifications/>; }
