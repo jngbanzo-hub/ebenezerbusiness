@@ -21,7 +21,6 @@ export async function readRecentInitialQrAssignments(limit = 50): Promise<QrAssi
     .from("qr_audit_events")
     .select("event_id,qr_id,new_agency,new_tracking_code,actor_id,actor_role,occurred_at")
     .eq("action", "INITIAL_ASSIGNMENT")
-    .eq("actor_agency", "COO")
     .order("occurred_at", { ascending: false })
     .limit(Math.min(Math.max(limit, 1), 100));
   if (auditError) throw new Error("QR_HISTORY_UNAVAILABLE");
