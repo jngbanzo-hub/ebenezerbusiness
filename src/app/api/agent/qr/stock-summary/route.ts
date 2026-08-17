@@ -10,7 +10,9 @@ export async function GET(request: Request) {
     const auth = await authorizeAgentRequest(request);
     if (!auth.authorized) return fail(auth.status);
     if (auth.identity.site !== "COO") return fail(403);
-    return NextResponse.json(await readQrStockSummary(), { headers: { "Cache-Control": "private, no-store, max-age=0" } });
+    const summary = await readQrStockSummary();
+    console.info("[qr-stock-summary]", { scope: "COO", ...summary });
+    return NextResponse.json(summary, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   } catch {
     return NextResponse.json({ code: "QR_SERVICE_UNAVAILABLE" }, { status: 503, headers: { "Cache-Control": "private, no-store, max-age=0" } });
   }
