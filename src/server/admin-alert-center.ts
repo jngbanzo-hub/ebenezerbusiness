@@ -10,9 +10,11 @@ import { determineParcelConsistency } from "@/server/admin-parcel-consistency";
 import { createServerCashDashboardSource } from "@/server/cash-dashboard-source";
 import { readQrStockSummary } from "@/server/qr-stock-summary";
 import { consistencyAlerts, deduplicateAlerts, paymentAlerts, qrStockAlert, sourceUnavailable, staleStorageAlert, type AdminAlert, type AdminAlertCategory } from "@/server/admin-alert-rules";
+import { syncAdminAlertReadStates } from "@/server/admin-alert-read-state";
 
 type AdminIdentity={userId:string;email:string;agency:"COO"|"FIH"|"LSHI"|"KLZ"|null};
-export type AdminAlertCenterResult={generatedAt:string;count:number;alerts:AdminAlert[];thresholds:{storageStaleDays:number;cooPartialPaymentDays:number}};
+export type AdminAlertWithReadState=AdminAlert&{read:boolean;readAt:string|null;occurrence:number};
+export type AdminAlertCenterResult={generatedAt:string;count:number;activeCount:number;unreadCount:number;readCount:number;alerts:AdminAlertWithReadState[];thresholds:{storageStaleDays:number;cooPartialPaymentDays:number}};
 
 export async function readAdminAlertCenter(identity:AdminIdentity, now=new Date()):Promise<AdminAlertCenterResult>{
   const generatedAt=now.toISOString(), storageDays=positiveEnv("ADMIN_ALERT_STORAGE_STALE_DAYS",30), partialDays=positiveEnv("ADMIN_ALERT_COO_PARTIAL_DAYS",7);
@@ -24,7 +26,11 @@ export async function readAdminAlertCenter(identity:AdminIdentity, now=new Date(
     isolated("DÉPENSES",generatedAt,async()=>{await readAdminExpenses(identity,{page:1,pageSize:1});return [];}),
     isolated("COHÉRENCE COLIS",generatedAt,()=>readConsistencyAlerts(identity.userId,generatedAt))
   ]);
-  const alerts=deduplicateAlerts(groups.flat()); return {generatedAt,count:alerts.length,alerts,thresholds:{storageStaleDays:storageDays,cooPartialPaymentDays:partialDays}};
+  const activeAlerts=deduplicateAlerts(groups.flat());
+  const states=await syncAdminAlertReadStates(identity.userId,activeAlerts.map((alert)=>alert.id));
+  const alerts=activeAlerts.map((alert)=>{const state=states.get(alert.id);return {...alert,read:Boolean(state?.readAt),readAt:state?.readAt??null,occurrence:state?.occurrence??1};});
+  const unreadCount=alerts.filter((alert)=>!alert.read).length;
+  return {generatedAt,count:unreadCount,activeCount:alerts.length,unreadCount,readCount:alerts.length-unreadCount,alerts,thresholds:{storageStaleDays:storageDays,cooPartialPaymentDays:partialDays}};
 }
 
 async function isolated(category:AdminAlertCategory,now:string,read:()=>Promise<AdminAlert[]>){try{return await withTimeout(read(),12_000);}catch{return [sourceUnavailable(category,now)];}}
