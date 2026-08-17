@@ -8,6 +8,7 @@ const service = readFileSync("src/server/admin-alert-read-state.ts", "utf8");
 const center = readFileSync("src/server/admin-alert-center.ts", "utf8");
 const ui = readFileSync("src/features/admin/admin-alert-center.tsx", "utf8");
 const bell = readFileSync("src/features/admin/admin-workspace.tsx", "utf8");
+const conflictFix = readFileSync("supabase/migrations/20260817173000_fix_admin_alert_read_state_conflict.sql", "utf8");
 
 test("la lecture est persistée par Admin et par identité stable", () => {
   assert.match(migration, /primary key \(admin_user_id, alert_id\)/i);
@@ -41,4 +42,9 @@ test("les mutations restent Admin et service-role uniquement", () => {
   assert.match(migration, /revoke all on public\.admin_alert_read_states from public, anon, authenticated/i);
   assert.match(migration, /revoke all on function public\.mark_admin_alerts_read_server\(uuid, text\[\]\) from public, anon, authenticated/i);
   assert.doesNotMatch(service, /stockage_parcels|payments|cash|expenses|qr_labels/i);
+});
+
+test("le RPC cible la contrainte primaire sans ambiguïté PL/pgSQL", () => {
+  assert.match(conflictFix, /on conflict on constraint admin_alert_read_states_pkey do update/i);
+  assert.doesNotMatch(conflictFix, /on conflict\s*\(admin_user_id,\s*alert_id\)/i);
 });

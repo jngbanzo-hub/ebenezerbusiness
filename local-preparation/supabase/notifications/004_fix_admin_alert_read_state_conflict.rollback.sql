@@ -1,0 +1,2 @@
+-- Deliberately no automatic rollback: the previous RPC definition raises
+-- PostgreSQL 42702 and must not be restored in Production.
