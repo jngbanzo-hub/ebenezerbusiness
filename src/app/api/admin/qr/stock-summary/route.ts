@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   try {
     const auth = await authorizeAdminRequest(request);
     if (!auth.authorized) return NextResponse.json({ code: "ACCESS_DENIED" }, { status: auth.status, headers: { "Cache-Control": "private, no-store, max-age=0" } });
-    const summary = await readQrStockSummary();
+    const summary = await readQrStockSummary("ADMIN");
     console.info("[qr-stock-summary]", { scope: "ADMIN", ...summary });
     return NextResponse.json(summary, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   } catch {
