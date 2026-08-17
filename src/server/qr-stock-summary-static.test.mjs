@@ -15,12 +15,7 @@ test("agrège exclusivement qr_labels en lecture seule", () => {
   assert.match(sql, /filter \(where status = 'ASSIGNED'\)/i);
   assert.match(sql, /filter \(where status = 'REVOKED'\)/i);
   assert.doesNotMatch(sql, /insert|update|delete/i);
-  assert.match(service, /\.from\("qr_labels"\)/);
-  assert.match(service, /count: "exact", head: true/);
-  assert.match(service, /\.eq\("status", "UNASSIGNED"\)/);
-  assert.match(service, /\.eq\("status", "ASSIGNED"\)/);
-  assert.match(service, /\.eq\("status", "REVOKED"\)/);
-  assert.doesNotMatch(service, /\.insert\(|\.update\(|\.delete\(|\.upsert\(/);
+  assert.doesNotMatch(service, /\.from\("qr_labels"\)/);
 });
 
 test("RPC service-only et routes protégées", () => {
