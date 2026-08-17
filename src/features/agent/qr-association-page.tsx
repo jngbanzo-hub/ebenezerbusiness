@@ -8,6 +8,7 @@ import { Container, GlassPanel } from "@/components/design-system";
 import { Button } from "@/components/ui/button";
 import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 import { QrBatchAssociation } from "@/features/agent/qr-batch-association";
+import { QrAssignmentHistory } from "@/features/agent/qr-assignment-history";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { QrStockSummaryCards } from "@/features/qr-label/qr-stock-summary";
 import {
@@ -46,6 +47,7 @@ export function QrAssociationPage() {
   const [searchResult, setSearchResult] = useState<QrCandidate | null>(null);
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchError, setSearchError] = useState("");
+  const [qrDataRevision, setQrDataRevision] = useState(0);
 
   async function refreshManifestCandidates() {
     setManifestBusy(true);
@@ -132,6 +134,8 @@ export function QrAssociationPage() {
       );
       setCandidate(null);
       setSuccess(refreshed);
+      setQrDataRevision((value) => value + 1);
+      await refreshManifestCandidates();
     } catch (cause) {
       const code = cause && typeof cause === "object" && "code" in cause
         ? String(cause.code)
@@ -205,7 +209,7 @@ export function QrAssociationPage() {
         </header>
 
         <GlassPanel className="mt-7 p-6" glow="growth">
-          {profile?.site === "COO" ? <div className="mb-6"><QrStockSummaryCards endpoint="/api/agent/qr/stock-summary" /></div> : null}
+          {profile?.site === "COO" ? <div className="mb-6"><QrStockSummaryCards endpoint="/api/agent/qr/stock-summary" refreshKey={qrDataRevision} /></div> : null}
           <section className="mb-6 rounded-xl border border-white/15 bg-white/5 p-4" aria-label="Rechercher un QR">
             <h2 className="text-lg font-semibold">Rechercher un QR</h2>
             <p className="mt-1 text-xs text-muted-foreground">Consultation du registre QR en lecture seule.</p>
@@ -318,7 +322,8 @@ export function QrAssociationPage() {
               <p className="mt-3">QR {String(success.displayNumber).padStart(3, "0")} — {success.agency} + {success.trackingCode}</p>
             </section>
           )}
-          </> : <QrBatchAssociation initialInput={batchInput} onAssignmentsCompleted={() => void refreshManifestCandidates()} />}
+          </> : <QrBatchAssociation initialInput={batchInput} onAssignmentsCompleted={() => { setQrDataRevision((value) => value + 1); void refreshManifestCandidates(); }} />}
+          {profile?.site === "COO" ? <QrAssignmentHistory refreshKey={qrDataRevision} /> : null}
         </GlassPanel>
       </Container>
     </main>

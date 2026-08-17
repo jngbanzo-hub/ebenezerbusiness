@@ -1,24 +1,35 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { getQrStockAlert } from "@/features/qr-label/qr-stock-alert";
 import type { QrStockSummary } from "@/server/qr-stock-summary";
 
-export function QrStockSummaryCards({ endpoint }: { endpoint: string }) {
+export function QrStockSummaryCards({ endpoint, refreshKey = 0 }: { endpoint: string; refreshKey?: number }) {
   const [summary, setSummary] = useState<QrStockSummary | null>(null);
   const [error, setError] = useState("");
 
+  const refresh = useCallback(async () => {
+    try {
+      const response = await authenticatedRead(getSupabaseBrowserClient().auth, endpoint);
+      setSummary(await readJsonOrThrow<QrStockSummary>(response, "Stock QR indisponible."));
+      setError("");
+    } catch {
+      setError("Stock QR indisponible.");
+    }
+  }, [endpoint]);
+
   useEffect(() => {
     let active = true;
-    void authenticatedRead(getSupabaseBrowserClient().auth, endpoint)
-      .then((response) => readJsonOrThrow<QrStockSummary>(response, "Stock QR indisponible."))
-      .then((value) => { if (active) setSummary(value); })
-      .catch(() => { if (active) setError("Stock QR indisponible."); });
-    return () => { active = false; };
-  }, [endpoint]);
+    const load = async () => { if (active) await refresh(); };
+    void load();
+    const interval = window.setInterval(() => void load(), 30_000);
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
+    return () => { active = false; window.clearInterval(interval); window.removeEventListener("focus", onFocus); };
+  }, [refresh, refreshKey]);
 
   const alert = summary ? getQrStockAlert(summary.unassigned) : null;
 
