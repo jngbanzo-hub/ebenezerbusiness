@@ -69,12 +69,15 @@ test("sépare le total général du total hors TF Bénin par devise", () => {
       nombreDepenses: 3,
       parDevise: { USD: 1800, FCFA: 400, CDF: 0 },
       parAgence: {},
-      parCategorie: { "TF Bénin": { USD: 550, FCFA: 100 } }
+      parCategorie: {
+        "TF Bénin": { USD: 550, FCFA: 100 },
+        Déclarant: { USD: 240, FCFA: 50 }
+      }
     }
   });
-  assert.deepEqual(totals.USD, { general: 1800, withoutTfBenin: 1250 });
-  assert.deepEqual(totals.FCFA, { general: 400, withoutTfBenin: 300 });
-  assert.deepEqual(totals.CDF, { general: 0, withoutTfBenin: 0 });
+  assert.deepEqual(totals.USD, { general: 1800, withoutTfBenin: 1250, tfBenin: 550, declarant: 240 });
+  assert.deepEqual(totals.FCFA, { general: 400, withoutTfBenin: 300, tfBenin: 100, declarant: 50 });
+  assert.deepEqual(totals.CDF, { general: 0, withoutTfBenin: 0, tfBenin: 0, declarant: 0 });
 });
 
 test("catégorie TF Bénin seule donne zéro hors TF Bénin", () => {
@@ -89,4 +92,21 @@ test("catégorie TF Bénin seule donne zéro hors TF Bénin", () => {
   });
   assert.equal(totals.USD.general, 1800);
   assert.equal(totals.USD.withoutTfBenin, 0);
+  assert.equal(totals.USD.tfBenin, 1800);
+  assert.equal(totals.USD.declarant, 0);
+});
+
+test("les indicateurs de catégories suivent le résultat filtré et sa devise", () => {
+  const totals = projectExpenseTotals({
+    ...response,
+    totaux: {
+      nombreDepenses: 1,
+      parDevise: { FCFA: 25000 },
+      parAgence: {},
+      parCategorie: { Déclarant: { FCFA: 25000 } }
+    }
+  });
+  assert.equal(totals.FCFA.tfBenin, 0);
+  assert.equal(totals.FCFA.declarant, 25000);
+  assert.equal(totals.USD.declarant, 0);
 });

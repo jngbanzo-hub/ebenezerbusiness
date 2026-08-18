@@ -105,9 +105,20 @@ export function projectExpenseTotals(response: AdminExpensesResponse | null) {
   const currencies: AdminExpenseCurrency[] = ["USD", "FCFA", "CDF"];
   return Object.fromEntries(currencies.map((currency) => {
     const general = response?.totaux.parDevise[currency] ?? 0;
-    const excluded = response?.totaux.parCategorie["TF Bénin"]?.[currency] ?? 0;
-    return [currency, { general, withoutTfBenin: Math.max(0, general - excluded) }];
-  })) as Record<AdminExpenseCurrency, Readonly<{ general: number; withoutTfBenin: number }>>;
+    const tfBenin = response?.totaux.parCategorie["TF Bénin"]?.[currency] ?? 0;
+    const declarant = response?.totaux.parCategorie.Déclarant?.[currency] ?? 0;
+    return [currency, {
+      general,
+      withoutTfBenin: Math.max(0, general - tfBenin),
+      tfBenin,
+      declarant
+    }];
+  })) as Record<AdminExpenseCurrency, Readonly<{
+    general: number;
+    withoutTfBenin: number;
+    tfBenin: number;
+    declarant: number;
+  }>>;
 }
 
 export async function loadAdminExpenses(

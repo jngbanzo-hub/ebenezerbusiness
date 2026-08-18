@@ -77,6 +77,7 @@ export function AdminExpensesModule({ accessToken }: { accessToken: string }) {
   useEffect(() => updateLocation(filters), [filters]);
 
   const totals = useMemo(() => projectExpenseTotals(response), [response]);
+  const indicatorCurrency: AdminExpenseCurrency = filters.currency || "USD";
   const availableAgents = useMemo(
     () => agents.filter((agent) => !draft.agency || agent.agency === draft.agency),
     [agents, draft.agency]
@@ -108,7 +109,7 @@ export function AdminExpensesModule({ accessToken }: { accessToken: string }) {
       </form>
     </GlassPanel>
 
-    {response ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><TotalCard label="Nombre de dépenses" value={String(response.totaux.nombreDepenses)} />{currencies.map((currency) => <CurrencyTotalCard key={currency} currency={currency} general={totals[currency].general} withoutTfBenin={totals[currency].withoutTfBenin} />)}</div> : null}
+    {response ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><TotalCard label="Nombre de dépenses" value={String(response.totaux.nombreDepenses)} /><CurrencyTotalCard currency="USD" general={totals.USD.general} withoutTfBenin={totals.USD.withoutTfBenin} /><TotalCard label="Total TF Bénin" value={formatAmount(totals[indicatorCurrency].tfBenin, indicatorCurrency)} /><TotalCard label="Total Déclarant" value={formatAmount(totals[indicatorCurrency].declarant, indicatorCurrency)} /></div> : null}
 
     <GlassPanel className="overflow-hidden">
       <div className="flex flex-col gap-2 border-b border-white/10 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6"><div><h2 className="text-xl font-semibold">Dépenses enregistrées</h2><p className="mt-1 text-sm text-muted-foreground">{response ? `${response.pagination.total} résultat(s)` : "Lecture en cours"}</p></div>{loading ? <span className="flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="h-4 w-4 animate-spin text-accent" />Chargement…</span> : null}</div>

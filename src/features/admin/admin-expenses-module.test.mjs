@@ -12,10 +12,12 @@ test("la page Dépenses utilise uniquement la nouvelle API en lecture", () => {
   assert.doesNotMatch(source, /DEPENSES_PUBLIC_API_KEY|GOOGLE_|service_role/i);
 });
 
-test("affiche tous les filtres, états, pagination et totaux séparés", () => {
-  for (const label of ["Date de début", "Date de fin", "Agence", "Catégorie", "Devise", "Agent", "Statut", "Référence", "Total général", "Total hors TF Bénin", "Précédente", "Suivante", "Réessayer"]) {
+test("affiche tous les filtres, états, pagination et indicateurs demandés", () => {
+  for (const label of ["Date de début", "Date de fin", "Agence", "Catégorie", "Devise", "Agent", "Statut", "Référence", "Total général", "Total hors TF Bénin", "Total TF Bénin", "Total Déclarant", "Précédente", "Suivante", "Réessayer"]) {
     assert.match(source, new RegExp(label));
   }
+  assert.doesNotMatch(source, /currencies\.map\(\(currency\) => <CurrencyTotalCard/);
+  assert.match(source, /indicatorCurrency: AdminExpenseCurrency = filters\.currency \|\| "USD"/);
   assert.match(source, /Aucune dépense/);
   assert.match(source, /Lecture impossible/);
 });
