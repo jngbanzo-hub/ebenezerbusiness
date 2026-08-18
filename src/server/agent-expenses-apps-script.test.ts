@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { readAdminExpenses } from "./agent-expenses-apps-script";
+import { AdminExpenseReadError, readAdminExpenses } from "./agent-expenses-apps-script";
 
 const identity = {
   userId: "20000000-0000-4000-8000-000000000001",
@@ -53,5 +53,14 @@ test("refuse une réponse distante non conforme", () => withConfiguration(async 
   await assert.rejects(
     () => readAdminExpenses(identity, {}, async () => Response.json({ success: true, depenses: [{ secret: "leak" }] })),
     /Réponse Admin Dépenses invalide/
+  );
+}));
+
+test("préserve le code métier d’une catégorie invalide", () => withConfiguration(async () => {
+  await assert.rejects(
+    () => readAdminExpenses(identity, { categorie: "TF" }, async () =>
+      Response.json({ success: false, code: "CATEGORIE_INVALIDE", message: "Valeur de filtre invalide." })
+    ),
+    (error: unknown) => error instanceof AdminExpenseReadError && error.code === "CATEGORIE_INVALIDE"
   );
 }));

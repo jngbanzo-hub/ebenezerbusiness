@@ -123,6 +123,13 @@ export class AgentExpenseRequestError extends Error {
   }
 }
 
+export class AdminExpenseReadError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = "AdminExpenseReadError";
+  }
+}
+
 export async function readAdminExpenses(
   identity: AdminExpenseIdentity,
   value: AdminExpenseFilters,
@@ -158,6 +165,12 @@ export async function readAdminExpenses(
       throw new Error("Le service Dépenses a refusé la lecture Admin.");
     }
     const payload: unknown = await response.json();
+    if (isRecord(payload) && payload.success === false && typeof payload.code === "string") {
+      throw new AdminExpenseReadError(
+        payload.code,
+        typeof payload.message === "string" ? payload.message : "Lecture des dépenses refusée."
+      );
+    }
     const parsed = adminExpenseResponseSchema.safeParse(payload);
     if (!parsed.success) {
       throw new Error("Réponse Admin Dépenses invalide.");

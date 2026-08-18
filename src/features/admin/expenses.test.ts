@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { AdminExpensesApiError, loadAdminExpenses } from "./expenses";
+import { AdminExpensesApiError, loadActiveExpenseAgents, loadAdminExpenses, projectExpenseTotals } from "./expenses";
 
 const response = {
   success: true as const,
@@ -43,4 +43,50 @@ test("refuse une réponse distante non conforme", async () => {
     () => loadAdminExpenses("token", { page: 1, pageSize: 50 }, undefined, async () => Response.json({ success: true, secret: "non" })),
     /Réponse Dépenses invalide/
   );
+});
+
+test("charge uniquement les Agents actifs depuis la route Admin en lecture", async () => {
+  let capturedUrl = "";
+  const agents = await loadActiveExpenseAgents("admin-token", undefined, async (url, init) => {
+    capturedUrl = String(url);
+    assert.equal(init?.method, "GET");
+    assert.deepEqual(init?.headers, { Authorization: "Bearer admin-token" });
+    return Response.json({
+      success: true,
+      code: "ACTIVE_EXPENSE_AGENTS_LISTED",
+      readOnly: true,
+      agents: [{ id: "agent-klz", name: "Maman Deborah", agency: "KLZ" }]
+    });
+  });
+  assert.equal(capturedUrl, "/api/admin/expenses/agents");
+  assert.deepEqual(agents, [{ id: "agent-klz", name: "Maman Deborah", agency: "KLZ" }]);
+});
+
+test("sépare le total général du total hors TF Bénin par devise", () => {
+  const totals = projectExpenseTotals({
+    ...response,
+    totaux: {
+      nombreDepenses: 3,
+      parDevise: { USD: 1800, FCFA: 400, CDF: 0 },
+      parAgence: {},
+      parCategorie: { "TF Bénin": { USD: 550, FCFA: 100 } }
+    }
+  });
+  assert.deepEqual(totals.USD, { general: 1800, withoutTfBenin: 1250 });
+  assert.deepEqual(totals.FCFA, { general: 400, withoutTfBenin: 300 });
+  assert.deepEqual(totals.CDF, { general: 0, withoutTfBenin: 0 });
+});
+
+test("catégorie TF Bénin seule donne zéro hors TF Bénin", () => {
+  const totals = projectExpenseTotals({
+    ...response,
+    totaux: {
+      nombreDepenses: 2,
+      parDevise: { USD: 1800 },
+      parAgence: {},
+      parCategorie: { "TF Bénin": { USD: 1800 } }
+    }
+  });
+  assert.equal(totals.USD.general, 1800);
+  assert.equal(totals.USD.withoutTfBenin, 0);
 });

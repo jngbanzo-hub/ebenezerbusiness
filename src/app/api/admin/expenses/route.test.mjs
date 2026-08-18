@@ -17,3 +17,9 @@ test("la route refuse les filtres inconnus et ne met rien en cache", () => {
   assert.match(source, /INVALID_FILTERS/);
   assert.match(source, /private, no-store, max-age=0/);
 });
+
+test("une catégorie invalide conserve une erreur métier claire", () => {
+  assert.match(source, /AdminExpenseReadError/);
+  assert.match(source, /INVALID_CATEGORY/);
+  assert.match(source, /Catégorie invalide ou non reconnue\./);
+});

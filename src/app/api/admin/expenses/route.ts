@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 
 import { authorizeAdminRequest } from "@/server/admin-authorization";
 import {
+  AdminExpenseReadError,
   readAdminExpenses,
   type AdminExpenseFilters
 } from "@/server/agent-expenses-apps-script";
@@ -54,6 +55,9 @@ export async function GET(request: Request) {
     );
     return NextResponse.json(result, { headers: noStoreHeaders() });
   } catch (caught) {
+    if (caught instanceof AdminExpenseReadError && caught.code === "CATEGORIE_INVALIDE") {
+      return error(400, "INVALID_CATEGORY", "Catégorie invalide ou non reconnue.");
+    }
     if (caught instanceof ZodError || caught instanceof InvalidNumberError) {
       return error(400, "INVALID_FILTERS", "Filtres invalides.");
     }

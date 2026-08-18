@@ -13,43 +13,7 @@ import {
   type RequestIdAttempt
 } from "@/features/agent/request-id-attempt";
 import { logOperationPerformance } from "@/features/agent/operation-performance-client";
-
-const CATEGORIES = [
-  "Aéroport",
-  "Expédition FIH",
-  "Expédition LSHI",
-  "Expédition KLZ",
-  "Expédition LKS",
-  "Déclarant",
-  "Manutention",
-  "Barrière",
-  "Entrepôt",
-  "Transport",
-  "Crédit",
-  "Connexion",
-  "Pasteur Sera",
-  "Ma Vanela",
-  "Pasteur Jacques",
-  "TF Bénin",
-  "TF LSHI",
-  "TF FIH",
-  "Frais d’envoi",
-  "Frais de retrait",
-  "Commission clients",
-  "Scotch",
-  "Sacs",
-  "Loyer",
-  "Eau",
-  "Électricité",
-  "Filmage",
-  "Poubelle",
-  "Chauffeur",
-  "Salaire",
-  "Prime",
-  "Dette",
-  "Impression",
-  "Autres"
-] as const;
+import { EXPENSE_CATEGORIES } from "@/features/expenses/categories";
 
 const CURRENCIES = ["USD", "FCFA", "CDF"] as const;
 const PAYMENT_MODES = [
@@ -62,7 +26,7 @@ const PAYMENT_MODES = [
 ] as const;
 
 type ExpenseFormValues = {
-  categorie: (typeof CATEGORIES)[number];
+  categorie: (typeof EXPENSE_CATEGORIES)[number];
   description: string;
   montant: string;
   devise: (typeof CURRENCIES)[number];
@@ -247,7 +211,7 @@ export function AgentExpenseForm() {
                     }
                     className={fieldClassName}
                   >
-                    {CATEGORIES.map((category) => (
+                    {EXPENSE_CATEGORIES.map((category) => (
                       <option
                         key={category}
                         value={category}

@@ -13,11 +13,20 @@ test("la page Dépenses utilise uniquement la nouvelle API en lecture", () => {
 });
 
 test("affiche tous les filtres, états, pagination et totaux séparés", () => {
-  for (const label of ["Date de début", "Date de fin", "Agence", "Catégorie", "Devise", "Agent", "Statut", "Référence", "Total USD", "Total FCFA", "Total CDF", "Précédente", "Suivante", "Réessayer"]) {
+  for (const label of ["Date de début", "Date de fin", "Agence", "Catégorie", "Devise", "Agent", "Statut", "Référence", "Total général", "Total hors TF Bénin", "Précédente", "Suivante", "Réessayer"]) {
     assert.match(source, new RegExp(label));
   }
   assert.match(source, /Aucune dépense/);
   assert.match(source, /Lecture impossible/);
+});
+
+test("Catégorie et Agent sont des listes issues des sources autorisées", () => {
+  assert.match(source, /EXPENSE_CATEGORIES\.map/);
+  assert.match(source, /loadActiveExpenseAgents/);
+  assert.match(source, /Tous les Agents/);
+  assert.match(source, /agent\.agency === draft\.agency/);
+  assert.match(source, /agentStillAvailable[\s\S]*agent: agentStillAvailable \? draft\.agent : undefined/);
+  assert.doesNotMatch(source, /placeholder="Toutes les catégories"|placeholder="Nom de l’agent"/);
 });
 
 test("conserve les filtres dans l’URL et reste responsive", () => {
