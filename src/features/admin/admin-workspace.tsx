@@ -76,6 +76,7 @@ const PERIOD_OPTIONS: Array<{ value: AdminPeriodPreset; label: string }> = [
 
 const fieldClassName =
   "mt-2 h-11 w-full rounded-md border border-white/15 bg-white/[0.05] px-3 text-white outline-none transition placeholder:text-muted-foreground focus:border-accent focus:ring-2 focus:ring-accent/25";
+const ADMIN_NOTIFICATION_ENDPOINTS = ["/api/admin/recent-activity", "/api/admin/alerts"] as const;
 
 export type AdminWorkspaceModule = "home" | "payments" | "cash" | "expenses" | "shippers";
 
@@ -300,7 +301,11 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
           </div>
           <div className="flex flex-wrap gap-3">
             {module !== "home" ? <Button asChild type="button" variant="outline"><Link href="/admin">Retour au tableau de bord Admin</Link></Button> : null}
-            <NotificationBell href="/admin/notifications" endpoint="/api/admin/alerts" label="Notifications" />
+            <NotificationBell
+              href="/admin/notifications"
+              endpoints={ADMIN_NOTIFICATION_ENDPOINTS}
+              label="Notifications"
+            />
             <Button type="button" variant="outline" onClick={handleSignOut}>
               <LogOut className="h-4 w-4" />
               Se déconnecter

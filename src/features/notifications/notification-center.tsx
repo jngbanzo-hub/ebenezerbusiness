@@ -10,9 +10,31 @@ import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticate
 
 type Item = { id: string; type: string; title: string; message: string; agency: string; actorName: string; occurredAt: string; read: boolean };
 
-export function NotificationBell({ href, endpoint="/api/notifications?filter=unread", label="Notifications" }: { href: string; endpoint?: string; label?: string }) {
+export function NotificationBell({ href, endpoint="/api/notifications?filter=unread", endpoints, label="Notifications" }: { href: string; endpoint?: string; endpoints?: readonly string[]; label?: string }) {
   const [count, setCount] = useState(0);
-  useEffect(() => { void request(endpoint).then((value) => setCount(Number(value.count ?? value.unreadCount ?? 0))).catch(() => undefined); }, [endpoint]);
+  useEffect(() => {
+    const sources = endpoints ?? [endpoint];
+    let active = true;
+    const load = async () => {
+      try {
+        const values = await Promise.all(sources.map((source) => request(source)));
+        if (active) setCount(values.reduce((total, value) => total + Number(value.unreadCount ?? value.count ?? 0), 0));
+      } catch {
+        // Conserver le dernier compteur connu si une lecture temporaire échoue.
+      }
+    };
+    const refresh = () => { if (document.visibilityState === "visible") void load(); };
+    void load();
+    const intervalId = window.setInterval(refresh, 30_000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [endpoint, endpoints]);
   return <Button asChild type="button" variant="outline"><a href={href} aria-label={`${label}${count ? `, ${count}` : ""}`}><Bell className="h-4 w-4"/>{label}{count > 0 ? <span className="rounded-full bg-accent px-2 py-0.5 text-xs font-bold text-ebe-night">{count}</span> : null}</a></Button>;
 }
 

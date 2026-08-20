@@ -25,7 +25,7 @@ test("le compteur public de la route Admin correspond aux non lues", () => {
   assert.match(center, /activeCount:alerts\.length/);
   assert.match(center, /readCount:alerts\.length-unreadCount/);
   assert.match(ui, /onCount\?\.\(value\.unreadCount\)/);
-  assert.match(bell, /endpoint="\/api\/admin\/alerts"/);
+  assert.match(bell, /ADMIN_NOTIFICATION_ENDPOINTS = \["\/api\/admin\/recent-activity", "\/api\/admin\/alerts"\]/);
 });
 
 test("l'interface conserve les alertes actives et propose Lues, Non lues et Tout marquer", () => {
