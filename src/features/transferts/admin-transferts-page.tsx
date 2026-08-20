@@ -29,6 +29,12 @@ import { AdminTransferDetails } from "@/features/transferts/admin-transfer-detai
 
 const fieldClassName =
   "mt-2 h-11 w-full rounded-md border border-white/15 bg-white/[0.05] px-3 text-white outline-none";
+const periodLabels: Record<string, string> = {
+  TODAY: "Aujourd’hui",
+  THIS_WEEK: "Cette semaine",
+  THIS_MONTH: "Ce mois",
+  CUSTOM: "Période personnalisée"
+};
 
 export function AdminTransfertsPage() {
   const router = useRouter();
@@ -51,6 +57,7 @@ export function AdminTransfertsPage() {
   const [dateTo, setDateTo] = useState("");
   const [selectedTransferId, setSelectedTransferId] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
+  const customPeriodIncomplete = period === "CUSTOM" && (!dateFrom || !dateTo);
   const filters = useMemo(
     () => ({
       period,
@@ -91,7 +98,7 @@ export function AdminTransfertsPage() {
   }, [router]);
 
   useEffect(() => {
-    if (!authorized || !token.current) return;
+    if (!authorized || !token.current || customPeriodIncomplete) return;
     const controller = new AbortController();
     let active = true;
     async function load() {
@@ -128,10 +135,10 @@ export function AdminTransfertsPage() {
     }
     void load();
     return () => { active = false; controller.abort(); };
-  }, [agencyFrom, agencyTo, authorized, circuit, currency, dateFrom, dateTo, filters, period, reloadKey, router, status, transferId]);
+  }, [agencyFrom, agencyTo, authorized, circuit, currency, customPeriodIncomplete, dateFrom, dateTo, filters, period, reloadKey, router, status, transferId]);
 
   useEffect(() => {
-    if (!authorized || !token.current || !result?.adminEnabled) return;
+    if (!authorized || !token.current || !result?.adminEnabled || customPeriodIncomplete) return;
     const controller = new AbortController();
     let active = true;
     async function loadAudit() {
@@ -159,7 +166,7 @@ export function AdminTransfertsPage() {
     }
     void loadAudit();
     return () => { active = false; controller.abort(); };
-  }, [agencyFrom, agencyTo, authorized, circuit, currency, dateFrom, dateTo, period, reloadKey, result?.adminEnabled, router, status, transferId]);
+  }, [agencyFrom, agencyTo, authorized, circuit, currency, customPeriodIncomplete, dateFrom, dateTo, period, reloadKey, result?.adminEnabled, router, status, transferId]);
 
   async function handleSignOut() {
     await signOutAgent();
@@ -327,7 +334,7 @@ function Filters({ values, setters }: { values: FilterValues; setters: FilterSet
     <GlassPanel className="mt-6 p-5 sm:p-6">
       <h2 className="flex items-center gap-3 text-xl font-semibold"><SlidersHorizontal className="h-5 w-5 text-accent" />Filtres</h2>
       <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Select label="Période" value={values.period} onChange={setters.setPeriod} options={["TODAY", "THIS_WEEK", "THIS_MONTH", "CUSTOM"]} all={false} />
+        <Select label="Période" value={values.period} onChange={setters.setPeriod} options={["TODAY", "THIS_WEEK", "THIS_MONTH", "CUSTOM"]} labels={periodLabels} all={false} />
         <Select label="Agence expéditrice" value={values.agencyFrom} onChange={setters.setAgencyFrom} options={[...TRANSFER_AGENCIES]} />
         <Select label="Agence bénéficiaire" value={values.agencyTo} onChange={setters.setAgencyTo} options={[...TRANSFER_AGENCIES]} />
         <Select label="Circuit" value={values.circuit} onChange={setters.setCircuit} options={[...TRANSFER_CIRCUITS]} />
@@ -340,5 +347,5 @@ function Filters({ values, setters }: { values: FilterValues; setters: FilterSet
   );
 }
 function Status({ label, value }: { label: string; value: string }) { return <GlassPanel className="p-5"><p className="text-sm text-muted-foreground">{label}</p><p className="mt-2 font-semibold">{value}</p></GlassPanel>; }
-function Select({ label, value, onChange, options, all = true }: { label: string; value: string; onChange: (value: string) => void; options: string[]; all?: boolean }) { return <label className="text-sm">{label}<select className={fieldClassName} value={value} onChange={(event) => onChange(event.target.value)}>{all ? <option value="" className="bg-ebe-navy">Tous</option> : null}{options.map((option) => <option key={option} value={option} className="bg-ebe-navy">{option.replace(">", " → ")}</option>)}</select></label>; }
+function Select({ label, value, onChange, options, labels, all = true }: { label: string; value: string; onChange: (value: string) => void; options: string[]; labels?: Record<string, string>; all?: boolean }) { return <label className="text-sm">{label}<select className={fieldClassName} value={value} onChange={(event) => onChange(event.target.value)}>{all ? <option value="" className="bg-ebe-navy">Tous</option> : null}{options.map((option) => <option key={option} value={option} className="bg-ebe-navy">{labels?.[option] ?? option.replace(">", " → ")}</option>)}</select></label>; }
 function Input({ label, value, onChange, type = "text" }: { label: string; value: string; onChange: (value: string) => void; type?: string }) { return <label className="text-sm">{label}<input type={type} className={fieldClassName} value={value} onChange={(event) => onChange(event.target.value)} /></label>; }
