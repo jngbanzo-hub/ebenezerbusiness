@@ -126,12 +126,16 @@ export function QrBatchAssociation({
       const associated = results.filter((result) => result.state === "ASSOCIATED").length;
       const already = results.filter((result) => result.state === "ALREADY_ASSOCIATED").length;
       const failures = results.filter((result) => result.state === "ERROR").length;
-      setFinalSummary({
+      const summary = {
         associated,
         alreadyAssociated: already,
         errors: failures,
         notProcessed: Math.max(0, next.filter((line) => line.ready).length - results.length)
-      });
+      };
+      setFinalSummary(summary);
+      if (!summary.alreadyAssociated && !summary.errors && !summary.notProcessed) {
+        setInput("");
+      }
       if (associated || already) onAssignmentsCompleted?.();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Confirmation série impossible.");
