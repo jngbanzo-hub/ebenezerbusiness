@@ -6,6 +6,8 @@ import type { AdminPayment, ManifestShipperRow } from "@/features/admin/types";
 import { normalizeManifestRowDate } from "@/server/agent-manifest-date";
 import { readAdminManifestRows } from "@/server/admin-manifest-sheets";
 import { readAdminPayments } from "@/server/admin-payments-sheets";
+import { findShipmentParcelMatches, type AdminShipmentParcelMatch } from "@/server/admin-shipment-parcel-match";
+import { readShipmentStatistics } from "@/server/admin-statistics-sheets";
 import { readAdminQr } from "@/server/qr-admin-service";
 
 type SourceState = "FOUND" | "ABSENT" | "UNAVAILABLE_TEMPORARILY";
@@ -17,6 +19,7 @@ export type AdminGlobalParcelSearchResult = {
   manifest: SourceResult<{ agency: string; date: string; weightKg: number | null; status: string; rowNumber: number }>;
   storage: SourceResult<{ agency: string; weightKg: number; status: string; createdAt: string; updatedAt: string; lastEvent: { type: string; occurredAt: string } | null; events: Array<{ type: string; occurredAt: string }> }>;
   payments: SourceResult<AdminPayment>;
+  shipments: SourceResult<AdminShipmentParcelMatch>;
   qr: SourceResult<{ qrId: string; displayNumber: number; status: string; version: number; agency: string | null; trackingCode: string | null; assignedAt: string | null; audit: Array<{ action: string; occurredAt: string }> }>;
 };
 
@@ -28,13 +31,14 @@ export function normalizeGlobalParcelCode(value: unknown) {
 export async function searchAdminParcelGlobally(actorId: string, rawCode: string): Promise<AdminGlobalParcelSearchResult> {
   const code = normalizeGlobalParcelCode(rawCode);
   if (!code) throw new Error("INVALID_TRACKING_CODE");
-  const [manifest, storage, payments, qr] = await Promise.all([
+  const [manifest, storage, payments, shipments, qr] = await Promise.all([
     isolated(() => searchManifest(code)),
     isolated(() => searchStorage(code)),
     isolated(() => searchPayments(code)),
+    isolated(() => searchShipments(code)),
     isolated(() => searchQr(actorId, code))
   ]);
-  return { code, found: [manifest, storage, payments, qr].some((source) => source.state === "FOUND"), manifest, storage, payments, qr };
+  return { code, found: [manifest, storage, payments, shipments, qr].some((source) => source.state === "FOUND"), manifest, storage, payments, shipments, qr };
 }
 
 async function isolated<T>(read: () => Promise<T[]>): Promise<SourceResult<T>> {
@@ -58,6 +62,10 @@ async function searchManifest(code: string) {
 
 async function searchPayments(code: string) {
   return (await readAdminPayments()).filter((payment) => exact(payment.codeColis, code));
+}
+
+async function searchShipments(code: string) {
+  return findShipmentParcelMatches((await readShipmentStatistics()).shipments, code);
 }
 
 async function searchStorage(code: string) {
