@@ -122,18 +122,34 @@ export async function prevalidateQrBatch(
   }>,
   fetcher: Fetcher = fetch
 ): Promise<QrBatchPrevalidationLine[]> {
-  const response = await authenticatedRead(
-    auth,
-    "/api/agent/qr/batch-prevalidate",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ lines })
-    },
-    fetcher
-  );
-  const payload = await readResponse<{ lines: QrBatchPrevalidationLine[] }>(response);
-  return payload.lines;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 35_000);
+  try {
+    const response = await authenticatedRead(
+      auth,
+      "/api/agent/qr/batch-prevalidate",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lines }),
+        signal: controller.signal
+      },
+      fetcher
+    );
+    const payload = await readResponse<{ lines: QrBatchPrevalidationLine[] }>(response);
+    return payload.lines;
+  } catch (cause) {
+    if (controller.signal.aborted) {
+      throw new AuthenticatedRequestError(
+        "Prévalidation temporairement indisponible. Veuillez réessayer.",
+        503,
+        "BATCH_PREVALIDATION_TIMEOUT"
+      );
+    }
+    throw cause;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function loadManifestQrCandidates(

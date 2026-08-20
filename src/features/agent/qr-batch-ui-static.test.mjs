@@ -22,6 +22,7 @@ test("prévisualise chaque ligne et exige une confirmation explicite", () => {
   assert.ok(batch.indexOf("Je confirme explicitement") < batch.indexOf("Correspondances QR → colis"));
   assert.match(batch, /\{readyCount \? <section/);
   assert.match(batch, /disabled=\{busy \|\| !confirmed\}/);
+  assert.match(batch, /Prévalidation en cours…/);
 });
 
 test("met en évidence un QR déjà utilisé avec sa destination et son code actuels", () => {

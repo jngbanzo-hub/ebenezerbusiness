@@ -134,7 +134,7 @@ export function QrBatchAssociation({
       <p className="text-xs text-muted-foreground">Une ligne = numéro QR visible | destination | code colis complet. Chaque ligne est indépendante.</p>
       <Button type="button" variant="growth" className="w-full" disabled={busy} onClick={() => void handlePrevalidate()}>
         {busy ? <LoaderCircle className="h-4 w-4 animate-spin"/> : <ShieldCheck className="h-4 w-4"/>}
-        Prévalider la série
+        {busy ? "Prévalidation en cours…" : "Prévalider la série"}
       </Button>
       {error ? <p role="alert" className="rounded-md border border-red-300/30 bg-red-400/10 p-3 text-sm text-red-100">{error}</p> : null}
       {lines.length ? (

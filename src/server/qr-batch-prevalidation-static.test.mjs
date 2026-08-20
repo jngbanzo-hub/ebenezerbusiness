@@ -14,12 +14,13 @@ test("couvre les refus et doublons requis ligne par ligne", () => {
 
 test("certifie le MANIFESTE et recherche les collisions sans mutation", () => {
   assert.match(service, /dependencies\.certify/);
-  assert.match(service, /findActiveAssignment/);
+  assert.match(service, /readRegistry/);
   assert.match(service, /rpc\("read_qr_manifest_registry_server"/);
   assert.doesNotMatch(service, /\.from\("qr_labels"\)/);
   assert.doesNotMatch(service, /\.update\(|\.insert\(|\.delete\(|assign_qr_label_server/);
 });
 
 test("limite les lectures concurrentes pour les grandes séries", () => {
-  assert.match(service, /mapWithConcurrency\(normalized, 2/);
+  assert.match(service, /mapWithConcurrency\(normalized, 5/);
+  assert.match(service, /withTimeout[\s\S]*12_000/);
 });

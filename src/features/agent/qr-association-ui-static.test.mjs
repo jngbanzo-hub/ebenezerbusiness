@@ -44,6 +44,8 @@ test("ajoute une recherche rapide strictement en lecture via le résolveur Agent
 
 test("utilise seulement les routes serveur avec la session existante", () => {
   assert.match(client, /authenticatedRead/);
+  assert.match(client, /AbortController/);
+  assert.match(client, /BATCH_PREVALIDATION_TIMEOUT/);
   assert.match(client, /\/api\/agent\/qr\/resolve/);
   assert.match(client, /\/api\/agent\/qr\/assign/);
   assert.doesNotMatch([component, client, route].join("\n"), /assign_qr_label_server|SUPABASE_SERVICE_ROLE_KEY/);
