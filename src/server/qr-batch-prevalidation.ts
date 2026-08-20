@@ -3,10 +3,9 @@ import "server-only";
 import { createClient } from "@supabase/supabase-js";
 
 import {
-  certifyQrParcelIdentity,
-  QrIdentityCertificationError,
   type QrAgency
 } from "@/server/qr-identity-certifier";
+import { readCanonicalPaymentManifestRows } from "@/server/admin-manifest-sheets";
 
 export type QrBatchInputLine = {
   lineNumber: number;
@@ -57,12 +56,12 @@ export type QrBatchPrevalidationDependencies = {
     registry: ResolvedQr[];
     activeAssignments: Array<{ qrId: string; agency: QrAgency; trackingCode: string }>;
   }>;
-  certify: typeof certifyQrParcelIdentity;
+  readManifestIdentities: () => Promise<Set<string>>;
 };
 
 export async function prevalidateQrBatch(
   lines: QrBatchInputLine[],
-  bearerToken: string,
+  _bearerToken: string,
   dependencies: QrBatchPrevalidationDependencies = defaultDependencies
 ) {
   const normalized = lines.map((line) => ({
@@ -77,18 +76,21 @@ export async function prevalidateQrBatch(
     .map((line) => normalizedQrNumber(line.displayNumber))
     .filter((value) => /^[1-9][0-9]{0,14}$/.test(value))
     .map(Number)));
-  let registrySnapshot: Awaited<ReturnType<QrBatchPrevalidationDependencies["readRegistry"]>>;
-  let registryAvailable = true;
-  try {
-    registrySnapshot = await dependencies.readRegistry(displayNumbers);
-  } catch {
-    registryAvailable = false;
-    registrySnapshot = { registry: [], activeAssignments: [] };
-  }
+  const requestStartedAt = Date.now();
+  const [registryResult, manifestResult] = await Promise.allSettled([
+    measured("QR_REGISTRY", () => dependencies.readRegistry(displayNumbers)),
+    measured("MANIFEST_CANONICAL", dependencies.readManifestIdentities)
+  ]);
+  const registryAvailable = registryResult.status === "fulfilled";
+  const manifestAvailable = manifestResult.status === "fulfilled";
+  const registrySnapshot = registryAvailable
+    ? registryResult.value
+    : { registry: [], activeAssignments: [] };
+  const manifestIdentities = manifestAvailable ? manifestResult.value : new Set<string>();
   const registry = new Map(registrySnapshot.registry.map((qr) => [qr.displayNumber, qr]));
   const assignedParcels = new Set(registrySnapshot.activeAssignments.map((item) => `${item.agency}|${item.trackingCode}`));
 
-  return mapWithConcurrency(normalized, 5, async (line) => {
+  const results = normalized.map((line) => {
     const qrKey = normalizedQrNumber(line.displayNumber);
     const parcelKey = `${line.agency}|${line.trackingCode}`;
     const base = {
@@ -110,56 +112,59 @@ export async function prevalidateQrBatch(
     }
     if (!registryAvailable) return { ...base, result: "SOURCE_UNAVAILABLE" as const };
 
-    try {
-      const qr = registry.get(Number(qrKey));
-      if (!qr) return { ...base, result: "QR_UNKNOWN" as const };
-      const withQr = {
-        ...base,
-        qrId: qr.qrId,
-        qrStatus: qr.status,
-        version: qr.version,
-        currentAgency: qr.agency,
-        currentTrackingCode: qr.trackingCode
-      };
-      if (qr.status === "ASSIGNED") return { ...withQr, result: "QR_ALREADY_ASSIGNED" as const };
-      if (qr.status === "REVOKED") return { ...withQr, result: "QR_REVOKED" as const };
-
-      if (assignedParcels.has(parcelKey)) return { ...withQr, result: "PARCEL_ALREADY_ASSIGNED" as const };
-      await withTimeout(
-        dependencies.certify({ agency: line.agency, trackingCode: line.trackingCode }, bearerToken),
-        12_000
-      );
-      return {
-        ...withQr,
-        displayNumber: String(qr.displayNumber),
-        manifestCertified: true,
-        ready: true,
-        result: "READY" as const
-      };
-    } catch (cause) {
-      if (cause instanceof QrIdentityCertificationError && cause.code === "IDENTITY_NOT_FOUND") {
-        return { ...base, result: "INVALID_CODE" as const };
-      }
-      return { ...base, result: "SOURCE_UNAVAILABLE" as const };
-    }
+    const qr = registry.get(Number(qrKey));
+    if (!qr) return { ...base, result: "QR_UNKNOWN" as const };
+    const withQr = {
+      ...base,
+      qrId: qr.qrId,
+      qrStatus: qr.status,
+      version: qr.version,
+      currentAgency: qr.agency,
+      currentTrackingCode: qr.trackingCode
+    };
+    if (qr.status === "ASSIGNED") return { ...withQr, result: "QR_ALREADY_ASSIGNED" as const };
+    if (qr.status === "REVOKED") return { ...withQr, result: "QR_REVOKED" as const };
+    if (assignedParcels.has(parcelKey)) return { ...withQr, result: "PARCEL_ALREADY_ASSIGNED" as const };
+    if (!manifestAvailable) return { ...withQr, result: "SOURCE_UNAVAILABLE" as const };
+    if (!manifestIdentities.has(parcelKey)) return { ...withQr, result: "INVALID_CODE" as const };
+    return {
+      ...withQr,
+      displayNumber: String(qr.displayNumber),
+      manifestCertified: true,
+      ready: true,
+      result: "READY" as const
+    };
   });
+  console.info("[qr-batch-prevalidation]", JSON.stringify({
+    step: "BATCH_RESULT",
+    durationMs: Date.now() - requestStartedAt,
+    success: true,
+    lines: results.length,
+    ready: results.filter((line) => line.ready).length,
+    errors: results.filter((line) => !line.ready).length
+  }));
+  return results;
 }
 
-async function mapWithConcurrency<T, R>(
-  values: readonly T[],
-  concurrency: number,
-  worker: (value: T) => Promise<R>
-): Promise<R[]> {
-  const results = new Array<R>(values.length);
-  let nextIndex = 0;
-  async function run() {
-    while (nextIndex < values.length) {
-      const index = nextIndex++;
-      results[index] = await worker(values[index]!);
-    }
+async function measured<T>(step: string, operation: () => Promise<T>): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    const value = await operation();
+    console.info("[qr-batch-prevalidation]", JSON.stringify({
+      step,
+      durationMs: Date.now() - startedAt,
+      success: true
+    }));
+    return value;
+  } catch (cause) {
+    console.error("[qr-batch-prevalidation]", JSON.stringify({
+      step,
+      durationMs: Date.now() - startedAt,
+      success: false,
+      code: cause instanceof Error ? cause.message : "UNKNOWN_ERROR"
+    }));
+    throw cause;
   }
-  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, run));
-  return results;
 }
 
 function duplicateKeys(values: string[]) {
@@ -178,8 +183,17 @@ function isQrAgency(value: string): value is QrAgency {
 
 const defaultDependencies: QrBatchPrevalidationDependencies = {
   readRegistry: readQrRegistrySnapshot,
-  certify: certifyQrParcelIdentity
+  readManifestIdentities: readCanonicalManifestIdentities
 };
+
+async function readCanonicalManifestIdentities() {
+  const rows = await readCanonicalPaymentManifestRows();
+  return new Set(rows.flatMap((row) => {
+    const agency = String(row.sourceSite).trim().toUpperCase();
+    const trackingCode = String(row.codeColisRaw ?? "").trim().toUpperCase();
+    return isQrAgency(agency) && trackingCode ? [`${agency}|${trackingCode}`] : [];
+  }));
+}
 
 async function readQrRegistrySnapshot(displayNumbers: number[]) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -211,11 +225,4 @@ async function readQrRegistrySnapshot(displayNumbers: number[]) {
         : [];
     })
   };
-}
-
-function withTimeout<T>(promise: Promise<T>, delayMs: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("SOURCE_TIMEOUT")), delayMs))
-  ]);
 }
