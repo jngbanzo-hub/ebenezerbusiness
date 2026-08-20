@@ -8,10 +8,8 @@ const page = readFileSync(new URL("../features/agent/qr-association-page.tsx", i
 const stock = readFileSync(new URL("../features/qr-label/qr-stock-summary.tsx", import.meta.url), "utf8");
 
 test("l'historique COO lit toutes les associations initiales officielles", () => {
-  assert.match(service, /\.from\("qr_audit_events"\)/);
-  assert.match(service, /\.eq\("action", "INITIAL_ASSIGNMENT"\)/);
-  assert.doesNotMatch(service, /\.eq\("actor_agency"/);
-  assert.match(service, /\.from\("qr_labels"\)/);
+  assert.match(service, /rpc\("read_qr_assignment_history_server"/);
+  assert.doesNotMatch(service, /\.from\("qr_audit_events"\)|\.from\("qr_labels"\)/);
   assert.doesNotMatch(service, /\.insert\(|\.update\(|\.delete\(|\.upsert\(/);
 });
 

@@ -249,14 +249,14 @@ export function QrAssociationPage() {
             </div>
             {manifestError ? <p role="alert" className="mt-3 text-sm text-amber-200">{manifestError}</p> : null}
             {manifestOpen ? <div className="mt-4 space-y-4">
-              {manifestCandidates.length ? <div className="overflow-x-auto rounded-lg border border-white/10">
+              {readyManifestCandidates.length ? <div className="overflow-x-auto rounded-lg border border-white/10">
                 <table className="w-full min-w-[760px] text-left text-sm">
                   <thead className="bg-white/5 text-muted-foreground"><tr><th className="p-3">Date</th><th>QR visible</th><th>Destination</th><th>Code colis</th><th>État QR</th><th>Prévalidation</th></tr></thead>
-                  <tbody>{manifestCandidates.map((line) => <tr key={`${line.agency}:${line.rowNumber}`} className={line.result === "QR_ALREADY_ASSIGNED" ? "border-t border-red-300/30 bg-red-500/15" : "border-t border-white/10"}>
+                  <tbody>{readyManifestCandidates.map((line) => <tr key={`${line.agency}:${line.rowNumber}`} className="border-t border-white/10">
                     <td className="p-3">{line.date || "—"}</td><td>{line.displayNumber || line.qrNumber}</td><td>{line.agency}</td><td>{line.trackingCode || "—"}</td><td>{line.qrStatus === "ASSIGNED" ? <span className="font-bold text-red-100">QR DÉJÀ UTILISÉ<br/><span className="font-normal">{line.currentAgency ?? "—"} · {line.currentTrackingCode ?? "—"}</span></span> : line.qrStatus ?? "—"}</td><td className={line.ready ? "text-accent" : "text-amber-200"}>{MANIFEST_RESULT_LABELS[line.result] ?? line.result}</td>
                   </tr>)}</tbody>
                 </table>
-              </div> : <p className="text-sm text-muted-foreground">Aucune valeur QR détectée dans la colonne H.</p>}
+              </div> : <p className="text-sm text-muted-foreground">Aucun nouveau QR prêt à associer.</p>}
               <Button type="button" variant="growth" className="w-full" disabled={!readyManifestCandidates.length} onClick={loadCandidatesIntoBatch}>Charger dans Association en série</Button>
             </div> : null}
           </section>

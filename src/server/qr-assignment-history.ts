@@ -17,42 +17,22 @@ export type QrAssignmentHistoryItem = {
 
 export async function readRecentInitialQrAssignments(limit = 50): Promise<QrAssignmentHistoryItem[]> {
   const client = serviceClient();
-  const { data: audits, error: auditError } = await client
-    .from("qr_audit_events")
-    .select("event_id,qr_id,new_agency,new_tracking_code,actor_id,actor_role,occurred_at")
-    .eq("action", "INITIAL_ASSIGNMENT")
-    .order("occurred_at", { ascending: false })
-    .limit(Math.min(Math.max(limit, 1), 100));
-  if (auditError) throw new Error("QR_HISTORY_UNAVAILABLE");
-  if (!audits?.length) return [];
-
-  const qrIds = Array.from(new Set(audits.map((row) => String(row.qr_id))));
-  const actorIds = Array.from(new Set(audits.map((row) => String(row.actor_id))));
-  const [{ data: labels, error: labelError }, { data: agents, error: agentError }] = await Promise.all([
-    client.from("qr_labels").select("qr_id,display_number,status,agency,tracking_code").in("qr_id", qrIds),
-    client.from("agents").select("id,nom").in("id", actorIds)
-  ]);
-  if (labelError || agentError) throw new Error("QR_HISTORY_UNAVAILABLE");
-
-  const labelById = new Map((labels ?? []).map((row) => [String(row.qr_id), row]));
-  const actorById = new Map((agents ?? []).map((row) => [String(row.id), String(row.nom ?? "").trim() || null]));
-  return audits.flatMap((audit) => {
-    const qrId = String(audit.qr_id);
-    const label = labelById.get(qrId);
-    if (!label) return [];
-    return [{
-      eventId: String(audit.event_id),
-      qrId,
-      displayNumber: Number(label.display_number),
-      agency: String(audit.new_agency ?? label.agency ?? ""),
-      trackingCode: String(audit.new_tracking_code ?? label.tracking_code ?? ""),
-      assignedAt: String(audit.occurred_at),
-      actorId: String(audit.actor_id),
-      actorName: actorById.get(String(audit.actor_id)) ?? null,
-      actorRole: String(audit.actor_role),
-      status: String(label.status) as QrAssignmentHistoryItem["status"]
-    }];
+  const { data, error } = await client.rpc("read_qr_assignment_history_server", {
+    p_limit: Math.min(Math.max(limit, 1), 100)
   });
+  if (error || !Array.isArray(data)) throw new Error("QR_HISTORY_UNAVAILABLE");
+  return data.map((item: Record<string, unknown>) => ({
+    eventId: String(item.eventId),
+    qrId: String(item.qrId),
+    displayNumber: Number(item.displayNumber),
+    agency: String(item.agency ?? ""),
+    trackingCode: String(item.trackingCode ?? ""),
+    assignedAt: String(item.assignedAt),
+    actorId: String(item.actorId),
+    actorName: typeof item.actorName === "string" ? item.actorName : null,
+    actorRole: String(item.actorRole),
+    status: String(item.status) as QrAssignmentHistoryItem["status"]
+  }));
 }
 
 function serviceClient() {

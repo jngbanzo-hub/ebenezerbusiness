@@ -72,7 +72,7 @@ export async function prevalidateQrBatch(
   const duplicateQr = duplicateKeys(normalized.map((line) => normalizedQrNumber(line.displayNumber)));
   const duplicateParcel = duplicateKeys(normalized.map((line) => `${line.agency}|${line.trackingCode}`));
 
-  return Promise.all(normalized.map(async (line) => {
+  return mapWithConcurrency(normalized, 2, async (line) => {
     const qrKey = normalizedQrNumber(line.displayNumber);
     const parcelKey = `${line.agency}|${line.trackingCode}`;
     const base = {
@@ -126,7 +126,24 @@ export async function prevalidateQrBatch(
       }
       return { ...base, result: "SOURCE_UNAVAILABLE" as const };
     }
-  }));
+  });
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  worker: (value: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  async function run() {
+    while (nextIndex < values.length) {
+      const index = nextIndex++;
+      results[index] = await worker(values[index]!);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, run));
+  return results;
 }
 
 function duplicateKeys(values: string[]) {

@@ -19,3 +19,7 @@ test("certifie le MANIFESTE et recherche les collisions sans mutation", () => {
   assert.doesNotMatch(service, /\.from\("qr_labels"\)/);
   assert.doesNotMatch(service, /\.update\(|\.insert\(|\.delete\(|assign_qr_label_server/);
 });
+
+test("limite les lectures concurrentes pour les grandes séries", () => {
+  assert.match(service, /mapWithConcurrency\(normalized, 2/);
+});
