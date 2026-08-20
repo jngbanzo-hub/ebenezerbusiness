@@ -6,6 +6,8 @@ const page = readFileSync(new URL("./qr-association-page.tsx", import.meta.url),
 const batch = readFileSync(new URL("./qr-batch-association.tsx", import.meta.url), "utf8");
 const route = readFileSync(new URL("../../app/api/agent/qr/batch-prevalidate/route.ts", import.meta.url), "utf8");
 const assignRoute = readFileSync(new URL("../../app/api/agent/qr/assign/route.ts", import.meta.url), "utf8");
+const batchAssignRoute = readFileSync(new URL("../../app/api/agent/qr/batch-assign/route.ts", import.meta.url), "utf8");
+const batchAssignService = readFileSync(new URL("../../server/qr-batch-assignment-service.ts", import.meta.url), "utf8");
 
 test("conserve le mode simple et ajoute le mode série uniquement derrière la garde COO", () => {
   assert.match(page, /Mode simple/);
@@ -32,10 +34,14 @@ test("met en évidence un QR déjà utilisé avec sa destination et son code act
   assert.match(batch, /line\.result === "QR_ALREADY_ASSIGNED"/);
 });
 
-test("réutilise la mutation officielle avec un requestId par ligne", () => {
-  assert.match(batch, /for \(const line of readyLines\)/);
-  assert.match(batch, /const requestId = createQrAssignmentRequestId\(\)/);
-  assert.match(batch, /submitQrAssociation/);
+test("groupe la confirmation finale avec un requestId stable par ligne", () => {
+  assert.match(batch, /line\.requestId \?\? createQrAssignmentRequestId\(\)/);
+  assert.match(batch, /submitQrBatchAssociation/);
+  assert.match(batch, /Association en cours…/);
+  assert.match(batchAssignRoute, /auth\.identity\.site !== "COO"/);
+  assert.match(batchAssignService, /assignQrLabelInternally/);
+  assert.match(batchAssignService, /mapWithConcurrency\(commands, 4/);
+  assert.match(batchAssignService, /readCanonicalManifestIdentities/);
   assert.match(assignRoute, /certifyQrParcelIdentity/);
   assert.match(assignRoute, /assignQrLabelInternally/);
   assert.doesNotMatch(batch, /payment|stockage|caisse|depense|transfert/i);

@@ -49,6 +49,14 @@ export type QrBatchPrevalidationLine = {
   result: string;
 };
 
+export type QrBatchAssignmentLineResult = {
+  lineNumber: number;
+  requestId: string;
+  state: "ASSOCIATED" | "ALREADY_ASSOCIATED" | "ERROR";
+  code?: string;
+  replayed?: boolean;
+};
+
 export type ManifestQrCandidate = {
   agency: QrAgency;
   rowNumber: number;
@@ -110,6 +118,40 @@ export async function submitQrAssociation(
     fetcher
   );
   return readResponse<QrAssignmentSuccess>(response);
+}
+
+export async function submitQrBatchAssociation(
+  auth: BrowserAuth,
+  lines: Array<QrAssignmentPayload & { lineNumber: number }>,
+  fetcher: Fetcher = fetch
+): Promise<QrBatchAssignmentLineResult[]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45_000);
+  try {
+    const response = await authenticatedRead(
+      auth,
+      "/api/agent/qr/batch-assign",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lines }),
+        signal: controller.signal
+      },
+      fetcher
+    );
+    return (await readResponse<{ lines: QrBatchAssignmentLineResult[] }>(response)).lines;
+  } catch (cause) {
+    if (controller.signal.aborted) {
+      throw new AuthenticatedRequestError(
+        "La confirmation a dépassé le délai prévu. Vérifiez l’état réel avant de réessayer.",
+        503,
+        "BATCH_ASSIGNMENT_TIMEOUT"
+      );
+    }
+    throw cause;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function prevalidateQrBatch(

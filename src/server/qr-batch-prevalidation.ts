@@ -186,7 +186,7 @@ const defaultDependencies: QrBatchPrevalidationDependencies = {
   readManifestIdentities: readCanonicalManifestIdentities
 };
 
-async function readCanonicalManifestIdentities() {
+export async function readCanonicalManifestIdentities() {
   const rows = await readCanonicalPaymentManifestRows();
   return new Set(rows.flatMap((row) => {
     const agency = String(row.sourceSite).trim().toUpperCase();

@@ -9,13 +9,13 @@ import { parseQrBatchInput } from "@/features/agent/qr-batch-parser";
 import {
   createQrAssignmentRequestId,
   prevalidateQrBatch,
-  submitQrAssociation,
+  submitQrBatchAssociation,
   type QrAgency,
   type QrBatchPrevalidationLine
 } from "@/features/agent/qr-association-client";
 
 type FinalLine = QrBatchPrevalidationLine & {
-  finalResult?: "ASSOCIÉ" | "CONFLIT DE VERSION" | "ÉCHEC";
+  finalResult?: "ASSOCIÉ" | "DÉJÀ ASSOCIÉ" | "CONFLIT DE VERSION" | "ÉCHEC";
   requestId?: string;
 };
 
@@ -44,6 +44,8 @@ export function QrBatchAssociation({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [confirmed, setConfirmed] = useState(false);
+  const [finalMessage, setFinalMessage] = useState("");
+  const [confirming, setConfirming] = useState(false);
   const readyCount = useMemo(() => lines.filter((line) => line.ready && !line.finalResult).length, [lines]);
   const errorCount = lines.length - readyCount;
 
@@ -57,6 +59,7 @@ export function QrBatchAssociation({
     setLines([]);
     setConfirmed(false);
     setError("");
+    setFinalMessage("");
   }
 
   async function handlePrevalidate() {
@@ -80,36 +83,55 @@ export function QrBatchAssociation({
     const readyLines = lines.filter((line) => line.ready && line.version !== undefined);
     if (!readyLines.length || !confirmed) return;
     setBusy(true);
+    setConfirming(true);
     setError("");
-    const next = [...lines];
-    for (const line of readyLines) {
-      const requestId = createQrAssignmentRequestId();
-      const index = next.findIndex((item) => item.lineNumber === line.lineNumber);
-      try {
-        await submitQrAssociation(getSupabaseBrowserClient().auth, {
+    const next = lines.map((line) => line.ready
+      ? { ...line, requestId: line.requestId ?? createQrAssignmentRequestId() }
+      : line);
+    setLines(next);
+    try {
+      const results = await submitQrBatchAssociation(
+        getSupabaseBrowserClient().auth,
+        next.filter((line) => line.ready && line.version !== undefined).map((line) => ({
+          lineNumber: line.lineNumber,
           displayNumber: Number(line.displayNumber),
           agency: line.agency as QrAgency,
           trackingCode: line.trackingCode,
           expectedVersion: line.version!,
-          requestId
-        });
-        next[index] = { ...line, requestId, ready: false, finalResult: "ASSOCIÉ" };
-      } catch (cause) {
-        const code = cause && typeof cause === "object" && "code" in cause ? String(cause.code) : "";
-        next[index] = {
+          requestId: line.requestId!
+        }))
+      );
+      const byLine = new Map(results.map((result) => [result.lineNumber, result]));
+      const completed = next.map((line) => {
+        const result = byLine.get(line.lineNumber);
+        if (!result) return line;
+        const conflict = result.code === "QR_VERSION_CONFLICT";
+        return {
           ...line,
-          requestId,
           ready: false,
-          finalResult: code === "QR_VERSION_CONFLICT" || code === "QR_NOT_UNASSIGNED"
-            ? "CONFLIT DE VERSION"
-            : "ÉCHEC"
+          finalResult: result.state === "ASSOCIATED" ? "ASSOCIÉ" as const
+            : result.state === "ALREADY_ASSOCIATED" ? "DÉJÀ ASSOCIÉ" as const
+            : conflict ? "CONFLIT DE VERSION" as const
+            : "ÉCHEC" as const
         };
-      }
-      setLines([...next]);
+      });
+      setLines(completed);
+      const associated = results.filter((result) => result.state === "ASSOCIATED").length;
+      const already = results.filter((result) => result.state === "ALREADY_ASSOCIATED").length;
+      const failures = results.filter((result) => result.state === "ERROR").length;
+      setFinalMessage([
+        `${associated} association(s) créée(s) avec succès.`,
+        already ? `${already} déjà associée(s).` : "",
+        failures ? `${failures} en erreur.` : ""
+      ].filter(Boolean).join(" "));
+      if (associated || already) onAssignmentsCompleted?.();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Confirmation série impossible.");
+    } finally {
+      setBusy(false);
+      setConfirming(false);
+      setConfirmed(false);
     }
-    setBusy(false);
-    setConfirmed(false);
-    onAssignmentsCompleted?.();
   }
 
   return (
@@ -117,7 +139,7 @@ export function QrBatchAssociation({
       {readyCount ? <section className="rounded-xl border border-accent/30 bg-accent/10 p-4">
         <label className="flex items-start gap-3 text-sm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} disabled={busy} className="mt-1"/><span>Je confirme explicitement l’association indépendante des seules lignes PRÊTES.</span></label>
         <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-          <Button type="button" variant="growth" disabled={busy || !confirmed} onClick={() => void handleConfirm()}><CheckCircle2 className="h-4 w-4"/>Confirmer les associations valides</Button>
+          <Button type="button" variant="growth" disabled={busy || !confirmed} onClick={() => void handleConfirm()}><CheckCircle2 className="h-4 w-4"/>{confirming ? "Association en cours…" : "Confirmer les associations valides"}</Button>
           <Button type="button" variant="outline" disabled={busy} onClick={invalidate}>Annuler</Button>
         </div>
       </section> : null}
@@ -137,6 +159,7 @@ export function QrBatchAssociation({
         {busy ? "Prévalidation en cours…" : "Prévalider la série"}
       </Button>
       {error ? <p role="alert" className="rounded-md border border-red-300/30 bg-red-400/10 p-3 text-sm text-red-100">{error}</p> : null}
+      {finalMessage ? <p role="status" className="rounded-md border border-emerald-300/30 bg-emerald-400/10 p-3 text-sm text-emerald-100">{finalMessage}</p> : null}
       {lines.length ? (
         <>
           <div className="overflow-x-auto rounded-xl border border-white/10">
