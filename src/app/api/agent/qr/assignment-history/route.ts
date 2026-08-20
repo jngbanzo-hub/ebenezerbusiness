@@ -10,8 +10,10 @@ export async function GET(request: Request) {
     const auth = await authorizeAgentRequest(request);
     if (!auth.authorized) return fail(auth.status);
     if (auth.identity.site !== "COO") return fail(403);
+    const token = request.headers.get("Authorization")?.match(/^Bearer\s+(\S+)$/i)?.[1];
+    if (!token) return fail(401);
     return NextResponse.json(
-      { assignments: await readRecentInitialQrAssignments() },
+      { assignments: await readRecentInitialQrAssignments(token) },
       { headers: { "Cache-Control": "private, no-store, max-age=0" } }
     );
   } catch {

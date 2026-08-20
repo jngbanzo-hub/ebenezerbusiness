@@ -15,8 +15,11 @@ export type QrAssignmentHistoryItem = {
   status: "UNASSIGNED" | "ASSIGNED" | "REVOKED";
 };
 
-export async function readRecentInitialQrAssignments(limit = 50): Promise<QrAssignmentHistoryItem[]> {
-  const client = serviceClient();
+export async function readRecentInitialQrAssignments(
+  accessToken: string,
+  limit = 50
+): Promise<QrAssignmentHistoryItem[]> {
+  const client = authenticatedClient(accessToken);
   const { data, error } = await client.rpc("read_qr_assignment_history_server", {
     p_limit: Math.min(Math.max(limit, 1), 100)
   });
@@ -35,9 +38,12 @@ export async function readRecentInitialQrAssignments(limit = 50): Promise<QrAssi
   }));
 }
 
-function serviceClient() {
+function authenticatedClient(accessToken: string) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-  if (!url || !key) throw new Error("QR_SERVICE_UNAVAILABLE");
-  return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } }).schema("public");
+  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim();
+  if (!url || !key || !accessToken) throw new Error("QR_SERVICE_UNAVAILABLE");
+  return createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } }
+  }).schema("public");
 }

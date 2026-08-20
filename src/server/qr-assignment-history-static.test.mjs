@@ -11,11 +11,15 @@ test("l'historique COO lit toutes les associations initiales officielles", () =>
   assert.match(service, /rpc\("read_qr_assignment_history_server"/);
   assert.doesNotMatch(service, /\.from\("qr_audit_events"\)|\.from\("qr_labels"\)/);
   assert.doesNotMatch(service, /\.insert\(|\.update\(|\.delete\(|\.upsert\(/);
+  assert.match(service, /NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY/);
+  assert.match(service, /Authorization: `Bearer \$\{accessToken\}`/);
+  assert.doesNotMatch(service, /SUPABASE_SERVICE_ROLE_KEY/);
 });
 
 test("la route reste réservée à COO et sans cache", () => {
   assert.match(route, /authorizeAgentRequest/);
   assert.match(route, /identity\.site !== "COO"/);
+  assert.match(route, /readRecentInitialQrAssignments\(token\)/);
   assert.match(route, /private, no-store, max-age=0/);
 });
 
