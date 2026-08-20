@@ -19,6 +19,13 @@ type FinalLine = QrBatchPrevalidationLine & {
   requestId?: string;
 };
 
+type FinalSummary = {
+  associated: number;
+  alreadyAssociated: number;
+  errors: number;
+  notProcessed: number;
+};
+
 const RESULT_LABELS: Record<string, string> = {
   READY: "PRÊT",
   INVALID_QR_NUMBER: "QR INVALIDE",
@@ -44,7 +51,7 @@ export function QrBatchAssociation({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [confirmed, setConfirmed] = useState(false);
-  const [finalMessage, setFinalMessage] = useState("");
+  const [finalSummary, setFinalSummary] = useState<FinalSummary | null>(null);
   const [confirming, setConfirming] = useState(false);
   const readyCount = useMemo(() => lines.filter((line) => line.ready && !line.finalResult).length, [lines]);
   const errorCount = lines.length - readyCount;
@@ -59,7 +66,7 @@ export function QrBatchAssociation({
     setLines([]);
     setConfirmed(false);
     setError("");
-    setFinalMessage("");
+    setFinalSummary(null);
   }
 
   async function handlePrevalidate() {
@@ -119,11 +126,12 @@ export function QrBatchAssociation({
       const associated = results.filter((result) => result.state === "ASSOCIATED").length;
       const already = results.filter((result) => result.state === "ALREADY_ASSOCIATED").length;
       const failures = results.filter((result) => result.state === "ERROR").length;
-      setFinalMessage([
-        `${associated} association(s) créée(s) avec succès.`,
-        already ? `${already} déjà associée(s).` : "",
-        failures ? `${failures} en erreur.` : ""
-      ].filter(Boolean).join(" "));
+      setFinalSummary({
+        associated,
+        alreadyAssociated: already,
+        errors: failures,
+        notProcessed: Math.max(0, next.filter((line) => line.ready).length - results.length)
+      });
       if (associated || already) onAssignmentsCompleted?.();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Confirmation série impossible.");
@@ -159,7 +167,16 @@ export function QrBatchAssociation({
         {busy ? "Prévalidation en cours…" : "Prévalider la série"}
       </Button>
       {error ? <p role="alert" className="rounded-md border border-red-300/30 bg-red-400/10 p-3 text-sm text-red-100">{error}</p> : null}
-      {finalMessage ? <p role="status" className="rounded-md border border-emerald-300/30 bg-emerald-400/10 p-3 text-sm text-emerald-100">{finalMessage}</p> : null}
+      {finalSummary ? <section role="status" aria-live="polite" className={`rounded-xl border-2 p-5 shadow-lg ${finalSummary.errors || finalSummary.notProcessed ? "border-amber-300/50 bg-amber-400/10 text-amber-50" : "border-emerald-300/50 bg-emerald-400/15 text-emerald-50"}`}>
+        <h2 className="text-lg font-black tracking-wide">{finalSummary.errors || finalSummary.notProcessed ? "RÉSULTAT DE L’ASSOCIATION" : "ASSOCIATIONS RÉUSSIES"}</h2>
+        <p className="mt-2 text-sm">Le traitement est terminé. Voici le résultat exact retourné par le serveur.</p>
+        <dl className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+          <div className="rounded-lg bg-black/15 p-3"><dt>ASSOCIÉS</dt><dd className="mt-1 text-2xl font-black">{finalSummary.associated}</dd></div>
+          <div className="rounded-lg bg-black/15 p-3"><dt>DÉJÀ ASSOCIÉS</dt><dd className="mt-1 text-2xl font-black">{finalSummary.alreadyAssociated}</dd></div>
+          <div className="rounded-lg bg-black/15 p-3"><dt>EN ERREUR</dt><dd className="mt-1 text-2xl font-black">{finalSummary.errors}</dd></div>
+          <div className="rounded-lg bg-black/15 p-3"><dt>NON TRAITÉS</dt><dd className="mt-1 text-2xl font-black">{finalSummary.notProcessed}</dd></div>
+        </dl>
+      </section> : null}
       {lines.length ? (
         <>
           <div className="overflow-x-auto rounded-xl border border-white/10">

@@ -38,6 +38,9 @@ test("groupe la confirmation finale avec un requestId stable par ligne", () => {
   assert.match(batch, /line\.requestId \?\? createQrAssignmentRequestId\(\)/);
   assert.match(batch, /submitQrBatchAssociation/);
   assert.match(batch, /Association en cours…/);
+  assert.match(batch, /ASSOCIATIONS RÉUSSIES/);
+  for (const label of ["ASSOCIÉS", "DÉJÀ ASSOCIÉS", "EN ERREUR", "NON TRAITÉS"]) assert.match(batch, new RegExp(label));
+  assert.match(batch, /aria-live="polite"/);
   assert.match(batchAssignRoute, /auth\.identity\.site !== "COO"/);
   assert.match(batchAssignService, /assignQrLabelInternally/);
   assert.match(batchAssignService, /mapWithConcurrency\(commands, 4/);
