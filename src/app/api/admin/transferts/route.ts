@@ -7,6 +7,7 @@ import {
   AdminTransferFilterError,
   calculateAdminTransferStatistics,
   filterAdminTransfers,
+  filterAdminTransfersForStatistics,
   parseAdminTransferFilters,
   parseAdminTransfers
 } from "@/server/transferts-admin-statistics";
@@ -40,7 +41,9 @@ export async function GET(request: Request) {
     );
     const allTransfers = parseAdminTransfers(data);
     const transfers = filterAdminTransfers(allTransfers, filters);
-    const statistics = calculateAdminTransferStatistics(allTransfers);
+    const statistics = calculateAdminTransferStatistics(
+      filterAdminTransfersForStatistics(allTransfers, filters)
+    );
     return privateJson({
       state: transfers.length ? "READY" : "EMPTY",
       moduleStatus: "OPERATIONAL",

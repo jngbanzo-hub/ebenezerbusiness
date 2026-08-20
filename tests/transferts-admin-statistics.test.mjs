@@ -169,6 +169,97 @@ test("gère une période vide, aucune donnée et les filtres autorisés", () => 
   assert.equal(statistics.calculateAdminTransferStatistics([], now).today.count, 0);
 });
 
+test("applique aux cartes le périmètre actif sans reprendre la période générale", () => {
+  const transfers = [
+    transfer({ transferId: "lshi-today", agencyFrom: "LSHI", amount: 300 }),
+    transfer({ transferId: "lshi-month", agencyFrom: "LSHI", sentAt: "2026-07-10T12:00:00Z", amount: 200 }),
+    transfer({ transferId: "fih-today", agencyFrom: "FIH", amount: 500 }),
+    transfer({ transferId: "lshi-cdf", agencyFrom: "LSHI", currency: "CDF", amount: 1000 })
+  ];
+  const filters = statistics.parseAdminTransferFilters(
+    new URLSearchParams({
+      period: "CUSTOM",
+      from: "2026-07-01",
+      to: "2026-07-01",
+      agencyFrom: "LSHI",
+      agencyTo: "COO",
+      circuit: "LSHI>COO",
+      currency: "USD"
+    })
+  );
+
+  const scoped = statistics.filterAdminTransfersForStatistics(transfers, filters);
+  const result = statistics.calculateAdminTransferStatistics(scoped, now);
+
+  assert.deepEqual(scoped.map((item) => item.transferId), ["lshi-today", "lshi-month"]);
+  assert.equal(result.today.count, 1);
+  assert.equal(result.today.amountsByCurrency.USD, 300);
+  assert.equal(result.currentMonth.count, 2);
+  assert.equal(result.currentMonth.amountsByCurrency.USD, 500);
+  assert.equal(result.currentMonth.byCircuit["LSHI>COO"].count, 2);
+});
+
+test("respecte chaque filtre métier des cartes Aujourd’hui et Mois en cours", () => {
+  const transfers = [
+    transfer({ transferId: "lshi-usd", agencyFrom: "LSHI", agencyTo: "COO", amount: 300 }),
+    transfer({ transferId: "fih-usd", agencyFrom: "FIH", agencyTo: "COO", amount: 500 }),
+    transfer({ transferId: "lshi-cdf", agencyFrom: "LSHI", agencyTo: "COO", currency: "CDF", amount: 1000, status: "CODE_RECU" }),
+    transfer({ transferId: "coo-lshi", agencyFrom: "COO", agencyTo: "LSHI", amount: 200 })
+  ];
+  const cases = [
+    [{}, ["lshi-usd", "fih-usd", "lshi-cdf", "coo-lshi"]],
+    [{ agencyFrom: "LSHI" }, ["lshi-usd", "lshi-cdf"]],
+    [{ agencyFrom: "FIH" }, ["fih-usd"]],
+    [{ agencyTo: "COO" }, ["lshi-usd", "fih-usd", "lshi-cdf"]],
+    [{ circuit: "LSHI>COO" }, ["lshi-usd", "lshi-cdf"]],
+    [{ status: "CODE_RECU" }, ["lshi-cdf"]],
+    [{ currency: "USD" }, ["lshi-usd", "fih-usd", "coo-lshi"]],
+    [{ agencyFrom: "LSHI", agencyTo: "COO", circuit: "LSHI>COO" }, ["lshi-usd", "lshi-cdf"]],
+    [{ transferId: "LSHI-USD" }, ["lshi-usd"]]
+  ];
+
+  for (const [query, expected] of cases) {
+    const filters = statistics.parseAdminTransferFilters(
+      new URLSearchParams({ period: "THIS_MONTH", ...query })
+    );
+    assert.deepEqual(
+      statistics.filterAdminTransfersForStatistics(transfers, filters).map((item) => item.transferId),
+      expected
+    );
+  }
+});
+
+test("calcule les bornes de période dans la convention métier existante", () => {
+  const expected = [
+    [{ period: "TODAY" }, { from: "2026-07-30", to: "2026-07-30" }],
+    [{ period: "THIS_WEEK" }, { from: "2026-07-27", to: "2026-07-30" }],
+    [{ period: "THIS_MONTH" }, { from: "2026-07-01", to: "2026-07-30" }],
+    [{ period: "CUSTOM", from: "2026-07-10", to: "2026-07-20" }, { from: "2026-07-10", to: "2026-07-20" }]
+  ];
+
+  for (const [query, bounds] of expected) {
+    const filters = statistics.parseAdminTransferFilters(new URLSearchParams(query));
+    assert.deepEqual(statistics.resolveAdminPeriodBounds(filters, now), bounds);
+  }
+});
+
+test("affiche les libellés français tout en conservant les valeurs techniques", async () => {
+  const source = await readFile(
+    new URL("../src/features/transferts/admin-transferts-page.tsx", import.meta.url),
+    "utf8"
+  );
+  for (const [value, label] of [
+    ["TODAY", "Aujourd’hui"],
+    ["THIS_WEEK", "Cette semaine"],
+    ["THIS_MONTH", "Ce mois"],
+    ["CUSTOM", "Période personnalisée"]
+  ]) {
+    assert.match(source, new RegExp(`${value}: \\\"${label}`));
+  }
+  assert.match(source, /customPeriodIncomplete = period === "CUSTOM" && \(!dateFrom \|\| !dateTo\)/);
+  assert.match(source, /!authorized \|\| !token\.current \|\| customPeriodIncomplete/);
+});
+
 test("refuse proprement les filtres, dates et circuits invalides", () => {
   for (const query of [
     { period: "YEAR" },

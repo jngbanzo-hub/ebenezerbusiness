@@ -125,20 +125,34 @@ export function filterAdminTransfers(
   return transfers.filter((transfer) => {
     const dateKey = safeLocalDateKey(transfer.sentAt);
     if (!dateKey || dateKey < bounds.from || dateKey > bounds.to) return false;
-    if (filters.agencyFrom && transfer.agencyFrom !== filters.agencyFrom) return false;
-    if (filters.agencyTo && transfer.agencyTo !== filters.agencyTo) return false;
-    if (
-      filters.circuit &&
-      `${transfer.agencyFrom}>${transfer.agencyTo}` !== filters.circuit
-    ) return false;
-    if (filters.status && transfer.status !== filters.status) return false;
-    if (filters.currency && transfer.currency !== filters.currency) return false;
-    if (
-      filters.transferId &&
-      transfer.transferId.toUpperCase() !== filters.transferId.toUpperCase()
-    ) return false;
-    return true;
+    return matchesAdminTransferScope(transfer, filters);
   });
+}
+
+export function filterAdminTransfersForStatistics(
+  transfers: readonly TransferSummary[],
+  filters: AdminTransferFilters
+) {
+  return transfers.filter((transfer) => matchesAdminTransferScope(transfer, filters));
+}
+
+function matchesAdminTransferScope(
+  transfer: TransferSummary,
+  filters: AdminTransferFilters
+) {
+  if (filters.agencyFrom && transfer.agencyFrom !== filters.agencyFrom) return false;
+  if (filters.agencyTo && transfer.agencyTo !== filters.agencyTo) return false;
+  if (
+    filters.circuit &&
+    `${transfer.agencyFrom}>${transfer.agencyTo}` !== filters.circuit
+  ) return false;
+  if (filters.status && transfer.status !== filters.status) return false;
+  if (filters.currency && transfer.currency !== filters.currency) return false;
+  if (
+    filters.transferId &&
+    transfer.transferId.toUpperCase() !== filters.transferId.toUpperCase()
+  ) return false;
+  return true;
 }
 
 export function parseAdminTransfers(value: unknown): TransferSummary[] {
