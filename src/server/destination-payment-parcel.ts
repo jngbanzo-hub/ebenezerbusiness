@@ -37,14 +37,14 @@ export async function resolveDestinationPaymentParcel(
     ? await trace.measure("stockage", readStorage)
     : await readStorage();
 
-  if (error) throw new StockagesV2Error("STORAGE_READ_FAILED", 503);
+  if (error) throw new StockagesV2Error("STORAGE_READ_FAILED", 503, undefined, "resolveDestinationPaymentParcel");
   if (!parcel || parcel.delivery_status !== "AVAILABLE") {
-    throw new StockagesV2Error("PARCEL_NOT_IN_AGENCY_STORAGE", 404);
+    throw new StockagesV2Error("PARCEL_NOT_IN_AGENCY_STORAGE", 404, undefined, "resolveDestinationPaymentParcel");
   }
 
   const weightKg = Number(parcel.canonical_weight_kg);
   if (!Number.isFinite(weightKg) || weightKg <= 0) {
-    throw new StockagesV2Error("INVALID_CANONICAL_WEIGHT", 409);
+    throw new StockagesV2Error("INVALID_CANONICAL_WEIGHT", 409, undefined, "resolveDestinationPaymentParcel");
   }
 
   const payments = await readAdminPayments(trace);
@@ -83,7 +83,7 @@ export async function recordDestinationPayment(input: {
 }, trace?: OperationPerformanceTrace) {
   const parcel = await resolveDestinationPaymentParcel(input.trackingCode, input.agency, trace);
   const validationStartedAt = performance.now();
-  if (parcel.soldeRestant <= 0) throw new StockagesV2Error("PARCEL_ALREADY_PAID", 409);
+  if (parcel.soldeRestant <= 0) throw new StockagesV2Error("PARCEL_ALREADY_PAID", 409, undefined, "recordDestinationPayment");
   validateUuid(input.paymentRequestId);
   const paymentMode = requiredPaymentMode(input.paymentMode);
   const operationContext = {
@@ -106,7 +106,7 @@ export async function recordDestinationPayment(input: {
   });
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const secret = process.env.PAYMENTS_ORCHESTRATION_HMAC_SECRET?.trim();
-  if (!url || !secret || !input.agentAccessToken) throw new StockagesV2Error("AGENT_SERVICE_UNAVAILABLE", 503);
+  if (!url || !secret || !input.agentAccessToken) throw new StockagesV2Error("AGENT_SERVICE_UNAVAILABLE", 503, undefined, "recordDestinationPayment");
   const timestamp = Date.now().toString();
   const signature = createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
   trace?.add("validation_metier", performance.now() - validationStartedAt);
@@ -127,7 +127,7 @@ export async function recordDestinationPayment(input: {
   const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok || !payload || payload.success === false) {
     const code = typeof payload?.error === "string" ? payload.error : typeof payload?.code === "string" ? payload.code : "AGENT_SERVICE_UNAVAILABLE";
-    throw new StockagesV2Error(code, response.status || 503);
+    throw new StockagesV2Error(code, response.status || 503, undefined, "EDGE_FUNCTION", response.status || 503);
   }
   return payload;
 }

@@ -5,21 +5,29 @@ import { recordDestinationPayment } from "@/server/destination-payment-parcel";
 import { requireStorageAgency, StockagesV2Error } from "@/server/stockages-v2";
 import { recordInternalNotification } from "@/server/internal-notifications";
 import { OperationPerformanceTrace } from "@/server/operation-performance";
+import { logOperationRefusal } from "@/server/operation-refusal-diagnostics";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 const ALLOWED = new Set(["trackingCode", "paymentMode", "paymentReference", "observation", "paymentRequestId"]);
 
 export async function POST(request: Request) {
+  const startedAt = performance.now();
   let trace: OperationPerformanceTrace | null = null;
+  let requestId = "";
+  let agency = "UNKNOWN";
+  let stage = "authorizeAgentRequest";
   try {
     const authStartedAt = performance.now();
     const auth = await authorizeAgentRequest(request);
-    if (!auth.authorized) return fail("ACCESS_DENIED", auth.status);
+    if (!auth.authorized) return refusal("ACCESS_DENIED", auth.status, { startedAt, requestId, agency, stage });
+    agency = auth.identity.site;
     const body = await request.json() as Record<string, unknown>;
+    requestId = String(body.paymentRequestId ?? "");
     trace = new OperationPerformanceTrace("encaissement", String(body.paymentRequestId ?? "unknown"), auth.identity.site, authStartedAt);
     trace.add("auth_session", performance.now() - authStartedAt);
-    if (Object.keys(body).some((key) => !ALLOWED.has(key))) return fail("INVALID_PAYMENT_COMMAND", 400);
+    if (Object.keys(body).some((key) => !ALLOWED.has(key))) return refusal("INVALID_PAYMENT_COMMAND", 400, { startedAt, requestId, agency, stage: "validatePaymentCommand" });
+    stage = "recordDestinationPayment";
     const result = await recordDestinationPayment({
       trackingCode: String(body.trackingCode ?? ""),
       agency: requireStorageAgency(auth.identity.site),
@@ -39,7 +47,13 @@ export async function POST(request: Request) {
     return nextResponse;
   } catch (cause) {
     trace?.complete("error");
-    return cause instanceof StockagesV2Error ? fail(cause.code, cause.status) : fail("AGENT_SERVICE_UNAVAILABLE", 503);
+    return cause instanceof StockagesV2Error
+      ? refusal(cause.code, cause.status, { startedAt, requestId, agency, stage: cause.technicalStage ?? stage, diagnosticId: cause.diagnosticId, externalHttpStatus: cause.externalHttpStatus })
+      : refusal("AGENT_SERVICE_UNAVAILABLE", 503, { startedAt, requestId, agency, stage });
   }
 }
-function fail(code: string, status: number) { return NextResponse.json({ success: false, code, message: code === "PARCEL_NOT_IN_AGENCY_STORAGE" ? "Ce colis n’est pas présent dans le Stockage de votre agence." : "Paiement refusé." }, { status }); }
+type RefusalContext = { startedAt: number; requestId: string; agency: string; stage: string; diagnosticId?: string; externalHttpStatus?: number };
+function refusal(code: string, status: number, context: RefusalContext) {
+  const diagnostic = logOperationRefusal({ operation: "PAYMENT", applicationCode: code, httpStatus: status, ...context });
+  return NextResponse.json({ success: false, code, diagnosticId: diagnostic.diagnosticId, message: code === "PARCEL_NOT_IN_AGENCY_STORAGE" ? "Ce colis n’est pas présent dans le Stockage de votre agence." : "Paiement refusé." }, { status });
+}

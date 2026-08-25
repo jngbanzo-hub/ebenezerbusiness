@@ -11,12 +11,12 @@ export async function resolvePaidPhysicalParcel(trackingCode: string, agency: St
     serviceClient().from("stockage_parcels").select("tracking_code,agency,canonical_weight_kg,weight_source_reference,delivery_status").eq("tracking_code", code).eq("agency", agency).maybeSingle(),
     readAdminPayments()
   ]);
-  if (error) throw new StockagesV2Error("STORAGE_READ_FAILED", 503);
-  if (!parcel || parcel.delivery_status !== "AVAILABLE") throw new StockagesV2Error("PARCEL_NOT_PHYSICALLY_AVAILABLE", 409);
+  if (error) throw new StockagesV2Error("STORAGE_READ_FAILED", 503, undefined, "resolvePaidPhysicalParcel");
+  if (!parcel || parcel.delivery_status !== "AVAILABLE") throw new StockagesV2Error("PARCEL_NOT_PHYSICALLY_AVAILABLE", 409, undefined, "resolvePaidPhysicalParcel");
   const matching = payments.filter((payment) => normalizeCode(payment.codeColis) === code && payment.destinationCode === agency);
   const expected = Array.from(new Set(matching.map((payment) => payment.montantAttendu).filter((value): value is number => value !== null).map((value) => value.toFixed(2))));
   const totalPaid = round(matching.reduce((sum, payment) => sum + payment.montantPaye, 0));
-  if (expected.length !== 1 || totalPaid !== Number(expected[0])) throw new StockagesV2Error("PAYMENT_NOT_COMPLETE", 409);
+  if (expected.length !== 1 || totalPaid !== Number(expected[0])) throw new StockagesV2Error("PAYMENT_NOT_COMPLETE", 409, undefined, "resolvePaidPhysicalParcel");
   return {
     trackingCode: code,
     weightKg: Number(parcel.canonical_weight_kg),

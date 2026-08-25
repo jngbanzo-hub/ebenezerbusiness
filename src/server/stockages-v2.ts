@@ -10,7 +10,13 @@ export const STORAGE_AGENCIES = ["FIH", "LSHI", "KLZ"] as const;
 export type StorageAgency = (typeof STORAGE_AGENCIES)[number];
 
 export class StockagesV2Error extends Error {
-  constructor(readonly code: string, readonly status = 400, readonly diagnosticId?: string) {
+  constructor(
+    readonly code: string,
+    readonly status = 400,
+    readonly diagnosticId?: string,
+    readonly technicalStage?: string,
+    readonly externalHttpStatus?: number
+  ) {
     super(code);
   }
 }
@@ -169,7 +175,7 @@ async function rpc(name: string, args: Record<string, unknown>, diagnosticContex
     const diagnosticId = crypto.randomUUID();
     const diagnostic = buildStockagesRpcDiagnostic(diagnosticId, error as StockagesRpcFailure, diagnosticContext ?? { rpc: name, commandType: "STORAGE_RPC" });
     console.error("[stockages-rpc-error]", JSON.stringify(diagnostic));
-    throw mapRpcError(error.message, diagnosticId);
+    throw mapRpcError(error.message, diagnosticId, name);
   }
   return (data ?? {}) as RpcResult;
 }
@@ -188,10 +194,10 @@ function noStoreFetch(input: RequestInfo | URL, init?: RequestInit) {
   return fetch(input, { ...init, cache: "no-store" });
 }
 
-function mapRpcError(message: string, diagnosticId?: string) {
+function mapRpcError(message: string, diagnosticId?: string, rpcName?: string) {
   const codes = ["IDEMPOTENCY_CONFLICT", "STORAGE_ACCOUNT_NOT_ACTIVE", "STORAGE_ACCOUNT_NOT_SUSPENDED", "OPENING_STOCK_ALREADY_RECORDED", "PARCEL_ALREADY_DELIVERED", "INSUFFICIENT_STOCK", "PARCEL_VERSION_CONFLICT", "STORAGE_VERSION_CONFLICT", "ADMIN_REQUIRED", "ACTIVE_AGENT_REQUIRED"];
   const code = codes.find((candidate) => message.includes(candidate)) ?? "STORAGE_COMMAND_FAILED";
-  return new StockagesV2Error(code, code === "IDEMPOTENCY_CONFLICT" || code.includes("ALREADY") ? 409 : code.includes("NOT_ACTIVE") ? 423 : 400, diagnosticId);
+  return new StockagesV2Error(code, code === "IDEMPOTENCY_CONFLICT" || code.includes("ALREADY") ? 409 : code.includes("NOT_ACTIVE") ? 423 : 400, diagnosticId, rpcName ? `${rpcName}_RPC` : "STORAGE_RPC");
 }
 
 function normalizeTrackingCode(value: unknown) { const code = String(value ?? "").trim().toUpperCase(); if (!/^[A-Z0-9][A-Z0-9._/-]{1,63}$/.test(code)) throw new StockagesV2Error("INVALID_TRACKING_CODE"); return code; }
