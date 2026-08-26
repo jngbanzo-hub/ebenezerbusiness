@@ -353,6 +353,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
             ? "Paiement enregistré avec succès. La caisse de l’agence n’est pas encore ouverte ; aucun mouvement de caisse n’a été créé."
             : "Paiement enregistré avec succès.",
         details: [
+          `Code enregistré : ${result.codeColis}`,
           `Montant payé : ${formatAmount(result.montantPaye)}`,
           `Nouveau total payé : ${formatAmount(result.nouveauTotalPaye)}`,
           `Nouveau solde : ${formatAmount(result.nouveauSolde)}`,
