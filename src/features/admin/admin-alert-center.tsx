@@ -8,6 +8,7 @@ import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticate
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import type { AdminAlertCategory, AdminAlertLevel } from "@/server/admin-alert-rules";
 import type { AdminAlertWithReadState } from "@/server/admin-alert-center";
+import { sortAdminNotificationsNewestFirst } from "@/features/admin/admin-notification-order";
 
 type Result = {
   generatedAt: string;
@@ -47,12 +48,14 @@ export function AdminAlertsPanel({ onCount }: { onCount?: (count: number) => voi
 
   const alerts = useMemo(
     () =>
-      (result?.alerts ?? []).filter(
-        (item) =>
-          (level === "TOUTES" || item.level === level) &&
-          (agency === "TOUTES" || item.agency === agency || item.agency === "TOUTES") &&
-          (category === "TOUTES" || item.category === category) &&
-          (readFilter === "TOUTES" || (readFilter === "LUES" ? item.read : !item.read))
+      sortAdminNotificationsNewestFirst(
+        (result?.alerts ?? []).filter(
+          (item) =>
+            (level === "TOUTES" || item.level === level) &&
+            (agency === "TOUTES" || item.agency === agency || item.agency === "TOUTES") &&
+            (category === "TOUTES" || item.category === category) &&
+            (readFilter === "TOUTES" || (readFilter === "LUES" ? item.read : !item.read))
+        )
       ),
     [result, level, agency, category, readFilter]
   );

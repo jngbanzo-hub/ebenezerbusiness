@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import type { AdminActivity, AdminActivityCategory, AdminRecentActivityResult } from "@/server/admin-recent-activity";
+import { sortAdminNotificationsNewestFirst } from "@/features/admin/admin-notification-order";
 
 const categories: Array<"TOUTES" | AdminActivityCategory> = ["TOUTES", "ENCAISSEMENTS", "DÉPENSES", "QR", "STOCKAGE", "CAISSE", "AGENTS"];
 const agencies = ["TOUTES", "COO", "FIH", "LSHI", "KLZ"] as const;
@@ -32,10 +33,12 @@ export function AdminRecentActivityPanel({ onCount }: { onCount?: (count: number
     void load().catch((cause) => setError(cause instanceof Error ? cause.message : "Activité récente indisponible."));
   }, [load]);
 
-  const items = useMemo(() => (result?.activities ?? []).filter((item) =>
-    (category === "TOUTES" || item.category === category) &&
-    (agency === "TOUTES" || item.agency === agency || item.agency === "TOUTES") &&
-    (readFilter === "TOUTES" || (readFilter === "LUES" ? item.read : !item.read))
+  const items = useMemo(() => sortAdminNotificationsNewestFirst(
+    (result?.activities ?? []).filter((item) =>
+      (category === "TOUTES" || item.category === category) &&
+      (agency === "TOUTES" || item.agency === agency || item.agency === "TOUTES") &&
+      (readFilter === "TOUTES" || (readFilter === "LUES" ? item.read : !item.read))
+    )
   ), [result, category, agency, readFilter]);
 
   async function mark(activityId?: string) {
