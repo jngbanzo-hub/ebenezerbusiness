@@ -1874,8 +1874,10 @@ function enregistrerDepenseSecurisee_(acteur, donnees) {
       referenceTechnique: expenseRequestId
     });
 
-    recalculerStatistiquesDepensesSousVerrou_(
-      classeur
+    mettreAJourStatistiquesDepensesCibleesSousVerrou_(
+      classeur,
+      ligne,
+      feuilleAgence
     );
 
     return {
@@ -2505,6 +2507,161 @@ function recalculerStatistiquesDepensesSousVerrou_(
     ),
     anomalies
   );
+}
+
+/**
+ * Met à jour le résumé après une création sans relire l'historique complet.
+ * Si le résumé existant n'est pas strictement exploitable, le recalcul
+ * intégral reste le repli sûr sous le verrou déjà détenu.
+ */
+function mettreAJourStatistiquesDepensesCibleesSousVerrou_(
+  classeur,
+  ligne,
+  nomAgence
+) {
+  const feuilleStatistiques =
+    creerOuPreparerFeuilleStatistiques_(classeur);
+  const resume =
+    lireResumeStatistiquesDepenses_(feuilleStatistiques);
+
+  if (!resume) {
+    recalculerStatistiquesDepensesSousVerrou_(classeur);
+    return;
+  }
+
+  traiterLigneStatistique_(
+    ligne,
+    nomAgence,
+    resume.statistiquesJournalieres,
+    resume.statistiquesMensuelles,
+    resume.anomalies
+  );
+
+  ecrireStatistiques_(
+    feuilleStatistiques,
+    convertirStatistiquesEnLignes_(
+      resume.statistiquesJournalieres,
+      'JOURNALIER'
+    ),
+    convertirStatistiquesEnLignes_(
+      resume.statistiquesMensuelles,
+      'MENSUEL'
+    ),
+    resume.anomalies
+  );
+}
+
+/**
+ * Relit uniquement le petit résumé matérialisé. Toute incohérence force le
+ * repli vers le recalcul intégral afin de ne jamais propager un agrégat douteux.
+ */
+function lireResumeStatistiquesDepenses_(feuille) {
+  if (feuille.getLastRow() < 8) {
+    return null;
+  }
+
+  const lignes = feuille
+    .getRange(5, 1, feuille.getLastRow() - 4, 6)
+    .getValues();
+  const statistiquesJournalieres = new Map();
+  const statistiquesMensuelles = new Map();
+  const anomalies = {
+    datesInvalides: null,
+    montantsInvalides: null,
+    devisesInvalides: null,
+    statutsInconnus: null
+  };
+  const libellesAnomalies = {
+    'Dates invalides ou absentes': 'datesInvalides',
+    'Montants invalides': 'montantsInvalides',
+    'Devises invalides': 'devisesInvalides',
+    'Statuts inconnus': 'statutsInconnus'
+  };
+  let invalide = false;
+
+  lignes.forEach(function(ligne) {
+    if (invalide) {
+      return;
+    }
+
+    const type = String(ligne[0] || '').trim();
+    const cleAnomalie = libellesAnomalies[type];
+
+    if (cleAnomalie) {
+      const nombre = Number(ligne[1]);
+      if (
+        anomalies[cleAnomalie] !== null ||
+        !Number.isInteger(nombre) ||
+        nombre < 0
+      ) {
+        invalide = true;
+        return;
+      }
+      anomalies[cleAnomalie] = nombre;
+      return;
+    }
+
+    if (type !== 'JOURNALIER' && type !== 'MENSUEL') {
+      return;
+    }
+
+    const periode = String(ligne[1] || '').trim();
+    const site = String(ligne[2] || '').trim();
+    const devise = String(ligne[3] || '').trim();
+    const total = Number(ligne[4]);
+    const nombreOperations = Number(ligne[5]);
+    const periodeValide = type === 'JOURNALIER'
+      ? /^\d{4}-\d{2}-\d{2}$/.test(periode)
+      : /^\d{4}-\d{2}$/.test(periode);
+    const siteValide =
+      site === 'TOUS LES SITES' ||
+      CONFIG_DEPENSES.feuillesAgences.includes(site);
+
+    if (
+      !periodeValide ||
+      !siteValide ||
+      !CONFIG_DEPENSES.devises.includes(devise) ||
+      !Number.isFinite(total) ||
+      !Number.isInteger(nombreOperations) ||
+      nombreOperations < 0
+    ) {
+      invalide = true;
+      return;
+    }
+
+    const statistiques = type === 'JOURNALIER'
+      ? statistiquesJournalieres
+      : statistiquesMensuelles;
+    const cle = [periode, site, devise].join('|');
+
+    if (statistiques.has(cle)) {
+      invalide = true;
+      return;
+    }
+
+    statistiques.set(cle, {
+      periode: periode,
+      site: site,
+      devise: devise,
+      total: total,
+      nombreOperations: nombreOperations
+    });
+  });
+
+  const anomaliesCompletes = Object.keys(anomalies)
+    .every(function(cle) {
+      return anomalies[cle] !== null;
+    });
+
+  if (invalide || !anomaliesCompletes) {
+    return null;
+  }
+
+  return {
+    statistiquesJournalieres: statistiquesJournalieres,
+    statistiquesMensuelles: statistiquesMensuelles,
+    anomalies: anomalies
+  };
 }
 
 function trouverDepenseParId_(

@@ -174,6 +174,9 @@ Deno.serve(async (request: Request): Promise<Response> => {
     return errorResponse("ACCES_REFUSE", 405);
   }
 
+  const performanceTrace = new PaymentPerformanceTrace();
+  const authStartedAt = performance.now();
+
   try {
     const token = readBearerToken(request.headers.get("Authorization"));
     if (!token) {
@@ -224,7 +227,9 @@ Deno.serve(async (request: Request): Promise<Response> => {
     if (!agenceEncaissement) {
       return errorResponse("DESTINATION_INVALIDE", 403);
     }
+    performanceTrace.add("edge_auth_profile", authStartedAt);
 
+    const validationStartedAt = performance.now();
     const body = await readRequestBody(request);
     if (!body || !hasOnlyAllowedKeys(body)) {
       return errorResponse("ACCES_REFUSE", 400);
@@ -239,6 +244,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     if (paymentRequestId === null) {
       return errorResponse("PAYMENT_REQUEST_ID_INVALIDE", 400);
     }
+    performanceTrace.setContext(paymentRequestId, agenceEncaissement);
 
     const paymentInput = parsePaymentInput(body, paymentRequestId, agenceEncaissement, internalForwarding);
     if (!paymentInput) {
@@ -288,7 +294,9 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const usePaidExitOrchestration = Boolean(
       paidExitEnabled && cashClient && cashAgency === destinationCode && !isInterAgencyForwarding,
     );
+    performanceTrace.add("validation", validationStartedAt);
     if (usePaidExitOrchestration && cashClient && cashAgency) {
+      const beginStartedAt = performance.now();
       const begun = await cashClient.rpc("begin_paid_destination_orchestration", {
         p_actor_id: user.id,
         p_agency: cashAgency,
@@ -298,30 +306,35 @@ Deno.serve(async (request: Request): Promise<Response> => {
         p_request_id: paymentInput.paymentRequestId,
         p_tracking_code: paymentInput.codeColis,
       });
+      performanceTrace.add("begin_orchestration", beginStartedAt);
       if (begun.error) return orchestrationError(begun.error.message);
       const checkpoint = isRecord(begun.data) ? begun.data : null;
       const storedPayment = sanitizeStoredPayment(checkpoint?.paymentResponse);
       if (checkpoint?.state === "COMPLETED" && storedPayment) {
-        return jsonResponse({ ...storedPayment, cashRecorded: true, cashStatus: "RECORDED", replayed: true }, 200);
+        return performanceTrace.finish(jsonResponse({ ...storedPayment, cashRecorded: true, cashStatus: "RECORDED", replayed: true }, 200), "SUCCESS_REPLAY");
       }
       if (checkpoint?.paymentCreated === true && storedPayment) {
+        const finalizeStartedAt = performance.now();
         const resumed = await finalizePaidExit(cashClient, paymentInput, commandFingerprint);
+        performanceTrace.add("finalize_orchestration", finalizeStartedAt);
         if (resumed.kind === "ERROR") return orchestrationError(resumed.code);
-        return jsonResponse({ ...storedPayment, cashRecorded: true, cashStatus: "RECORDED", replayed: true }, 200);
+        return performanceTrace.finish(jsonResponse({ ...storedPayment, cashRecorded: true, cashStatus: "RECORDED", replayed: true }, 200), "SUCCESS_RESUMED");
       }
     }
 
     if (cashClient && !usePaidExitOrchestration) {
+      const replayStartedAt = performance.now();
       const replay = await readCashCreditReplay(
         cashClient,
         paymentInput.paymentRequestId,
         commandFingerprint,
       );
+      performanceTrace.add("idempotency_replay", replayStartedAt);
       if (replay.kind === "CONFLICT") {
         return errorResponse("IDEMPOTENCY_CONFLICT", 409);
       }
       if (replay.kind === "REPLAY") {
-        return jsonResponse({ ...replay.payment, replayed: true }, 200);
+        return performanceTrace.finish(jsonResponse({ ...replay.payment, replayed: true }, 200), "SUCCESS_REPLAY");
       }
       if (replay.kind === "ERROR") {
         return errorResponse("SERVICE_INDISPONIBLE", 503);
@@ -372,6 +385,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
       appsScriptPayload.paymentRequestId = paymentInput.paymentRequestId;
 
+      const appsScriptStartedAt = performance.now();
       const upstreamResponse = await fetch(appsScriptUrl, {
         body: JSON.stringify(appsScriptPayload),
         headers: {
@@ -383,6 +397,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
       });
 
       const upstreamPayload = await readUpstreamJson(upstreamResponse);
+      performanceTrace.add("apps_script_payment", appsScriptStartedAt);
       if (!upstreamResponse.ok || upstreamPayload === null) {
         const code = classifyUpstreamError(
           upstreamResponse.status,
@@ -420,18 +435,23 @@ Deno.serve(async (request: Request): Promise<Response> => {
       }
 
       if (usePaidExitOrchestration && cashClient) {
+        const checkpointStartedAt = performance.now();
         const checkpoint = await cashClient.rpc("checkpoint_paid_destination_payment", {
           p_command_fingerprint: commandFingerprint,
           p_payment_response: publicPayment,
           p_request_id: paymentInput.paymentRequestId,
         });
+        performanceTrace.add("checkpoint", checkpointStartedAt);
         if (checkpoint.error) return orchestrationError(checkpoint.error.message);
+        const finalizeStartedAt = performance.now();
         const finalized = await finalizePaidExit(cashClient, paymentInput, commandFingerprint);
+        performanceTrace.add("finalize_orchestration", finalizeStartedAt);
         if (finalized.kind === "ERROR") return orchestrationError(finalized.code);
-        return jsonResponse({ ...publicPayment, cashRecorded: true, cashStatus: "RECORDED", replayed: finalized.replayed }, 200);
+        return performanceTrace.finish(jsonResponse({ ...publicPayment, cashRecorded: true, cashStatus: "RECORDED", replayed: finalized.replayed }, 200), "SUCCESS");
       }
 
       if (cashClient && cashAgency) {
+        const cashStartedAt = performance.now();
         const credit = await cashClient.rpc("record_cash_payment_credit", {
           p_actor_name: rawAgent.nom.trim(),
           p_actor_user_id: user.id,
@@ -451,14 +471,15 @@ Deno.serve(async (request: Request): Promise<Response> => {
           p_payment_reference: paymentInput.codeColis,
           p_payment_request_id: paymentInput.paymentRequestId,
         });
+        performanceTrace.add("cash", cashStartedAt);
         if (credit.error) {
           if (String(credit.error.message).includes("CASH_ACCOUNT_NOT_ACTIVE")) {
-            return jsonResponse({
+            return performanceTrace.finish(jsonResponse({
               ...publicPayment,
               cashRecorded: false,
               cashStatus: "ACCOUNT_NOT_ACTIVE",
               replayed: false,
-            }, 200);
+            }, 200), "SUCCESS_CASH_ACCOUNT_INACTIVE");
           }
           return errorResponse(
             String(credit.error.message).includes("IDEMPOTENCY_CONFLICT")
@@ -470,16 +491,16 @@ Deno.serve(async (request: Request): Promise<Response> => {
           );
         }
         const replayed = isRecord(credit.data) && credit.data.replayed === true;
-        return jsonResponse({
+        return performanceTrace.finish(jsonResponse({
           ...publicPayment,
           cashRecorded: true,
           cashStatus: "RECORDED",
           replayed,
-        }, 200);
+        }, 200), "SUCCESS");
       }
 
       // COO reste volontairement hors caisse canonique.
-      return jsonResponse({ ...publicPayment, replayed: false }, 200);
+      return performanceTrace.finish(jsonResponse({ ...publicPayment, replayed: false }, 200), "SUCCESS_COO_HORS_CAISSE");
     } catch {
       return errorResponse("SERVICE_INDISPONIBLE", 503);
     } finally {
@@ -490,6 +511,43 @@ Deno.serve(async (request: Request): Promise<Response> => {
     return errorResponse("SERVICE_INDISPONIBLE", 503);
   }
 });
+
+class PaymentPerformanceTrace {
+  private readonly startedAt = performance.now();
+  private readonly durations: Record<string, number> = {};
+  private agency = "UNKNOWN";
+  private requestId = "UNKNOWN";
+  private completed = false;
+
+  add(step: string, startedAt: number): void {
+    this.durations[step] = roundDuration(performance.now() - startedAt);
+  }
+
+  setContext(requestId: string, agency: string): void {
+    this.requestId = requestId;
+    this.agency = agency;
+  }
+
+  finish(response: Response, result: string): Response {
+    if (!this.completed) {
+      this.completed = true;
+      console.info(JSON.stringify({
+        event: "payment_operation_performance",
+        requestId: this.requestId,
+        agency: this.agency,
+        result,
+        status: response.status,
+        totalMs: roundDuration(performance.now() - this.startedAt),
+        durationsMs: this.durations,
+      }));
+    }
+    return response;
+  }
+}
+
+function roundDuration(value: number): number {
+  return Math.round(value * 10) / 10;
+}
 
 async function finalizePaidExit(
   client: ReturnType<typeof createClient>,
