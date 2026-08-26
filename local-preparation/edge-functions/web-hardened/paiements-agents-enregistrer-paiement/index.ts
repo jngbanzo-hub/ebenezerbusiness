@@ -1,4 +1,11 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  normalizePublicPaymentStatus,
+  withPaymentRequestContext,
+} from "../_shared/paymentContract.ts";
+import {
+  recordConfirmedPaymentNotification,
+} from "../_shared/paymentNotification.ts";
 
 type ErrorCode =
   | "SESSION_EXPIREE"
@@ -54,7 +61,7 @@ type PublicPaymentResponse = {
   montantPaye: number;
   nouveauTotalPaye: number;
   nouveauSolde: number;
-  statutPaiement: "SOLDE" | "PARTIELLEMENT PAYE";
+  statutPaiement: "SOLDE" | "PARTIELLEMENT_PAYE";
   datePaiement: string;
   cashRecorded?: boolean;
   cashStatus?: "RECORDED" | "ACCOUNT_NOT_ACTIVE";
@@ -282,11 +289,18 @@ Deno.serve(async (request: Request): Promise<Response> => {
       user.id,
     );
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim();
-    const cashClient = cashCreditsEnabled && cashAgency && serviceRoleKey
+    const serviceClient = serviceRoleKey
       ? createClient(supabaseUrl, serviceRoleKey, {
           auth: { autoRefreshToken: false, persistSession: false },
         })
       : null;
+    const cashClient = cashCreditsEnabled && cashAgency ? serviceClient : null;
+    const notificationContext = {
+      actorName: rawAgent.nom.trim(),
+      actorUserId: user.id,
+      agency: agenceEncaissement,
+      client: serviceClient,
+    };
     if (cashCreditsEnabled && cashAgency && !cashClient) {
       return errorResponse("SERVICE_INDISPONIBLE", 503);
     }
@@ -311,14 +325,14 @@ Deno.serve(async (request: Request): Promise<Response> => {
       const checkpoint = isRecord(begun.data) ? begun.data : null;
       const storedPayment = sanitizeStoredPayment(checkpoint?.paymentResponse);
       if (checkpoint?.state === "COMPLETED" && storedPayment) {
-        return performanceTrace.finish(jsonResponse({ ...storedPayment, cashRecorded: true, cashStatus: "RECORDED", replayed: true }, 200), "SUCCESS_REPLAY");
+        return paymentSuccessResponse({ ...storedPayment, cashRecorded: true, cashStatus: "RECORDED" }, paymentInput.paymentRequestId, true, notificationContext, performanceTrace, "SUCCESS_REPLAY");
       }
       if (checkpoint?.paymentCreated === true && storedPayment) {
         const finalizeStartedAt = performance.now();
         const resumed = await finalizePaidExit(cashClient, paymentInput, commandFingerprint);
         performanceTrace.add("finalize_orchestration", finalizeStartedAt);
         if (resumed.kind === "ERROR") return orchestrationError(resumed.code);
-        return performanceTrace.finish(jsonResponse({ ...storedPayment, cashRecorded: true, cashStatus: "RECORDED", replayed: true }, 200), "SUCCESS_RESUMED");
+        return paymentSuccessResponse({ ...storedPayment, cashRecorded: true, cashStatus: "RECORDED" }, paymentInput.paymentRequestId, true, notificationContext, performanceTrace, "SUCCESS_RESUMED");
       }
     }
 
@@ -334,7 +348,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
         return errorResponse("IDEMPOTENCY_CONFLICT", 409);
       }
       if (replay.kind === "REPLAY") {
-        return performanceTrace.finish(jsonResponse({ ...replay.payment, replayed: true }, 200), "SUCCESS_REPLAY");
+        return paymentSuccessResponse(replay.payment, paymentInput.paymentRequestId, true, notificationContext, performanceTrace, "SUCCESS_REPLAY");
       }
       if (replay.kind === "ERROR") {
         return errorResponse("SERVICE_INDISPONIBLE", 503);
@@ -447,7 +461,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
         const finalized = await finalizePaidExit(cashClient, paymentInput, commandFingerprint);
         performanceTrace.add("finalize_orchestration", finalizeStartedAt);
         if (finalized.kind === "ERROR") return orchestrationError(finalized.code);
-        return performanceTrace.finish(jsonResponse({ ...publicPayment, cashRecorded: true, cashStatus: "RECORDED", replayed: finalized.replayed }, 200), "SUCCESS");
+        return paymentSuccessResponse({ ...publicPayment, cashRecorded: true, cashStatus: "RECORDED" }, paymentInput.paymentRequestId, finalized.replayed, notificationContext, performanceTrace, "SUCCESS");
       }
 
       if (cashClient && cashAgency) {
@@ -474,12 +488,11 @@ Deno.serve(async (request: Request): Promise<Response> => {
         performanceTrace.add("cash", cashStartedAt);
         if (credit.error) {
           if (String(credit.error.message).includes("CASH_ACCOUNT_NOT_ACTIVE")) {
-            return performanceTrace.finish(jsonResponse({
+            return paymentSuccessResponse({
               ...publicPayment,
               cashRecorded: false,
               cashStatus: "ACCOUNT_NOT_ACTIVE",
-              replayed: false,
-            }, 200), "SUCCESS_CASH_ACCOUNT_INACTIVE");
+            }, paymentInput.paymentRequestId, false, notificationContext, performanceTrace, "SUCCESS_CASH_ACCOUNT_INACTIVE");
           }
           return errorResponse(
             String(credit.error.message).includes("IDEMPOTENCY_CONFLICT")
@@ -491,16 +504,15 @@ Deno.serve(async (request: Request): Promise<Response> => {
           );
         }
         const replayed = isRecord(credit.data) && credit.data.replayed === true;
-        return performanceTrace.finish(jsonResponse({
+        return paymentSuccessResponse({
           ...publicPayment,
           cashRecorded: true,
           cashStatus: "RECORDED",
-          replayed,
-        }, 200), "SUCCESS");
+        }, paymentInput.paymentRequestId, replayed, notificationContext, performanceTrace, "SUCCESS");
       }
 
       // COO reste volontairement hors caisse canonique.
-      return performanceTrace.finish(jsonResponse({ ...publicPayment, replayed: false }, 200), "SUCCESS_COO_HORS_CAISSE");
+      return paymentSuccessResponse(publicPayment, paymentInput.paymentRequestId, false, notificationContext, performanceTrace, "SUCCESS_COO_HORS_CAISSE");
     } catch {
       return errorResponse("SERVICE_INDISPONIBLE", 503);
     } finally {
@@ -644,11 +656,11 @@ function sanitizeStoredPayment(value: unknown): PublicPaymentResponse | null {
   const montantPaye = readNumber(value.montantPaye);
   const nouveauTotalPaye = readNumber(value.nouveauTotalPaye);
   const nouveauSolde = readNumber(value.nouveauSolde);
-  const statutPaiement = readText(value.statutPaiement, 64);
+  const statutPaiement = normalizePublicPaymentStatus(value.statutPaiement);
   const datePaiement = readText(value.datePaiement, 128);
   if (!codeColis || !destinationCode || !destinationNom || montantPaye === null ||
     nouveauTotalPaye === null || nouveauSolde === null || !datePaiement ||
-    (statutPaiement !== "SOLDE" && statutPaiement !== "PARTIELLEMENT PAYE")) return null;
+    (statutPaiement !== "SOLDE" && statutPaiement !== "PARTIELLEMENT_PAYE")) return null;
   return { codeColis, destinationCode, destinationNom, montantPaye,
     nouveauTotalPaye, nouveauSolde, statutPaiement, datePaiement };
 }
@@ -905,7 +917,7 @@ function sanitizePaymentResponse(
   const montantPaye = readNumber(payment.montantPaye);
   const nouveauTotalPaye = readNumber(payment.nouveauTotalPaye);
   const nouveauSolde = readNumber(payment.nouveauSolde);
-  const statutPaiement = readText(payment.statutPaiement, 64);
+  const statutPaiement = normalizePublicPaymentStatus(payment.statutPaiement);
   const datePaiement = readText(payment.datePaiement, 128);
 
   if (
@@ -918,7 +930,7 @@ function sanitizePaymentResponse(
     nouveauTotalPaye === null ||
     nouveauSolde === null ||
     (statutPaiement !== "SOLDE" &&
-      statutPaiement !== "PARTIELLEMENT PAYE") ||
+      statutPaiement !== "PARTIELLEMENT_PAYE") ||
     !datePaiement
   ) {
     return null;
@@ -1055,6 +1067,42 @@ function upstreamErrorResponse(
   }
 
   return errorResponse(code, status, message);
+}
+
+async function paymentSuccessResponse(
+  payment: PublicPaymentResponse,
+  paymentRequestId: string,
+  replayed: boolean,
+  notification: {
+    actorName: string;
+    actorUserId: string;
+    agency: string;
+    client: ReturnType<typeof createClient> | null;
+  },
+  performanceTrace: PaymentPerformanceTrace,
+  result: string,
+): Promise<Response> {
+  const confirmedPayment = withPaymentRequestContext(
+    payment,
+    paymentRequestId,
+    replayed,
+  );
+
+  const notificationStartedAt = performance.now();
+  await recordConfirmedPaymentNotification(notification.client, {
+    actorName: notification.actorName,
+    actorUserId: notification.actorUserId,
+    agency: notification.agency,
+    codeColis: confirmedPayment.codeColis,
+    montantPaye: confirmedPayment.montantPaye,
+    paymentRequestId,
+  });
+  performanceTrace.add("notification", notificationStartedAt);
+
+  return performanceTrace.finish(
+    jsonResponse(confirmedPayment, 200),
+    result,
+  );
 }
 
 function jsonResponse(payload: unknown, status: number): Response {

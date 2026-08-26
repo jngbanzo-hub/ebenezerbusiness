@@ -28,6 +28,7 @@ test("les étapes autorisées sont instrumentées sans changer l'ordre métier",
     "checkpoint",
     "finalize_orchestration",
     "cash",
+    "notification",
   ]) {
     assert.match(source, new RegExp(`performanceTrace\\.add\\(\"${step}\"`));
   }
