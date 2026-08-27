@@ -15,8 +15,9 @@ test("la lecture détail est Admin, GET et strictement limitée à l'agence", ()
   assert.match(server, /\.in\("delivery_status", \["AVAILABLE", "PRESENT"\]\)/);
 });
 
-test("la vue est en lecture seule et distingue agency + tracking_code", () => {
-  assert.match(page, /key={`\$\{parcel\.agency\}-\$\{parcel\.trackingCode\}`}/);
+test("la vue est en lecture seule et distingue chaque identité technique", () => {
+  assert.match(page, /key={parcel\.parcelId}/);
+  assert.match(page, /parcel\.displayCode \?\? parcel\.trackingCode/);
   assert.match(page, /Aucun colis actuellement présent/);
   assert.match(page, /DISPONIBLE/);
   assert.match(page, /PRÉSENT/);

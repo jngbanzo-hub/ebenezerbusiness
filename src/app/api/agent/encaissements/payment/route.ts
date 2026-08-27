@@ -9,7 +9,7 @@ import { logOperationRefusal } from "@/server/operation-refusal-diagnostics";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-const ALLOWED = new Set(["trackingCode", "paymentMode", "paymentReference", "observation", "paymentRequestId"]);
+const ALLOWED = new Set(["trackingCode", "parcelId", "paymentMode", "paymentReference", "observation", "paymentRequestId"]);
 
 export async function POST(request: Request) {
   const startedAt = performance.now();
@@ -30,6 +30,7 @@ export async function POST(request: Request) {
     stage = "recordDestinationPayment";
     const result = await recordDestinationPayment({
       trackingCode: String(body.trackingCode ?? ""),
+      parcelId: typeof body.parcelId === "string" ? body.parcelId : undefined,
       agency: requireStorageAgency(auth.identity.site),
       paymentMode: String(body.paymentMode ?? ""),
       paymentReference: String(body.paymentReference ?? ""),

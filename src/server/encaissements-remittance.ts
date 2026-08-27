@@ -8,7 +8,7 @@ import { StockagesV2Error, type StorageAgency } from "@/server/stockages-v2";
 export async function resolvePaidPhysicalParcel(trackingCode: string, agency: StorageAgency) {
   const code = normalizeCode(trackingCode);
   const [{ data: parcel, error }, payments] = await Promise.all([
-    serviceClient().from("stockage_parcels").select("tracking_code,agency,canonical_weight_kg,weight_source_reference,delivery_status").eq("tracking_code", code).eq("agency", agency).maybeSingle(),
+    serviceClient().from("stockage_parcels").select("tracking_code,agency,canonical_weight_kg,weight_source_reference,delivery_status").eq("tracking_code", code).eq("agency", agency).is("forwarding_id", null).maybeSingle(),
     readAdminPayments()
   ]);
   if (error) throw new StockagesV2Error("STORAGE_READ_FAILED", 503, undefined, "resolvePaidPhysicalParcel");

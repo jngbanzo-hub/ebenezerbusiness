@@ -74,6 +74,7 @@ async function readStorageComparison(agency: StorageAgency, codes: string[]) {
     .from("stockage_parcels")
     .select("tracking_code,canonical_weight_kg,delivery_status")
     .eq("agency", agency)
+    .is("forwarding_id", null)
     .eq("delivery_status", "AVAILABLE")
     .in("tracking_code", unique);
   if (error) throw new StockagesV2Error("STORAGE_READ_FAILED", 503);

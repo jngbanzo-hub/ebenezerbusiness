@@ -177,7 +177,8 @@ export async function recordForwardingArrival(input: {
     p_request_id: input.requestId,
     p_actor_id: input.actorId
   });
-  const { data, error } = await serviceClient().from("stockage_parcels").select("canonical_weight_kg").eq("agency", destination).eq("tracking_code", forwardingReference).single();
+  if (!result.forwardingId) throw new StockagesV2Error("FORWARDING_IDENTITY_MISSING", 409);
+  const { data, error } = await serviceClient().from("stockage_parcels").select("canonical_weight_kg").eq("forwarding_id", result.forwardingId).single();
   if (error) throw new StockagesV2Error("FORWARDING_SERVICE_UNAVAILABLE", 503);
   return { ...result, weightKg: Number(data.canonical_weight_kg) };
 }

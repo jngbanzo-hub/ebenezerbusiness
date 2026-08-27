@@ -9,6 +9,7 @@ import { readAdminPayments } from "@/server/admin-payments-sheets";
 import { findShipmentParcelMatches, type AdminShipmentParcelMatch } from "@/server/admin-shipment-parcel-match";
 import { readShipmentStatistics } from "@/server/admin-statistics-sheets";
 import { readAdminQr } from "@/server/qr-admin-service";
+import { storageParcelDisplayCode } from "@/server/storage-parcel-identity";
 
 type SourceState = "FOUND" | "ABSENT" | "UNAVAILABLE_TEMPORARILY";
 type SourceResult<T> = { state: SourceState; matches: T[] };
@@ -17,7 +18,7 @@ export type AdminGlobalParcelSearchResult = {
   code: string;
   found: boolean;
   manifest: SourceResult<{ agency: string; date: string; weightKg: number | null; status: string; rowNumber: number }>;
-  storage: SourceResult<{ agency: string; weightKg: number; status: string; createdAt: string; updatedAt: string; lastEvent: { type: string; occurredAt: string } | null; events: Array<{ type: string; occurredAt: string }> }>;
+  storage: SourceResult<{ parcelId: string; forwardingId: string | null; displayCode: string; agency: string; weightKg: number; status: string; createdAt: string; updatedAt: string; lastEvent: { type: string; occurredAt: string } | null; events: Array<{ type: string; occurredAt: string }> }>;
   payments: SourceResult<AdminPayment>;
   shipments: SourceResult<AdminShipmentParcelMatch>;
   qr: SourceResult<{ qrId: string; displayNumber: number; status: string; version: number; agency: string | null; trackingCode: string | null; assignedAt: string | null; audit: Array<{ action: string; occurredAt: string }> }>;
@@ -71,13 +72,14 @@ async function searchShipments(code: string) {
 async function searchStorage(code: string) {
   const client = serviceClient();
   const [{ data: parcels, error: parcelError }, { data: events, error: eventError }] = await Promise.all([
-    client.from("stockage_parcels").select("tracking_code,agency,canonical_weight_kg,delivery_status,created_at,updated_at").eq("tracking_code", code).order("updated_at", { ascending: false }),
+    client.from("stockage_parcels").select("parcel_id,forwarding_id,tracking_code,agency,canonical_weight_kg,delivery_status,created_at,updated_at,stockage_forwardings(origin_agency,destination_agency)").eq("tracking_code", code).order("updated_at", { ascending: false }),
     client.from("stockage_events").select("tracking_code,agency,event_type,occurred_at").eq("tracking_code", code).order("occurred_at", { ascending: false }).limit(20)
   ]);
   if (parcelError || eventError) throw new Error("STORAGE_UNAVAILABLE");
   return (parcels ?? []).map((parcel) => {
+    const context = Array.isArray(parcel.stockage_forwardings) ? parcel.stockage_forwardings[0] : parcel.stockage_forwardings;
     const parcelEvents = (events ?? []).filter((candidate) => candidate.agency === parcel.agency).map((event) => ({ type: String(event.event_type), occurredAt: String(event.occurred_at) }));
-    return { agency: String(parcel.agency), weightKg: Number(parcel.canonical_weight_kg), status: String(parcel.delivery_status), createdAt: String(parcel.created_at), updatedAt: String(parcel.updated_at), lastEvent: parcelEvents[0] ?? null, events: parcelEvents };
+    return { parcelId: String(parcel.parcel_id), forwardingId: parcel.forwarding_id ? String(parcel.forwarding_id) : null, displayCode: storageParcelDisplayCode({ parcelId: String(parcel.parcel_id), forwardingId: parcel.forwarding_id ? String(parcel.forwarding_id) : null, trackingCode: String(parcel.tracking_code), agency: String(parcel.agency), originAgency: context?.origin_agency, destinationAgency: context?.destination_agency }), agency: String(parcel.agency), weightKg: Number(parcel.canonical_weight_kg), status: String(parcel.delivery_status), createdAt: String(parcel.created_at), updatedAt: String(parcel.updated_at), lastEvent: parcelEvents[0] ?? null, events: parcelEvents };
   });
 }
 

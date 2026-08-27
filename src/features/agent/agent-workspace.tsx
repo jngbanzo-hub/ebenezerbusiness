@@ -11,7 +11,7 @@ import { formatWeight } from "@/lib/format-weight";
 import { manifestStatusLabel } from "@/lib/manifest-status";
 import { getAllowedDestinations } from "@/features/agent/agencies";
 import { getAgentProfile, signOutAgent } from "@/features/agent/auth";
-import { AgentApiError, saveDestinationPayment, savePayment, searchAgentManifestControl, searchDestinationParcel, searchParcel, type AgentManifestSearchRow } from "@/features/agent/functions";
+import { AgentApiError, ParcelIdentitySelectionRequiredError, saveDestinationPayment, savePayment, searchAgentManifestControl, searchDestinationParcel, searchParcel, type AgentManifestSearchRow, type ParcelIdentityCandidate } from "@/features/agent/functions";
 import { EncaissementQrScanner } from "@/features/agent/encaissement-qr-scanner";
 import { resolveQrById } from "@/features/agent/qr-association-client";
 import { formatParcelArrivalDate } from "@/features/agent/parcel-arrival-date";
@@ -71,6 +71,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
   const [parcel, setParcel] = useState<Parcel | null>(null);
   const [storageSearchResult, setStorageSearchResult] = useState<StorageSearchResult | null>(null);
   const [manifestSearchResult, setManifestSearchResult] = useState<ManifestSearchResult | null>(null);
+  const [parcelIdentityCandidates, setParcelIdentityCandidates] = useState<readonly ParcelIdentityCandidate[]>([]);
   const [routingQuote, setRoutingQuote] = useState<{ trackingCode: string; routingReference: string; origin: string; destination: string; weightKg: number; rateUsdPerKg: number; amountExpectedUsd: number; readiness: { ready: boolean; code: string | null; message: string | null }; resume: { state: string; resumable: boolean; paymentRequestId?: string } | null } | null>(null);
   const [parcelAction, setParcelAction] = useState<{ totalPaid: number; paymentSites: string[]; physicallyPresent: boolean; delivered: boolean; fullyPaidAtCooOnly: boolean } | null>(null);
   const [montantPaye, setMontantPaye] = useState("");
@@ -159,7 +160,8 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
 
   async function runEncaissementSearch(
     requestedCode: string,
-    requestedSourceAgency: DestinationCode
+    requestedSourceAgency: DestinationCode,
+    requestedParcelId?: string
   ) {
     if (searchLockRef.current) return;
     if (!profile || !DESTINATIONS.includes(requestedSourceAgency)) {
@@ -178,6 +180,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
     setKlzRoutingChoiceOpen(false);
     setKlzFihPreview(null);
     setParcelAction(null);
+    setParcelIdentityCandidates([]);
     paymentAttemptRef.current = null;
     forwardingAttemptRef.current = null;
     setForwardingState("idle");
@@ -189,7 +192,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
       const destinationAgency = profile.agence === "COTONOU" ? requestedSourceAgency : profile.agence;
       if (profile.agence !== "COTONOU") {
         const [storageOutcome, manifestOutcome] = await Promise.allSettled([
-          searchDestinationParcel(normalizedCode),
+          searchDestinationParcel(normalizedCode, requestedParcelId),
           searchAgentManifestControl(normalizedCode)
         ]);
         if (searchId !== activeSearchIdRef.current) return;
@@ -203,6 +206,11 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
         }
 
         if (storageOutcome.status === "rejected") {
+          if (storageOutcome.reason instanceof ParcelIdentitySelectionRequiredError) {
+            setParcelIdentityCandidates(storageOutcome.reason.candidates);
+            setStorageSearchResult({ state: "ERROR", code: normalizedCode });
+            return;
+          }
           if (storageOutcome.reason instanceof AgentApiError && storageOutcome.reason.code === "PARCEL_NOT_IN_AGENCY_STORAGE") {
             setStorageSearchResult({ state: "NOT_FOUND", code: normalizedCode });
           } else {
@@ -348,6 +356,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
         ? await savePayment({ ...paymentIntent, paymentRequestId: attempt.paymentRequestId })
         : await saveDestinationPayment({
             trackingCode: paymentIntent.codeColis,
+            parcelId: parcel.parcelId,
             paymentMode: paymentIntent.modePaiement,
             paymentReference: paymentIntent.referencePaiement,
             observation: paymentIntent.observation,
@@ -618,6 +627,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
                   </table>
                 </div>
                 {storageSearchResult?.state === "NOT_FOUND" ? <p className="mt-4 rounded-md border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">Ce colis n’est pas présent dans le Stockage de votre agence et n’est pas encaissable actuellement.</p> : null}
+                {parcelIdentityCandidates.length > 1 ? <div className="mt-4 rounded-md border border-sky-300/30 bg-sky-300/10 p-3"><p className="text-sm font-semibold text-sky-100">Plusieurs contextes physiques existent. Choisissez le colis concerné :</p><div className="mt-3 grid gap-2">{parcelIdentityCandidates.map((candidate)=><Button key={candidate.parcelId} type="button" variant="outline" onClick={()=>void runEncaissementSearch(candidate.trackingCode, candidate.agency as DestinationCode, candidate.parcelId)}>{candidate.displayCode}</Button>)}</div></div> : null}
               </GlassPanel>
 
               <GlassPanel className="p-5 sm:p-6">

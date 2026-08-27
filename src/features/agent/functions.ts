@@ -48,6 +48,11 @@ export class AgentApiError extends Error {
   }
 }
 
+export type ParcelIdentityCandidate = { parcelId: string; forwardingId: string | null; trackingCode: string; displayCode: string; agency: string };
+export class ParcelIdentitySelectionRequiredError extends Error {
+  constructor(readonly candidates: readonly ParcelIdentityCandidate[]) { super("Sélectionnez le contexte physique du colis."); this.name="ParcelIdentitySelectionRequiredError"; }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -124,15 +129,18 @@ export function searchParcel(payload: { destinationCode: string; codeColis: stri
   return invokeAgentFunction<Record<string, unknown>>(FUNCTION_NAMES.search, payload, true);
 }
 
-export async function searchDestinationParcel(trackingCode: string) {
+export async function searchDestinationParcel(trackingCode: string, parcelId?: string) {
+  const params = new URLSearchParams({ trackingCode });
+  if (parcelId) params.set("parcelId", parcelId);
   const response = await authenticatedRead(
     getSupabaseBrowserClient().auth,
-    `/api/agent/encaissements/parcel?trackingCode=${encodeURIComponent(trackingCode)}`,
+    `/api/agent/encaissements/parcel?${params}`,
     {}
   );
   const payload = await response.json().catch(() => null) as
-    | { parcel?: Record<string, unknown>; message?: string; code?: string }
+    | { parcel?: Record<string, unknown>; message?: string; code?: string; candidates?: ParcelIdentityCandidate[] }
     | null;
+  if (response.status === 409 && payload?.code === "PARCEL_IDENTITY_SELECTION_REQUIRED" && Array.isArray(payload.candidates)) throw new ParcelIdentitySelectionRequiredError(payload.candidates);
   if (!response.ok || !payload?.parcel) {
     const code = payload?.code && payload.code in ERROR_MESSAGES
       ? payload.code as AgentApiErrorCode
@@ -192,6 +200,7 @@ async function syncPaymentNotification(paymentRequestId: string) { const { data:
 
 export async function saveDestinationPayment(payload: {
   trackingCode: string;
+  parcelId?: string;
   paymentMode: PaymentMode;
   paymentReference: string;
   observation: string;

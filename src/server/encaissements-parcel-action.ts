@@ -8,7 +8,7 @@ export async function resolveParcelAction(trackingCode: string, agency: StorageA
   const code = normalizeCode(trackingCode);
   const [payments, parcelResult, deliveryResult] = await Promise.all([
     readAdminPayments(),
-    serviceClient().from("stockage_parcels").select("delivery_status").eq("tracking_code", code).eq("agency", agency).maybeSingle(),
+    serviceClient().from("stockage_parcels").select("delivery_status").eq("tracking_code", code).eq("agency", agency).is("forwarding_id", null).maybeSingle(),
     serviceClient().from("stockage_events").select("event_id").eq("tracking_code", code).eq("agency", agency).eq("event_type", "CONFIRMED_DELIVERY_RECORDED").limit(1).maybeSingle()
   ]);
   if (parcelResult.error || deliveryResult.error) throw new StockagesV2Error("STORAGE_READ_FAILED", 503);

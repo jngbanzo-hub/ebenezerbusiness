@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { authorizeAgentRequest } from "@/server/agent-authorization";
-import { resolveDestinationPaymentParcel } from "@/server/destination-payment-parcel";
+import { ParcelIdentitySelectionRequiredError, resolveDestinationPaymentParcel } from "@/server/destination-payment-parcel";
 import {
   isStockagesV2Enabled,
   requireStorageAgency,
@@ -17,15 +17,14 @@ export async function GET(request: Request) {
     const auth = await authorizeAgentRequest(request);
     if (!auth.authorized) return fail("ACCESS_DENIED", auth.status);
     const agency = requireStorageAgency(auth.identity.site);
-    const parcel = await resolveDestinationPaymentParcel(
-      new URL(request.url).searchParams.get("trackingCode") ?? "",
-      agency
-    );
+    const url = new URL(request.url);
+    const parcel = await resolveDestinationPaymentParcel(url.searchParams.get("trackingCode") ?? "", agency, undefined, url.searchParams.get("parcelId") ?? undefined);
     return NextResponse.json(
       { state: "SUCCESS", parcel },
       { headers: { "Cache-Control": "private, no-store" } }
     );
   } catch (cause) {
+    if (cause instanceof ParcelIdentitySelectionRequiredError) return NextResponse.json({ state: "SELECTION_REQUIRED", code: cause.code, candidates: cause.candidates, message: "Plusieurs contextes physiques correspondent à ce code." }, { status: cause.status, headers: { "Cache-Control": "private, no-store" } });
     if (cause instanceof StockagesV2Error) {
       return fail(cause.code, cause.status);
     }

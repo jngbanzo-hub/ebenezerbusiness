@@ -28,6 +28,9 @@ export function parseParcelResponse(response: Record<string, unknown>): Parcel {
   }
 
   return {
+    parcelId: typeof response.parcelId === "string" ? response.parcelId : undefined,
+    forwardingId: typeof response.forwardingId === "string" ? response.forwardingId : null,
+    displayCode: typeof response.displayCode === "string" ? response.displayCode : undefined,
     codeColis: response.codeColis.trim(),
     dateColis: response.dateColis.trim(),
     destinationCode: response.destinationCode,

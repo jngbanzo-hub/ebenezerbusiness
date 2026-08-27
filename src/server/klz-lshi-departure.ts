@@ -13,7 +13,7 @@ export async function readKlzLshiDepartureQuote(trackingCode: string) {
   const code = normalizeCode(trackingCode);
   const client = serviceClient();
   const [{ data: parcel, error: parcelError }, { data: forwarding, error: forwardingError }] = await Promise.all([
-    client.from("stockage_parcels").select("tracking_code,agency,canonical_weight_kg,delivery_status").eq("agency", "KLZ").eq("tracking_code", code).maybeSingle(),
+    client.from("stockage_parcels").select("tracking_code,agency,canonical_weight_kg,delivery_status").eq("agency", "KLZ").eq("tracking_code", code).is("forwarding_id", null).maybeSingle(),
     client.from("stockage_forwardings").select("forwarding_id,forwarding_reference,status,canonical_weight_kg,amount_paid,amount_expected").eq("origin_agency", "KLZ").eq("destination_agency", "LSHI").eq("original_tracking_code", code).maybeSingle()
   ]);
   if (parcelError || forwardingError) throw new StockagesV2Error("KLZ_LSHI_DEPARTURE_UNAVAILABLE", 503);

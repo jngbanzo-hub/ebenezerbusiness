@@ -25,6 +25,9 @@ export interface AdminProfile extends ProfessionalProfile {
 }
 
 export interface Parcel {
+  parcelId?: string;
+  forwardingId?: string | null;
+  displayCode?: string;
   codeColis: string;
   dateColis: string;
   destinationCode: DestinationCode;
