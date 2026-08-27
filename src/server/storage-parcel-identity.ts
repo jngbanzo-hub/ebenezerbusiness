@@ -9,18 +9,21 @@ export type StorageParcelIdentity = Readonly<{
 
 export type ForwardingAlias = Readonly<{
   trackingCode: string;
-  originAgency: "KLZ";
-  destinationAgency: "LSHI" | "FIH";
+  originAgency: "KLZ" | "LSHI";
+  destinationAgency: "KLZ" | "LSHI" | "FIH";
 }>;
 
 export function parseForwardingAlias(value: unknown): ForwardingAlias | null {
   const normalized = String(value ?? "").trim().toUpperCase();
-  const match = normalized.match(/^([A-Z0-9][A-Z0-9._/]{1,63}?)(?: |-|)(KLZ)-(LSHI|FIH)$/);
+  const match = normalized.match(/^([A-Z0-9][A-Z0-9._/]{1,63}?)(?: |-|)(KLZ|LSHI)-(KLZ|LSHI|FIH)$/);
   if (!match) return null;
+  const originAgency = match[2] as "KLZ" | "LSHI";
+  const destinationAgency = match[3] as "KLZ" | "LSHI" | "FIH";
+  if (originAgency === destinationAgency || (originAgency === "KLZ" && destinationAgency === "KLZ") || (originAgency === "LSHI" && destinationAgency === "LSHI")) return null;
   return Object.freeze({
     trackingCode: match[1],
-    originAgency: "KLZ",
-    destinationAgency: match[3] as "LSHI" | "FIH"
+    originAgency,
+    destinationAgency
   });
 }
 

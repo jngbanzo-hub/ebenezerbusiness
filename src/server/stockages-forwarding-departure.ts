@@ -7,17 +7,19 @@ import { buildInterAgencyReference, quoteInterAgencyRouting } from "@/server/int
 import { businessDatePortoNovo, StockagesV2Error, type StorageAgency } from "@/server/stockages-v2";
 import { assertForwardingEnabled } from "@/server/forwarding-feature";
 
-export async function departKlzForwarding(input: { trackingCode: string; destination: StorageAgency; requestId: string; actorId: string }) {
+export type ForwardingOriginAgency = "KLZ" | "LSHI";
+
+export async function departForwarding(input: { trackingCode: string; origin: ForwardingOriginAgency; destination: StorageAgency; requestId: string; actorId: string }) {
   assertForwardingEnabled();
-  if (input.destination !== "LSHI" && input.destination !== "FIH") throw new StockagesV2Error("FORWARDING_ROUTE_NOT_ALLOWED", 400);
+  requireForwardingDestination(input.origin, input.destination);
   validateUuid(input.requestId);
-  const quote = await readKlzForwardingDepartureQuote(input.trackingCode, input.destination);
+  const quote = await readForwardingDepartureQuote(input.trackingCode, input.origin, input.destination);
   const fingerprint = createHash("sha256").update(JSON.stringify({
-    type: "KLZ_FORWARDING_DEPARTURE", trackingCode: quote.trackingCode, origin: "KLZ",
+    type: "STORAGE_FORWARDING_DEPARTURE", trackingCode: quote.trackingCode, origin: input.origin,
     destination: quote.destination, weightKg: quote.weightKg, rateUsdPerKg: quote.rateUsdPerKg,
     amountExpectedUsd: quote.amountExpectedUsd, requestId: input.requestId
   })).digest("hex");
-  const { data, error } = await serviceClient().rpc("confirm_klz_forwarding_departure", {
+  const { data, error } = await serviceClient().rpc("confirm_storage_forwarding_departure", {
     p_tracking_code: quote.trackingCode, p_destination_agency: quote.destination,
     p_canonical_weight_kg: quote.weightKg, p_forwarding_reference: quote.routingReference,
     p_expected_amount: quote.amountExpectedUsd, p_rate_usd_per_kg: quote.rateUsdPerKg,
@@ -28,21 +30,26 @@ export async function departKlzForwarding(input: { trackingCode: string; destina
   return Object.freeze((data ?? {}) as { forwardingId?: string; forwardingReference?: string; state?: string; paymentCreated?: boolean; replayed?: boolean });
 }
 
-export async function readKlzForwardingDepartureQuote(trackingCode: string, destination: StorageAgency) {
+export async function readForwardingDepartureQuote(trackingCode: string, origin: ForwardingOriginAgency, destination: StorageAgency) {
   assertForwardingEnabled();
-  if (destination !== "LSHI" && destination !== "FIH") throw new StockagesV2Error("FORWARDING_ROUTE_NOT_ALLOWED", 400);
-  const code = buildInterAgencyReference(trackingCode, "KLZ", destination).slice(0, -(`-KLZ-${destination}`.length));
+  requireForwardingDestination(origin, destination);
+  const code = buildInterAgencyReference(trackingCode, origin, destination).slice(0, -(`-${origin}-${destination}`.length));
   const { data, error } = await serviceClient()
     .from("stockage_parcels")
     .select("parcel_id,tracking_code,canonical_weight_kg,delivery_status")
-    .eq("agency", "KLZ")
+    .eq("agency", origin)
     .eq("tracking_code", code)
     .is("forwarding_id", null)
     .maybeSingle();
   if (error) throw new StockagesV2Error("FORWARDING_SERVICE_UNAVAILABLE", 503);
   if (!data || data.delivery_status !== "AVAILABLE") throw new StockagesV2Error("PARCEL_NOT_IN_STOCK", 404);
-  const quote = quoteInterAgencyRouting({ trackingCode: data.tracking_code, origin: "KLZ", destination, weightKg: Number(data.canonical_weight_kg) });
+  const quote = quoteInterAgencyRouting({ trackingCode: data.tracking_code, origin, destination, weightKg: Number(data.canonical_weight_kg) });
   return Object.freeze({ ...quote, parcelId: data.parcel_id, forwardingReference: quote.routingReference, sourceStatus: "PHYSICAL_STORAGE" });
+}
+
+function requireForwardingDestination(origin: ForwardingOriginAgency, destination: StorageAgency) {
+  const allowed = origin === "KLZ" ? destination === "LSHI" || destination === "FIH" : destination === "KLZ" || destination === "FIH";
+  if (!allowed) throw new StockagesV2Error("FORWARDING_ROUTE_NOT_ALLOWED", 400);
 }
 
 function serviceClient() {

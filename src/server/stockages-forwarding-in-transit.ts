@@ -10,8 +10,8 @@ export type InTransitForwarding = Readonly<{
   parcelId: string;
   trackingCode: string;
   displayCode: string;
-  originAgency: "KLZ";
-  destinationAgency: "LSHI" | "FIH";
+  originAgency: "KLZ" | "LSHI";
+  destinationAgency: StorageAgency;
   weightKg: number;
   rateUsdPerKg: number;
   amountExpectedUsd: number;
@@ -22,7 +22,7 @@ export type InTransitForwarding = Readonly<{
 
 export async function readDestinationInTransitForwardings(agency: StorageAgency): Promise<readonly InTransitForwarding[]> {
   assertForwardingEnabled();
-  if (agency !== "LSHI" && agency !== "FIH") throw new StockagesV2Error("WRONG_AGENCY", 403);
+  if (agency !== "KLZ" && agency !== "LSHI" && agency !== "FIH") throw new StockagesV2Error("WRONG_AGENCY", 403);
   const { data, error } = await serviceClient()
     .from("stockage_forwardings")
     .select("forwarding_id,forwarding_reference,original_tracking_code,origin_agency,destination_agency,canonical_weight_kg,rate_usd_per_kg,amount_expected,status,created_at,metadata")
@@ -39,8 +39,8 @@ export async function readDestinationInTransitForwardings(agency: StorageAgency)
       parcelId,
       trackingCode: row.original_tracking_code,
       displayCode: `${row.original_tracking_code} · ${row.origin_agency}-${row.destination_agency}`,
-      originAgency: row.origin_agency as "KLZ",
-      destinationAgency: row.destination_agency as "LSHI" | "FIH",
+      originAgency: row.origin_agency as "KLZ" | "LSHI",
+      destinationAgency: row.destination_agency as StorageAgency,
       weightKg: Number(row.canonical_weight_kg),
       rateUsdPerKg: Number(row.rate_usd_per_kg),
       amountExpectedUsd: Number(row.amount_expected),

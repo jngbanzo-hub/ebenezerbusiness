@@ -99,11 +99,12 @@ test("preflight protège JL27226 et rollback refuse une perte métier", () => {
   assert.match(rollback, /alter column cash_event_id set not null/);
 });
 
-test("route serveur est KLZ uniquement et n'accepte que LSHI/FIH", () => {
-  assert.match(route, /auth\.identity\.site !== "KLZ"/);
+test("route serveur conserve KLZ et ajoute seulement LSHI comme origine", () => {
+  assert.match(route, /auth\.identity\.site !== "KLZ" && auth\.identity\.site !== "LSHI"/);
   assert.match(route, /destinationAgency/);
-  assert.match(server, /input\.destination !== "LSHI" && input\.destination !== "FIH"/);
-  assert.match(server, /origin: "KLZ"/);
+  assert.match(server, /origin === "KLZ" \? destination === "LSHI" \|\| destination === "FIH"/);
+  assert.match(server, /destination === "KLZ" \|\| destination === "FIH"/);
+  assert.match(server, /origin: input\.origin/);
   assert.doesNotMatch(route, /paymentMode|amountPaid/);
   assert.match(retiredRoute, /FORWARDING_PAYMENT_BEFORE_ARRIVAL_FORBIDDEN/);
   assert.doesNotMatch(retiredRoute, /createInterAgencyForwarding|paymentMode/);
