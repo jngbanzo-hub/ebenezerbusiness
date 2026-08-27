@@ -7,6 +7,23 @@ export type StorageParcelIdentity = Readonly<{
   destinationAgency?: string | null;
 }>;
 
+export type ForwardingAlias = Readonly<{
+  trackingCode: string;
+  originAgency: "KLZ";
+  destinationAgency: "LSHI" | "FIH";
+}>;
+
+export function parseForwardingAlias(value: unknown): ForwardingAlias | null {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  const match = normalized.match(/^([A-Z0-9][A-Z0-9._/]{1,63}?)(?: |-|)(KLZ)-(LSHI|FIH)$/);
+  if (!match) return null;
+  return Object.freeze({
+    trackingCode: match[1],
+    originAgency: "KLZ",
+    destinationAgency: match[3] as "LSHI" | "FIH"
+  });
+}
+
 export function storageParcelDisplayCode(parcel: StorageParcelIdentity) {
   if (!parcel.forwardingId) return parcel.trackingCode;
   const origin = parcel.originAgency?.trim().toUpperCase();

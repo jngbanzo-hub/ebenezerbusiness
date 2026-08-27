@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { authorizeAgentRequest } from "@/server/agent-authorization";
 import { isStockagesV2Enabled, readAgentStorage, requireStorageAgency, StockagesV2Error } from "@/server/stockages-v2";
 import { OperationPerformanceTrace } from "@/server/operation-performance";
+import { isForwardingEnabled } from "@/server/forwarding-feature";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -19,7 +20,7 @@ export async function GET(request: Request) {
     trace.add("auth_session", performance.now() - authStartedAt);
     const result = await readAgentStorage(requireStorageAgency(authorization.identity.site), trace);
     const responseStartedAt = performance.now();
-    const response = json(result);
+    const response = json({ ...result, forwardingEnabled: isForwardingEnabled() });
     trace.add("reponse_serveur", performance.now() - responseStartedAt);
     trace.complete("success");
     response.headers.set("Server-Timing", trace.serverTiming());

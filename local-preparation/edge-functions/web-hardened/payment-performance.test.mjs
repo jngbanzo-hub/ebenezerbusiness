@@ -33,7 +33,7 @@ test("les étapes autorisées sont instrumentées sans changer l'ordre métier",
     assert.match(source, new RegExp(`performanceTrace\\.add\\(\"${step}\"`));
   }
 
-  const begin = source.indexOf('rpc("begin_paid_destination_orchestration"');
+  const begin = source.indexOf('const begun = await cashClient.rpc(');
   const payment = source.indexOf("const upstreamResponse = await fetch(appsScriptUrl");
   const checkpoint = source.indexOf('rpc("checkpoint_paid_destination_payment"');
   const finalize = source.indexOf("const finalized = await finalizePaidExit");

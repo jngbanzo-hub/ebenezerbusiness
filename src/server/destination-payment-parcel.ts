@@ -8,7 +8,7 @@ import type { Parcel } from "@/features/agent/types";
 import { readAdminPayments } from "@/server/admin-payments-sheets";
 import { StockagesV2Error, type StorageAgency } from "@/server/stockages-v2";
 import type { OperationPerformanceTrace } from "@/server/operation-performance";
-import { storageParcelDisplayCode, type StorageParcelIdentity } from "@/server/storage-parcel-identity";
+import { parseForwardingAlias, storageParcelDisplayCode, type StorageParcelIdentity } from "@/server/storage-parcel-identity";
 
 const STANDARD_RATES_USD_PER_KG: Readonly<Record<StorageAgency, number>> = {
   FIH: 9,
@@ -28,7 +28,9 @@ export async function resolveDestinationPaymentParcel(
   trace?: OperationPerformanceTrace,
   parcelId?: string
 ): Promise<Readonly<Parcel>> {
-  const code = normalizeTrackingCode(trackingCode);
+  const alias = parseForwardingAlias(trackingCode);
+  if (alias && alias.destinationAgency !== agency) throw new StockagesV2Error("WRONG_AGENCY", 403, undefined, "resolveDestinationPaymentParcel");
+  const code = normalizeTrackingCode(alias?.trackingCode ?? trackingCode);
   const readStorage = async () => await serviceClient()
       .from("stockage_parcels")
       .select("parcel_id,forwarding_id,tracking_code,agency,canonical_weight_kg,delivery_status,created_at")
@@ -45,14 +47,14 @@ export async function resolveDestinationPaymentParcel(
     throw new StockagesV2Error("PARCEL_NOT_IN_AGENCY_STORAGE", 404, undefined, "resolveDestinationPaymentParcel");
   }
   const forwardingIds = rows.map((row) => row.forwarding_id).filter((value): value is string => typeof value === "string");
-  const forwardings = forwardingIds.length ? await serviceClient().from("stockage_forwardings").select("forwarding_id,origin_agency,destination_agency").in("forwarding_id", forwardingIds) : { data: [], error: null };
+  const forwardings = forwardingIds.length ? await serviceClient().from("stockage_forwardings").select("forwarding_id,origin_agency,destination_agency,rate_usd_per_kg,amount_expected,amount_paid,status").in("forwarding_id", forwardingIds) : { data: [], error: null };
   if (forwardings.error) throw new StockagesV2Error("STORAGE_READ_FAILED", 503, undefined, "resolveDestinationPaymentParcel");
   const contextById = new Map((forwardings.data ?? []).map((row) => [row.forwarding_id, row]));
   const candidates = rows.map((row) => {
     const context = row.forwarding_id ? contextById.get(row.forwarding_id) : null;
     const identity: StorageParcelIdentity = { parcelId: row.parcel_id, forwardingId: row.forwarding_id, trackingCode: row.tracking_code, agency: row.agency, originAgency: context?.origin_agency, destinationAgency: context?.destination_agency };
     return { ...row, displayCode: storageParcelDisplayCode(identity), originAgency: context?.origin_agency ?? null, destinationAgency: context?.destination_agency ?? null };
-  });
+  }).filter((candidate) => !alias || (candidate.forwarding_id && candidate.originAgency === alias.originAgency && candidate.destinationAgency === alias.destinationAgency));
   const parcel = parcelId ? candidates.find((candidate) => candidate.parcel_id === parcelId) : candidates.length === 1 ? candidates[0] : null;
   if (!parcel) throw new ParcelIdentitySelectionRequiredError(candidates.map((candidate) => ({ parcelId: candidate.parcel_id, forwardingId: candidate.forwarding_id, trackingCode: candidate.tracking_code, displayCode: candidate.displayCode, agency: candidate.agency })));
 
@@ -61,16 +63,13 @@ export async function resolveDestinationPaymentParcel(
     throw new StockagesV2Error("INVALID_CANONICAL_WEIGHT", 409, undefined, "resolveDestinationPaymentParcel");
   }
 
-  const payments = await readAdminPayments(trace);
-  const matching = payments.filter(
-    (payment) =>
-      normalizeTrackingCode(payment.codeColis) === code &&
-      payment.destinationCode === agency
-  );
-  const amountExpected = money(weightKg * STANDARD_RATES_USD_PER_KG[agency]);
-  const amountPaid = money(
-    matching.reduce((total, payment) => total + payment.montantPaye, 0)
-  );
+  const forwarding = parcel.forwarding_id ? contextById.get(parcel.forwarding_id) : null;
+  const amountExpected = forwarding
+    ? money(Number(forwarding.amount_expected))
+    : money(weightKg * STANDARD_RATES_USD_PER_KG[agency]);
+  const amountPaid = forwarding
+    ? money(Number(forwarding.amount_paid))
+    : await readNativeAmountPaid(code, agency, trace);
   const remainingBalance = money(Math.max(0, amountExpected - amountPaid));
 
   return Object.freeze({
@@ -100,7 +99,6 @@ export async function recordDestinationPayment(input: {
   parcelId?: string;
 }, trace?: OperationPerformanceTrace) {
   const parcel = await resolveDestinationPaymentParcel(input.trackingCode, input.agency, trace, input.parcelId);
-  if (parcel.forwardingId) throw new StockagesV2Error("FORWARDED_PARCEL_WRITE_REQUIRES_CERTIFIED_IDENTITY", 409, undefined, "recordDestinationPayment");
   const validationStartedAt = performance.now();
   if (parcel.soldeRestant <= 0) throw new StockagesV2Error("PARCEL_ALREADY_PAID", 409, undefined, "recordDestinationPayment");
   validateUuid(input.paymentRequestId);
@@ -111,7 +109,8 @@ export async function recordDestinationPayment(input: {
     collectionSiteCode: input.agency,
     canonicalWeightKg: parcel.poidsKg,
     canonicalExpectedAmount: parcel.montantAttendu,
-    canonicalTotalPaid: parcel.montantDejaPaye
+    canonicalTotalPaid: parcel.montantDejaPaye,
+    ...(parcel.forwardingId && parcel.parcelId ? { parcelId: parcel.parcelId, forwardingId: parcel.forwardingId } : {})
   } as const;
   const body = JSON.stringify({
     codeColis: parcel.codeColis,
@@ -149,6 +148,17 @@ export async function recordDestinationPayment(input: {
     throw new StockagesV2Error(code, response.status || 503, undefined, "EDGE_FUNCTION", response.status || 503);
   }
   return payload;
+}
+
+async function readNativeAmountPaid(code: string, agency: StorageAgency, trace?: OperationPerformanceTrace) {
+  const payments = await readAdminPayments(trace);
+  const matching = payments.filter((payment) => normalizeTrackingCode(payment.codeColis) === code && payment.destinationCode === agency);
+  const requestIds = matching.map((payment) => payment.paymentRequestId).filter((value): value is string => Boolean(value));
+  if (!requestIds.length) return money(matching.reduce((total, payment) => total + payment.montantPaye, 0));
+  const { data, error } = await serviceClient().from("stockage_payment_orchestrations").select("request_id").in("request_id", requestIds).not("forwarding_id", "is", null);
+  if (error) throw new StockagesV2Error("STORAGE_READ_FAILED", 503, undefined, "resolveDestinationPaymentParcel");
+  const forwardingRequests = new Set((data ?? []).map((row) => String(row.request_id).toLowerCase()));
+  return money(matching.reduce((total, payment) => forwardingRequests.has(payment.paymentRequestId?.toLowerCase() ?? "") ? total : total + payment.montantPaye, 0));
 }
 
 export class ParcelIdentitySelectionRequiredError extends StockagesV2Error {

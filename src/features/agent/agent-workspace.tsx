@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { LogOut, PackageSearch, Save, Truck } from "lucide-react";
+import { LogOut, PackageSearch, Save } from "lucide-react";
 
 import { Container, GlassPanel } from "@/components/design-system";
 import { Badge } from "@/components/ui/badge";
@@ -16,16 +16,6 @@ import { EncaissementQrScanner } from "@/features/agent/encaissement-qr-scanner"
 import { resolveQrById } from "@/features/agent/qr-association-client";
 import { formatParcelArrivalDate } from "@/features/agent/parcel-arrival-date";
 import { parcelStatusLabel } from "@/features/agent/parcel-status-label";
-import { buildKlzRoutingPreview, getOrCreateDepartureAttempt, type KlzLshiDepartureAttempt, type KlzLshiQuote, type KlzRoutingPreview } from "@/features/agent/klz-lshi-departure";
-import {
-  acquireForwardingSubmissionLock,
-  fingerprintForwardingIntent,
-  getOrCreateForwardingAttempt,
-  restoreForwardingAttempt,
-  transitionForwardingAttempt,
-  type ForwardingAttempt,
-  type ForwardingAttemptState
-} from "@/features/agent/forwarding-attempt";
 import { formatAmount, parseParcelResponse } from "@/features/agent/parcel";
 import {
   fingerprintPaymentIntent,
@@ -72,7 +62,6 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
   const [storageSearchResult, setStorageSearchResult] = useState<StorageSearchResult | null>(null);
   const [manifestSearchResult, setManifestSearchResult] = useState<ManifestSearchResult | null>(null);
   const [parcelIdentityCandidates, setParcelIdentityCandidates] = useState<readonly ParcelIdentityCandidate[]>([]);
-  const [routingQuote, setRoutingQuote] = useState<{ trackingCode: string; routingReference: string; origin: string; destination: string; weightKg: number; rateUsdPerKg: number; amountExpectedUsd: number; readiness: { ready: boolean; code: string | null; message: string | null }; resume: { state: string; resumable: boolean; paymentRequestId?: string } | null } | null>(null);
   const [parcelAction, setParcelAction] = useState<{ totalPaid: number; paymentSites: string[]; physicallyPresent: boolean; delivered: boolean; fullyPaidAtCooOnly: boolean } | null>(null);
   const [montantPaye, setMontantPaye] = useState("");
   const [modePaiement, setModePaiement] = useState<PaymentMode>("ESPECES");
@@ -89,13 +78,6 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
   const searchLockRef = useRef(false);
   const activeSearchIdRef = useRef(0);
   const paymentAttemptRef = useRef<PaymentAttempt | null>(null);
-  const forwardingAttemptRef = useRef<ForwardingAttempt | null>(null);
-  const forwardingLockRef = useRef(false);
-  const [forwardingState, setForwardingState] = useState<ForwardingAttemptState>("idle");
-  const [klzLshiQuote, setKlzLshiQuote] = useState<KlzLshiQuote | null>(null);
-  const [klzRoutingChoiceOpen, setKlzRoutingChoiceOpen] = useState(false);
-  const [klzFihPreview, setKlzFihPreview] = useState<KlzRoutingPreview | null>(null);
-  const klzLshiDepartureAttemptRef = useRef<KlzLshiDepartureAttempt | null>(null);
 
   const allowedPaymentAgencies = useMemo(
     () => (profile ? getAllowedDestinations(profile.agence) : []),
@@ -175,16 +157,9 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
     setParcel(null);
     setStorageSearchResult(null);
     setManifestSearchResult(null);
-    setRoutingQuote(null);
-    setKlzLshiQuote(null);
-    setKlzRoutingChoiceOpen(false);
-    setKlzFihPreview(null);
     setParcelAction(null);
     setParcelIdentityCandidates([]);
     paymentAttemptRef.current = null;
-    forwardingAttemptRef.current = null;
-    setForwardingState("idle");
-    klzLshiDepartureAttemptRef.current = null;
     setIsSearching(true);
 
     try {
@@ -403,105 +378,6 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
     }
   }
 
-  async function handleForwarding(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (forwardingLockRef.current || !routingQuote || !profile || !window.confirm(`Créer et encaisser l’acheminement ${routingQuote.routingReference} ?`)) return;
-    if (!routingQuote.readiness.ready) {
-      setMessage({ type: "error", text: routingQuote.readiness.message ?? "L’acheminement ne peut pas être créé." });
-      return;
-    }
-    if (!acquireForwardingSubmissionLock(forwardingLockRef)) return;
-    setIsSaving(true); setMessage(null);
-    let attempt: ForwardingAttempt | null = null;
-    try {
-      const verifiedQuote = await loadInterAgencyQuote(routingQuote.trackingCode, routingQuote.origin as DestinationCode, {
-        paymentMode: modePaiement,
-        optionalReference: referencePaiement,
-        optionalObservation: observation
-      });
-      const fingerprint = fingerprintForwardingIntent({ trackingCode: verifiedQuote.trackingCode, sourceAgency: verifiedQuote.origin, paymentMode: modePaiement, optionalReference: referencePaiement, optionalObservation: observation });
-      if (verifiedQuote.resume && !verifiedQuote.resume.resumable) {
-        setForwardingState("success");
-        setMessage({ type: "success", text: `Cette opération est déjà au statut ${verifiedQuote.resume.state}. Aucun nouveau paiement n’a été créé.` });
-        return;
-      }
-      attempt = verifiedQuote.resume?.paymentRequestId
-        ? restoreForwardingAttempt(verifiedQuote.resume.paymentRequestId, fingerprint)
-        : getOrCreateForwardingAttempt(forwardingAttemptRef.current, fingerprint);
-      forwardingAttemptRef.current = transitionForwardingAttempt(attempt, "submitting");
-      setForwardingState("submitting");
-      const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
-      if (!session?.access_token) throw new Error("Session expirée.");
-      const response = await fetch("/api/agent/stockages/forwardings", { method: "POST", headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" }, body: JSON.stringify({ trackingCode: routingQuote.trackingCode, sourceAgency: routingQuote.origin, paymentMode: modePaiement, optionalReference: referencePaiement, optionalObservation: observation, paymentRequestId: attempt.paymentRequestId }) });
-      const payload = await response.json().catch(() => null) as { replayed?: boolean; forwardingReference?: string; code?: string; message?: string } | null;
-      if (!response.ok) {
-        const ambiguous = response.status >= 500 || payload?.code === "NETWORK_RESULT_UNKNOWN";
-        forwardingAttemptRef.current = transitionForwardingAttempt(attempt, ambiguous ? "result_unknown_retry_same_id" : "failed_final");
-        setForwardingState(ambiguous ? "result_unknown_retry_same_id" : "failed_final");
-        throw new Error(payload?.message ?? "Acheminement refusé.");
-      }
-      forwardingAttemptRef.current = transitionForwardingAttempt(attempt, "success");
-      setForwardingState("success");
-      setMessage({ type: "success", text: payload?.replayed ? "Acheminement déjà enregistré : rejeu idempotent." : `Acheminement ${payload?.forwardingReference ?? routingQuote.routingReference} créé. Son arrivage à destination reste à confirmer dans Stockages.` });
-      setParcel(null); setRoutingQuote(null); setCodeColis(""); setReferencePaiement(""); setObservation("");
-    } catch (error) {
-      if (attempt && forwardingAttemptRef.current?.state === "submitting") {
-        forwardingAttemptRef.current = transitionForwardingAttempt(attempt, "result_unknown_retry_same_id");
-        setForwardingState("result_unknown_retry_same_id");
-      }
-      setMessage({ type: "error", text: error instanceof Error ? error.message : "Acheminement refusé." });
-    }
-    finally { forwardingLockRef.current = false; setIsSaving(false); }
-  }
-
-  async function openKlzLshiDepartureQuote() {
-    if (!profile || profile.agence !== "KLZ" || !parcel || storageSearchResult?.state !== "FOUND") return;
-    setMessage(null);
-    try {
-      const response = await authenticatedRead(getSupabaseBrowserClient().auth, `/api/agent/stockages/forwardings/klz-lshi/departure?trackingCode=${encodeURIComponent(parcel.codeColis)}`);
-      const payload = await readJsonOrThrow<{quote?:KlzLshiQuote}>(response,"Acheminement KLZ vers LSHI indisponible.");
-      if (!payload.quote || payload.quote.trackingCode !== parcel.codeColis.toUpperCase() || payload.quote.weightKg !== parcel.poidsKg) throw new Error("Le devis ne correspond pas au colis recherché.");
-      setKlzRoutingChoiceOpen(false);
-      setKlzFihPreview(null);
-      setKlzLshiQuote(payload.quote);
-    } catch(error) {
-      setMessage({type:"error",text:error instanceof Error?error.message:"Acheminement KLZ vers LSHI indisponible."});
-    }
-  }
-
-  function openKlzFihPreview() {
-    if (!profile || profile.agence !== "KLZ" || !parcel || storageSearchResult?.state !== "FOUND") return;
-    setKlzLshiQuote(null);
-    setKlzRoutingChoiceOpen(false);
-    setKlzFihPreview(buildKlzRoutingPreview(parcel.codeColis,parcel.poidsKg,"FIH"));
-  }
-
-  function closeKlzRoutingUi() {
-    setKlzRoutingChoiceOpen(false);
-    setKlzLshiQuote(null);
-    setKlzFihPreview(null);
-  }
-
-  async function confirmKlzLshiDeparture() {
-    if (!profile || profile.agence !== "KLZ" || !klzLshiQuote) return;
-    if (!klzLshiQuote.readyForDeparture) { setMessage({type:"error",text:"Le paiement d’acheminement LSHI doit être certifié avant le départ."}); return; }
-    if (!window.confirm(`Confirmer le départ physique de ${klzLshiQuote.trackingCode} vers LSHI ?`)) return;
-    const attempt=getOrCreateDepartureAttempt(klzLshiDepartureAttemptRef.current,klzLshiQuote);
-    klzLshiDepartureAttemptRef.current=attempt;
-    setIsSaving(true); setMessage(null);
-    try {
-      const accessToken=await getVerifiedAgentWriteToken(getSupabaseBrowserClient().auth);
-      const response=await fetch("/api/agent/stockages/forwardings/klz-lshi/departure",{method:"POST",headers:{Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},body:JSON.stringify({trackingCode:klzLshiQuote.trackingCode,weightKg:klzLshiQuote.weightKg,forwardingReference:klzLshiQuote.forwardingReference,requestId:attempt.requestId})});
-      const payload=await response.json().catch(()=>null) as {message?:string;replayed?:boolean;state?:string}|null;
-      if(!response.ok)throw new Error(payload?.message??"Le départ KLZ vers LSHI a été refusé.");
-      klzLshiDepartureAttemptRef.current=null;
-      setMessage({type:"success",text:payload?.replayed?"Ce départ avait déjà été confirmé.":`Départ physique confirmé : ${klzLshiQuote.trackingCode} est maintenant en transit vers LSHI.`});
-      setParcel(null);setStorageSearchResult(null);setManifestSearchResult(null);setKlzLshiQuote(null);setCodeColis("");
-    } catch(error) {
-      setMessage({type:"error",text:error instanceof Error?error.message:"Le départ KLZ vers LSHI a été refusé."});
-    } finally { setIsSaving(false); }
-  }
-
   const parsedAmount = Number(montantPaye.replace(",", "."));
   const exactBalance = parcel ? getExactBalance(parcel) : null;
   const isAmountValid =
@@ -651,20 +527,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
 
           {parcel ? (
             <GlassPanel className="p-5 sm:p-6" glow="growth">
-              <h2 className="text-xl font-semibold">
-                {routingQuote ? "Acheminement inter-agences" : `Colis ${parcel.codeColis}`}
-              </h2>
-              {routingQuote ? (
-                <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  <ParcelValue label="Origine" value={routingQuote.origin} />
-                  <ParcelValue label="Destination" value={routingQuote.destination} />
-                  <ParcelValue label="Code original" value={routingQuote.trackingCode} />
-                  <ParcelValue label="Poids" value={formatWeight(routingQuote.weightKg)} />
-                  <ParcelValue label="Tarif" value={`${formatAmount(routingQuote.rateUsdPerKg)}/kg`} />
-                  <ParcelValue label="Montant attendu" value={formatAmount(routingQuote.amountExpectedUsd)} highlight />
-                  <ParcelValue label="Référence" value={routingQuote.routingReference} />
-                </dl>
-              ) : (
+              <h2 className="text-xl font-semibold">Colis {parcel.codeColis}</h2>
               <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <ParcelValue
                   label="Destination"
@@ -685,18 +548,9 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
                   highlight
                 />
               </dl>
-              )}
+              <p className="mt-5 rounded-lg border border-accent/25 bg-accent/10 p-3 font-semibold text-accent">Statut : {parcelStatus(parcel, parcelAction)}</p>
 
-              {!routingQuote ? <p className="mt-5 rounded-lg border border-accent/25 bg-accent/10 p-3 font-semibold text-accent">Statut : {parcelStatus(parcel, parcelAction)}</p> : null}
-
-              {!routingQuote && profile.agence === "KLZ" && storageSearchResult?.state === "FOUND" && parcel.destinationCode === "KLZ" && parcel.statutColis.trim().toUpperCase() === "AVAILABLE" && parcel.poidsKg > 0 ? (
-                klzLshiQuote ? <section className="mt-7 rounded-xl border border-accent/30 bg-accent/10 p-5"><h3 className="font-semibold text-accent">ACHEMINEMENT VERS LSHI</h3><dl className="mt-4 grid gap-3 sm:grid-cols-2"><ParcelValue label="Code" value={klzLshiQuote.trackingCode}/><ParcelValue label="Poids" value={formatWeight(klzLshiQuote.weightKg)}/><ParcelValue label="Agence de départ" value="KLZ"/><ParcelValue label="Destination" value="LSHI"/><ParcelValue label="Tarif" value={`${formatAmount(klzLshiQuote.rateUsdPerKg)}/kg`}/><ParcelValue label="Montant" value={formatAmount(klzLshiQuote.amountExpectedUsd)} highlight/><ParcelValue label="Référence" value={klzLshiQuote.forwardingReference}/></dl>{!klzLshiQuote.readyForDeparture?<p className="mt-4 rounded-md border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">Le paiement d’acheminement LSHI doit être certifié avant le départ.</p>:null}<div className="mt-4 flex flex-wrap gap-3"><Button type="button" variant="growth" disabled={isSaving||!klzLshiQuote.readyForDeparture} onClick={()=>void confirmKlzLshiDeparture()}>{isSaving?"Confirmation…":"Confirmer le départ vers LSHI"}</Button><Button type="button" variant="outline" disabled={isSaving} onClick={closeKlzRoutingUi}>Annuler</Button></div></section>
-                : klzFihPreview ? <section className="mt-7 rounded-xl border border-sky-300/30 bg-sky-300/10 p-5"><h3 className="font-semibold text-sky-100">ACHEMINEMENT VERS FIH</h3><dl className="mt-4 grid gap-3 sm:grid-cols-2"><ParcelValue label="Code" value={klzFihPreview.trackingCode}/><ParcelValue label="Poids" value={formatWeight(klzFihPreview.weightKg)}/><ParcelValue label="Agence de départ" value="KLZ"/><ParcelValue label="Destination" value="FIH"/><ParcelValue label="Tarif" value={`${formatAmount(klzFihPreview.rateUsdPerKg)}/kg`}/><ParcelValue label="Montant" value={formatAmount(klzFihPreview.amountExpectedUsd)} highlight/></dl><p className="mt-4 rounded-md border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">Acheminement vers FIH en cours d’activation. Aucune confirmation de départ n’est disponible.</p><div className="mt-4 flex flex-wrap gap-3"><Button type="button" variant="outline" disabled>Confirmer le départ vers FIH</Button><Button type="button" variant="outline" onClick={closeKlzRoutingUi}>Annuler</Button></div></section>
-                : klzRoutingChoiceOpen ? <section className="mt-7 rounded-xl border border-white/15 bg-white/[0.04] p-5"><h3 className="text-lg font-semibold">Où souhaitez-vous acheminer ce colis ?</h3><div className="mt-4 grid gap-3 sm:grid-cols-2"><Button type="button" variant="growth" className="h-auto min-h-14 whitespace-normal py-3" onClick={()=>void openKlzLshiDepartureQuote()}>Vers LSHI — 13 USD/kg</Button><Button type="button" variant="outline" className="h-auto min-h-14 whitespace-normal py-3" onClick={openKlzFihPreview}>Vers FIH — 16 USD/kg</Button></div><Button type="button" variant="ghost" className="mt-3" onClick={closeKlzRoutingUi}>Annuler</Button></section>
-                : <Button type="button" variant="outline" size="lg" className="mt-6 min-h-16 w-full border-2 border-sky-300/70 bg-sky-300/10 text-base font-extrabold tracking-wide text-sky-100 shadow-lg shadow-sky-950/30 hover:bg-sky-300/20 sm:text-lg" onClick={()=>setKlzRoutingChoiceOpen(true)}><Truck className="h-6 w-6"/>ACHEMINER LE COLIS<span className="ml-1 text-xs font-medium tracking-normal text-sky-100/75 sm:text-sm">Vers une autre agence</span></Button>
-              ) : null}
-
-              {routingQuote ? <form onSubmit={handleForwarding} className="mt-7 rounded-xl border border-accent/30 bg-accent/10 p-5"><h3 className="font-semibold text-accent">ACHEMINEMENT INTER-AGENCES</h3><p className="mt-2 text-sm">Référence : {routingQuote.routingReference}</p><p className="text-sm">Circuit : {routingQuote.origin} → {routingQuote.destination}</p><p className="text-sm">Poids canonique : {formatWeight(routingQuote.weightKg)} · Tarif : {formatAmount(routingQuote.rateUsdPerKg)}/kg</p><p className="text-sm font-semibold">Montant attendu : {formatAmount(routingQuote.amountExpectedUsd)}</p>{routingQuote.resume?.resumable ? <p className="mt-3 rounded-md border border-accent/30 bg-accent/10 p-3 text-sm text-accent">Une opération interrompue a été retrouvée. La reprise utilisera automatiquement la demande existante.</p> : null}{routingQuote.resume && !routingQuote.resume.resumable ? <p className="mt-3 rounded-md border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-200">Cette opération est déjà au statut {routingQuote.resume.state}. Aucun nouveau paiement n’est autorisé.</p> : null}{!routingQuote.readiness.ready ? <p className="mt-3 rounded-md border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-200">{routingQuote.readiness.message}</p> : null}<div className="mt-4 grid gap-4 sm:grid-cols-2"><label className="text-sm font-medium">Mode de paiement<select value={modePaiement} onChange={(event)=>setModePaiement(event.target.value as PaymentMode)} className={fieldClassName}>{PAYMENT_MODES.map((mode)=><option key={mode} value={mode} className="bg-ebe-navy">{formatPaymentMode(mode)}</option>)}</select></label><label className="text-sm font-medium">Référence (facultative)<input value={referencePaiement} onChange={(event)=>setReferencePaiement(event.target.value)} className={fieldClassName}/></label><label className="text-sm font-medium sm:col-span-2">Observation (facultative)<input value={observation} onChange={(event)=>setObservation(event.target.value)} className={fieldClassName}/></label></div><Button type="submit" variant="growth" className="mt-4 w-full" disabled={isSaving || !routingQuote.readiness.ready || Boolean(routingQuote.resume && !routingQuote.resume.resumable)}>{isSaving?"Enregistrement…":forwardingState==="result_unknown_retry_same_id"?"Reprendre avec la même demande":"Créer et encaisser l’acheminement"}</Button><p className="mt-3 text-xs text-muted-foreground">L’arrivage physique à destination reste manuel dans Stockages.</p></form> : parcel.soldeRestant > 0 ? <form onSubmit={handlePayment} className="mt-7 grid gap-5">
+              {parcel.soldeRestant > 0 ? <form onSubmit={handlePayment} className="mt-7 grid gap-5">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className="text-sm font-medium">
                     Montant payé
@@ -775,14 +629,6 @@ function getExactBalance(parcel: Parcel): number | null {
   return Number.isFinite(parcel.soldeRestant) && parcel.soldeRestant >= 0
     ? parcel.soldeRestant
     : null;
-}
-
-async function loadInterAgencyQuote(trackingCode: string, sourceAgency: DestinationCode, intent: { paymentMode: PaymentMode; optionalReference: string; optionalObservation: string }) {
-  const params = new URLSearchParams({ trackingCode, sourceAgency, paymentMode: intent.paymentMode, optionalReference: intent.optionalReference.trim(), optionalObservation: intent.optionalObservation.trim() });
-  const response = await authenticatedRead(getSupabaseBrowserClient().auth, `/api/agent/inter-agency-routing/quote?${params}`);
-  const payload = await readJsonOrThrow<{ quote?: { trackingCode: string; routingReference: string; origin: string; destination: string; weightKg: number; rateUsdPerKg: number; amountExpectedUsd: number }; resume?: { state: string; resumable: boolean; paymentRequestId?: string } | null; readiness?: { ready: boolean; code: string | null; message: string | null } }>(response, "Acheminement indisponible.");
-  if (!payload?.quote) throw new Error("Acheminement indisponible.");
-  return { ...payload.quote, resume: payload.resume ?? null, readiness: payload.readiness ?? { ready: false, code: "FORWARDING_SERVICE_UNAVAILABLE", message: "Le service d’acheminement est indisponible." } };
 }
 
 async function loadParcelAction(trackingCode: string) { const response=await authenticatedRead(getSupabaseBrowserClient().auth,`/api/agent/stockages/payment-action?trackingCode=${encodeURIComponent(trackingCode)}`); const payload=await readJsonOrThrow<{action?:{totalPaid:number;paymentSites:string[];physicallyPresent:boolean;delivered:boolean;fullyPaidAtCooOnly:boolean}}>(response,"Situation indisponible."); if(!payload?.action)throw new Error("Situation indisponible."); return payload.action; }

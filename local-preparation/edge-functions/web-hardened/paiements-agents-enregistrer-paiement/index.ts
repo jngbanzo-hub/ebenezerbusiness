@@ -51,7 +51,7 @@ type PaymentInput = {
 
 type PaymentOperationContext =
   | { type: "STANDARD_PAYMENT"; sourceDestinationCode: string; collectionSiteCode: string }
-  | { type: "STORAGE_DESTINATION_PAYMENT"; sourceDestinationCode: string; collectionSiteCode: string; canonicalWeightKg: number; canonicalExpectedAmount: number; canonicalTotalPaid: number }
+  | { type: "STORAGE_DESTINATION_PAYMENT"; sourceDestinationCode: string; collectionSiteCode: string; canonicalWeightKg: number; canonicalExpectedAmount: number; canonicalTotalPaid: number; parcelId?: string; forwardingId?: string }
   | { type: "INTER_AGENCY_FORWARDING"; sourceDestinationCode: string; collectionSiteCode: string; forwardingDestinationCode: string; forwardingReference: string };
 
 type PublicPaymentResponse = {
@@ -261,6 +261,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const destinationCode = paymentInput.operationContext.sourceDestinationCode;
     const isInterAgencyForwarding = paymentInput.operationContext.type === "INTER_AGENCY_FORWARDING";
     const isStorageDestinationPayment = paymentInput.operationContext.type === "STORAGE_DESTINATION_PAYMENT";
+    const isForwardingDestinationPayment = isStorageDestinationPayment && Boolean(paymentInput.operationContext.forwardingId);
     const routeAutorisee =
       isInterAgencyForwarding
         ? paymentInput.operationContext.collectionSiteCode === agenceEncaissement &&
@@ -311,7 +312,16 @@ Deno.serve(async (request: Request): Promise<Response> => {
     performanceTrace.add("validation", validationStartedAt);
     if (usePaidExitOrchestration && cashClient && cashAgency) {
       const beginStartedAt = performance.now();
-      const begun = await cashClient.rpc("begin_paid_destination_orchestration", {
+      const begun = await cashClient.rpc(isForwardingDestinationPayment ? "begin_forwarding_destination_payment" : "begin_paid_destination_orchestration", isForwardingDestinationPayment ? {
+        p_actor_id: user.id,
+        p_agency: cashAgency,
+        p_command_fingerprint: commandFingerprint,
+        p_expected_amount: paymentInput.montantPaye,
+        p_forwarding_id: paymentInput.operationContext.forwardingId,
+        p_paid_amount: paymentInput.montantPaye,
+        p_parcel_id: paymentInput.operationContext.parcelId,
+        p_request_id: paymentInput.paymentRequestId,
+      } : {
         p_actor_id: user.id,
         p_agency: cashAgency,
         p_command_fingerprint: commandFingerprint,
@@ -329,7 +339,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
       }
       if (checkpoint?.paymentCreated === true && storedPayment) {
         const finalizeStartedAt = performance.now();
-        const resumed = await finalizePaidExit(cashClient, paymentInput, commandFingerprint);
+        const resumed = await finalizePaidExit(cashClient, paymentInput, commandFingerprint, isForwardingDestinationPayment);
         performanceTrace.add("finalize_orchestration", finalizeStartedAt);
         if (resumed.kind === "ERROR") return orchestrationError(resumed.code);
         return paymentSuccessResponse({ ...storedPayment, cashRecorded: true, cashStatus: "RECORDED" }, paymentInput.paymentRequestId, true, notificationContext, performanceTrace, "SUCCESS_RESUMED");
@@ -458,7 +468,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
         performanceTrace.add("checkpoint", checkpointStartedAt);
         if (checkpoint.error) return orchestrationError(checkpoint.error.message);
         const finalizeStartedAt = performance.now();
-        const finalized = await finalizePaidExit(cashClient, paymentInput, commandFingerprint);
+        const finalized = await finalizePaidExit(cashClient, paymentInput, commandFingerprint, isForwardingDestinationPayment);
         performanceTrace.add("finalize_orchestration", finalizeStartedAt);
         if (finalized.kind === "ERROR") return orchestrationError(finalized.code);
         return paymentSuccessResponse({ ...publicPayment, cashRecorded: true, cashStatus: "RECORDED" }, paymentInput.paymentRequestId, finalized.replayed, notificationContext, performanceTrace, "SUCCESS");
@@ -565,8 +575,9 @@ async function finalizePaidExit(
   client: ReturnType<typeof createClient>,
   input: PaymentInput,
   fingerprint: string,
+  forwarding: boolean = false,
 ): Promise<{ kind: "SUCCESS"; replayed: boolean } | { kind: "ERROR"; code: string }> {
-  const result = await client.rpc("finalize_paid_destination_orchestration", {
+  const result = await client.rpc(forwarding ? "finalize_forwarding_destination_payment" : "finalize_paid_destination_orchestration", {
     p_business_date: businessDateInPortoNovo(),
     p_command_fingerprint: fingerprint,
     p_observation: input.observation,
@@ -752,8 +763,10 @@ function normalizeOperationContext(
     const canonicalWeightKg = normalizeAmount(value.canonicalWeightKg);
     const canonicalExpectedAmount = normalizeAmount(value.canonicalExpectedAmount);
     const canonicalTotalPaid = normalizeNonNegativeAmount(value.canonicalTotalPaid);
-    if (!source || !collection || source !== collection || collection !== authenticatedCollectionSite || canonicalWeightKg === null || canonicalExpectedAmount === null || canonicalTotalPaid === null || canonicalTotalPaid >= canonicalExpectedAmount) return null;
-    return { type: "STORAGE_DESTINATION_PAYMENT", sourceDestinationCode: source, collectionSiteCode: collection, canonicalWeightKg, canonicalExpectedAmount, canonicalTotalPaid };
+    const parcelId = normalizeUuid(value.parcelId);
+    const forwardingId = normalizeUuid(value.forwardingId);
+    if (!source || !collection || source !== collection || collection !== authenticatedCollectionSite || canonicalWeightKg === null || canonicalExpectedAmount === null || canonicalTotalPaid === null || canonicalTotalPaid >= canonicalExpectedAmount || ((parcelId === null) !== (forwardingId === null))) return null;
+    return { type: "STORAGE_DESTINATION_PAYMENT", sourceDestinationCode: source, collectionSiteCode: collection, canonicalWeightKg, canonicalExpectedAmount, canonicalTotalPaid, ...(parcelId && forwardingId ? { parcelId, forwardingId } : {}) };
   }
   if (value.type !== "INTER_AGENCY_FORWARDING") return null;
   const source = normalizePaymentDestination(value.sourceDestinationCode);
@@ -792,6 +805,13 @@ function normalizePaymentRequestId(value: unknown): string | null {
     )
     ? normalized
     : null;
+}
+
+function normalizeUuid(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(normalized) ? normalized : null;
 }
 
 function normalizePaymentDestination(value: unknown): string | null {

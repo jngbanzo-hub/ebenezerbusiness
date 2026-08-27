@@ -24,6 +24,12 @@ export const FORWARDING_AGENT_MESSAGES = Object.freeze({
   PARCEL_WEIGHT_UNAVAILABLE: "Le poids canonique du colis est indisponible.",
   PARCEL_WEIGHT_AMBIGUOUS: "Le poids canonique du colis doit être vérifié.",
   INVALID_FORWARDING_COMMAND: "La demande d’acheminement est invalide.",
+  INVALID_FORWARDING_DEPARTURE: "La confirmation de départ est invalide.",
+  INVALID_FORWARDING_QUOTE: "Le devis d’acheminement ne correspond pas au trajet autorisé.",
+  FORWARDING_NOT_IN_TRANSIT: "Cet acheminement n’est pas en transit.",
+  FORWARDING_PAYMENT_BEFORE_ARRIVAL_FORBIDDEN: "Le paiement d’un acheminement est autorisé uniquement après confirmation de l’arrivée.",
+  FORWARDING_DISABLED: "Le service d’acheminement n’est pas encore activé.",
+  INVALID_FORWARDING_QUERY: "La demande de consultation des acheminements est invalide.",
   STATUT_COLIS_INVALIDE: "Le statut du colis est incompatible avec la feuille de paiement.",
   AGENT_SERVICE_UNAVAILABLE: "Le service Agent est indisponible. Veuillez réessayer.",
   FORWARDING_SERVICE_UNAVAILABLE: "Le service d’acheminement est indisponible. Veuillez réessayer."

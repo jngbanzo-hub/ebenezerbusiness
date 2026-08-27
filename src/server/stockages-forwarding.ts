@@ -17,6 +17,7 @@ import {
   StockagesV2Error,
   type StorageAgency
 } from "@/server/stockages-v2";
+import { assertForwardingEnabled } from "@/server/forwarding-feature";
 
 type RpcResult = Readonly<{
   eventId?: string;
@@ -167,6 +168,7 @@ export async function recordForwardingArrival(input: {
   actorId: string;
   actorAgency: string;
 }) {
+  assertForwardingEnabled();
   validateUuid(input.requestId);
   const destination = requireStorageAgency(input.actorAgency);
   const forwardingReference = normalizeReference(input.forwardingReference);
@@ -190,6 +192,7 @@ export async function confirmForwardingDelivery(input: {
   actorAgency: string;
   physicalDeliveryConfirmed: boolean;
 }) {
+  assertForwardingEnabled();
   validateUuid(input.requestId);
   if (input.physicalDeliveryConfirmed !== true) throw new StockagesV2Error("PHYSICAL_CONFIRMATION_REQUIRED", 422);
   return rpc("confirm_forwarding_delivery", {
