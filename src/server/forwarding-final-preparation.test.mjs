@@ -25,6 +25,8 @@ test("native codes are not rewritten",()=>{for(const code of ["AT19326","AT19326
 
 test("GET derives destination from authenticated profile and refuses agency query",()=>{assert.match(listRoute,/requireStorageAgency\(auth\.identity\.site\)/);assert.match(listRoute,/searchParams\.has\("agency"\)/);assert.match(list,/\.eq\("destination_agency", agency\)/);assert.match(list,/\.eq\("status", "IN_TRANSIT"\)/);assert.match(list,/agency !== "LSHI" && agency !== "FIH"/);});
 
+test("GET in-transit always bypasses stale server fetch caches",()=>{assert.match(list,/global: \{ fetch: noStoreFetch \}/);assert.match(list,/fetch\(input, \{ \.\.\.init, cache: "no-store" \}\)/);});
+
 test("flag is off by default and guards every forwarding write",()=>{assert.match(flag,/STOCKAGES_FORWARDING_ENABLED === "true"/);assert.match(flag,/FORWARDING_DISABLED/);assert.match(departure,/assertForwardingEnabled\(\)/);assert.match(list,/assertForwardingEnabled\(\)/);assert.match(legacy,/FORWARDING_PAYMENT_BEFORE_ARRIVAL_FORBIDDEN/);});
 
 test("UI preserves native arrivals and replaces only manual forwarding arrival",()=>{assert.match(arrivals,/title="Déclarer un arrivage"/);assert.match(arrivals,/Acheminements en attente de réception/);assert.match(arrivals,/CONFIRMER L’ARRIVÉE/);assert.doesNotMatch(arrivals,/mode="arrival"/);assert.match(arrivals,/forwardingEnabled/);});
