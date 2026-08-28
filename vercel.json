@@ -3,6 +3,12 @@
   "framework": "nextjs",
   "installCommand": "pnpm install --frozen-lockfile",
   "buildCommand": "pnpm build",
+  "crons": [
+    {
+      "path": "/api/internal/cron/forwarding-manifest-worker",
+      "schedule": "*/10 * * * *"
+    }
+  ],
   "headers": [
     {
       "source": "/sw.js",
