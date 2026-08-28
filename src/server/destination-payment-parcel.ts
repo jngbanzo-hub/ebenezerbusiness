@@ -147,7 +147,10 @@ export async function recordDestinationPayment(input: {
     const code = typeof payload?.error === "string" ? payload.error : typeof payload?.code === "string" ? payload.code : "AGENT_SERVICE_UNAVAILABLE";
     throw new StockagesV2Error(code, response.status || 503, undefined, "EDGE_FUNCTION", response.status || 503);
   }
-  return payload;
+  return Object.freeze({
+    payment: payload,
+    forwardingId: parcel.forwardingId ?? null
+  });
 }
 
 async function readNativeAmountPaid(code: string, agency: StorageAgency, trace?: OperationPerformanceTrace) {

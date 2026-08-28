@@ -6,6 +6,7 @@ import { requireStorageAgency, StockagesV2Error } from "@/server/stockages-v2";
 import { recordInternalNotification } from "@/server/internal-notifications";
 import { OperationPerformanceTrace } from "@/server/operation-performance";
 import { logOperationRefusal } from "@/server/operation-refusal-diagnostics";
+import { reconcileForwardingManifestRegistry } from "@/server/forwarding-manifest-registry";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,7 +29,7 @@ export async function POST(request: Request) {
     trace.add("auth_session", performance.now() - authStartedAt);
     if (Object.keys(body).some((key) => !ALLOWED.has(key))) return refusal("INVALID_PAYMENT_COMMAND", 400, { startedAt, requestId, agency, stage: "validatePaymentCommand" });
     stage = "recordDestinationPayment";
-    const result = await recordDestinationPayment({
+    const outcome = await recordDestinationPayment({
       trackingCode: String(body.trackingCode ?? ""),
       parcelId: typeof body.parcelId === "string" ? body.parcelId : undefined,
       agency: requireStorageAgency(auth.identity.site),
@@ -38,7 +39,15 @@ export async function POST(request: Request) {
       paymentRequestId: String(body.paymentRequestId ?? ""),
       agentAccessToken: (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "")
     }, trace);
+    const result = outcome.payment;
     const row = result as Record<string, unknown>;
+    const forwardingId = outcome.forwardingId;
+    if (row.replayed !== true && forwardingId) {
+      // Post-condition additive: ne doit jamais changer le succès paiement/Caisse.
+      await reconcileForwardingManifestRegistry(forwardingId).catch((cause) => {
+        console.error("[forwarding-manifest-registry]", { forwardingId, paymentRequestId: requestId, error: cause instanceof Error ? cause.message : "UNKNOWN" });
+      });
+    }
     if (row.replayed !== true) await trace.measure("notification", () => recordInternalNotification({ eventKey: `PAYMENT:${String(body.paymentRequestId)}`, agency: auth.identity.site, type: "PAYMENT", title: "Paiement enregistré", message: `${String(row.codeColis ?? body.trackingCode)} — ${Number(row.montantPaye ?? 0).toFixed(2)} USD — ${auth.identity.nom}`, actorUserId: auth.identity.userId, actorName: auth.identity.nom }).catch(() => undefined));
     const responseStartedAt = performance.now();
     const nextResponse = NextResponse.json(result, { status: 200 });
