@@ -42,7 +42,7 @@ export async function POST(request: Request) {
     const result = outcome.payment;
     const row = result as Record<string, unknown>;
     const forwardingId = outcome.forwardingId;
-    if (row.replayed !== true && forwardingId) {
+    if (forwardingId) {
       // Post-condition additive: ne doit jamais changer le succès paiement/Caisse.
       await reconcileForwardingManifestRegistry(forwardingId).catch((cause) => {
         console.error("[forwarding-manifest-registry]", { forwardingId, paymentRequestId: requestId, error: cause instanceof Error ? cause.message : "UNKNOWN" });
