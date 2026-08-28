@@ -7,7 +7,7 @@ import { buildInterAgencyReference, quoteInterAgencyRouting } from "@/server/int
 import { businessDatePortoNovo, StockagesV2Error, type StorageAgency } from "@/server/stockages-v2";
 import { assertForwardingEnabled } from "@/server/forwarding-feature";
 
-export type ForwardingOriginAgency = "KLZ" | "LSHI";
+export type ForwardingOriginAgency = "KLZ" | "LSHI" | "FIH";
 
 export async function departForwarding(input: { trackingCode: string; origin: ForwardingOriginAgency; destination: StorageAgency; requestId: string; actorId: string }) {
   assertForwardingEnabled();
@@ -48,7 +48,11 @@ export async function readForwardingDepartureQuote(trackingCode: string, origin:
 }
 
 function requireForwardingDestination(origin: ForwardingOriginAgency, destination: StorageAgency) {
-  const allowed = origin === "KLZ" ? destination === "LSHI" || destination === "FIH" : destination === "KLZ" || destination === "FIH";
+  const allowed = origin === "KLZ"
+    ? destination === "LSHI" || destination === "FIH"
+    : origin === "LSHI"
+      ? destination === "KLZ" || destination === "FIH"
+      : destination === "LSHI" || destination === "KLZ";
   if (!allowed) throw new StockagesV2Error("FORWARDING_ROUTE_NOT_ALLOWED", 400);
 }
 

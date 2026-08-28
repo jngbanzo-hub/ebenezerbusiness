@@ -11,14 +11,15 @@ const departure=readFileSync(new URL("./stockages-forwarding-departure.ts",impor
 const arrivals=readFileSync(new URL("../features/stockages/stockages-v2-page.tsx",import.meta.url),"utf8");
 const legacy=readFileSync(new URL("../app/api/agent/stockages/forwardings/route.ts",import.meta.url),"utf8");
 
-function parse(value){const match=value.trim().toUpperCase().match(/^([A-Z0-9][A-Z0-9._/]{1,63}?)(?: |-|)(KLZ|LSHI)-(KLZ|LSHI|FIH)$/);return match&&match[2]!==match[3]?{code:match[1],route:`${match[2]}-${match[3]}`}:null;}
+function parse(value){const match=value.trim().toUpperCase().match(/^([A-Z0-9][A-Z0-9._/]{1,63}?)(?: |-|)(KLZ|LSHI|FIH)-(KLZ|LSHI|FIH)$/);return match&&match[2]!==match[3]?{code:match[1],route:`${match[2]}-${match[3]}`}:null;}
 
 test("strict aliases preserve B/C/D and reject non-exact routes",()=>{
   for(const suffix of ["B","C","D"]) for(const separator of [" ","","-"]){const parsed=parse(`AT19326${suffix}${separator}KLZ-LSHI`);assert.deepEqual(parsed,{code:`AT19326${suffix}`,route:"KLZ-LSHI"});}
   assert.equal(parse("AT19326B KLZ-FIH")?.code,"AT19326B");
   for(const separator of [" ","","-"]){assert.deepEqual(parse(`AT19326B${separator}LSHI-KLZ`),{code:"AT19326B",route:"LSHI-KLZ"});assert.deepEqual(parse(`AT19326B${separator}LSHI-FIH`),{code:"AT19326B",route:"LSHI-FIH"});}
+  for(const separator of [" ","","-"]){assert.deepEqual(parse(`AT19326B${separator}FIH-LSHI`),{code:"AT19326B",route:"FIH-LSHI"});assert.deepEqual(parse(`AT19326B${separator}FIH-KLZ`),{code:"AT19326B",route:"FIH-KLZ"});}
   assert.equal(parse("AT19326B KLZ-KLZ"),null);
-  assert.equal(parse("AT19326B FIH-LSHI"),null);
+  assert.equal(parse("AT19326B COO-LSHI"),null);
   assert.match(identity,/parseForwardingAlias/);assert.match(resolver,/alias\.destinationAgency !== agency/);assert.match(resolver,/candidate\.forwarding_id/);
 });
 

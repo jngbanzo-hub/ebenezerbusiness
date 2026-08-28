@@ -10,7 +10,7 @@ export type InTransitForwarding = Readonly<{
   parcelId: string;
   trackingCode: string;
   displayCode: string;
-  originAgency: "KLZ" | "LSHI";
+  originAgency: StorageAgency;
   destinationAgency: StorageAgency;
   weightKg: number;
   rateUsdPerKg: number;
@@ -39,7 +39,7 @@ export async function readDestinationInTransitForwardings(agency: StorageAgency)
       parcelId,
       trackingCode: row.original_tracking_code,
       displayCode: `${row.original_tracking_code} · ${row.origin_agency}-${row.destination_agency}`,
-      originAgency: row.origin_agency as "KLZ" | "LSHI",
+      originAgency: row.origin_agency as StorageAgency,
       destinationAgency: row.destination_agency as StorageAgency,
       weightKg: Number(row.canonical_weight_kg),
       rateUsdPerKg: Number(row.rate_usd_per_kg),

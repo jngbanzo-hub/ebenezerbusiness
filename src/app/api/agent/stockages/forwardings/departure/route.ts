@@ -12,7 +12,7 @@ export async function GET(request: Request) {
   try {
     const auth = await authorizeAgentRequest(request);
     if (!auth.authorized) return fail("ACCESS_DENIED", auth.status);
-    if (auth.identity.site !== "KLZ" && auth.identity.site !== "LSHI") return fail("WRONG_AGENCY", 403);
+    if (auth.identity.site !== "KLZ" && auth.identity.site !== "LSHI" && auth.identity.site !== "FIH") return fail("WRONG_AGENCY", 403);
     const origin = auth.identity.site as ForwardingOriginAgency;
     const url = new URL(request.url);
     const quote = await readForwardingDepartureQuote(url.searchParams.get("trackingCode") ?? "", origin, requireStorageAgency(url.searchParams.get("destinationAgency") ?? ""));
@@ -26,7 +26,7 @@ export async function POST(request: Request) {
   try {
     const auth = await authorizeAgentRequest(request);
     if (!auth.authorized) return fail("ACCESS_DENIED", auth.status);
-    if (auth.identity.site !== "KLZ" && auth.identity.site !== "LSHI") return fail("WRONG_AGENCY", 403);
+    if (auth.identity.site !== "KLZ" && auth.identity.site !== "LSHI" && auth.identity.site !== "FIH") return fail("WRONG_AGENCY", 403);
     const origin = auth.identity.site as ForwardingOriginAgency;
     const body = await request.json() as Record<string, unknown>;
     if (Object.keys(body).some((key) => !ALLOWED.has(key))) return fail("INVALID_FORWARDING_DEPARTURE", 400);
