@@ -1,4 +1,11 @@
 /** Endpoint dédié au worker. À brancher dans le doPost existant sans modifier ses autres actions. */
+function doPost(e) {
+  if (!e || !e.parameter || e.parameter.action !== 'forwarding-manifest-worker') {
+    return reponseWorkerForwarding_({success:false,errorCode:'ACCESS_DENIED'});
+  }
+  return traiterWorkerForwarding_(e);
+}
+
 function traiterWorkerForwarding_(e) {
   try {
     var corps = JSON.parse(String(e.postData && e.postData.contents || '{}'));
