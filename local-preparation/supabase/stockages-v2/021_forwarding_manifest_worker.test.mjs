@@ -1,0 +1,7 @@
+import assert from "node:assert/strict";import {readFileSync} from "node:fs";import test from "node:test";
+const sql=readFileSync(new URL("./021_forwarding_manifest_worker.sql",import.meta.url),"utf8"),rollback=readFileSync(new URL("./021_forwarding_manifest_worker.rollback.sql",import.meta.url),"utf8"),preflight=readFileSync(new URL("./021_forwarding_manifest_worker.preflight.sql",import.meta.url),"utf8");
+test("préflight exige 019 et 020",()=>{assert.match(preflight,/MIGRATION_019_REQUIRED/);assert.match(preflight,/MIGRATION_020_REQUIRED/);});
+test("service role seul",()=>{assert.match(sql,/revoke all on function public\.claim_forwarding_manifest_sync_jobs[\s\S]+from public,anon,authenticated/);assert.match(sql,/grant execute on function public\.complete_forwarding_manifest_sync_job[\s\S]+to service_role/);});
+test("rollback ne touche aucune donnée métier",()=>{assert.match(rollback,/drop function/);assert.match(rollback,/drop column/);assert.doesNotMatch(rollback,/delete from|truncate|stockage_parcels|cash_events/i);});
+test("concurrence et lease expirée",()=>{assert.match(sql,/for update skip locked/i);assert.match(sql,/lease_until is null or lease_until<=clock_timestamp\(\)/i);});
+test("ambiguïté efface la certification devenue invalide",()=>{assert.match(sql,/p_outcome='AMBIGUOUS'[\s\S]+resolution_state='AMBIGUOUS'[\s\S]+manifest_source_row=null,manifest_source_date=null,manifest_source_fingerprint=null/);});

@@ -3,6 +3,7 @@ import { authorizeAgentRequest } from "@/server/agent-authorization";
 import { departForwarding, readForwardingDepartureQuote, type ForwardingOriginAgency } from "@/server/stockages-forwarding-departure";
 import { forwardingAgentMessage } from "@/server/stockages-forwarding-errors";
 import { requireStorageAgency, StockagesV2Error } from "@/server/stockages-v2";
+import { notifyForwardingDeparture } from "@/server/forwarding-admin-notifications";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -31,6 +32,7 @@ export async function POST(request: Request) {
     const body = await request.json() as Record<string, unknown>;
     if (Object.keys(body).some((key) => !ALLOWED.has(key))) return fail("INVALID_FORWARDING_DEPARTURE", 400);
     const result = await departForwarding({ trackingCode: String(body.trackingCode ?? ""), origin, destination: requireStorageAgency(String(body.destinationAgency ?? "")), requestId: String(body.requestId ?? ""), actorId: auth.identity.userId });
+    if (!result.replayed && result.forwardingId) await notifyForwardingDeparture(result.forwardingId,{userId:auth.identity.userId,name:auth.identity.nom}).catch(()=>undefined);
     return NextResponse.json({ state: "SUCCESS", ...result }, { status: result.replayed ? 200 : 201 });
   } catch (cause) {
     return cause instanceof StockagesV2Error ? fail(cause.code, cause.status) : fail("FORWARDING_SERVICE_UNAVAILABLE", 503);

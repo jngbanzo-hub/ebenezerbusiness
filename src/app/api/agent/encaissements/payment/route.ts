@@ -7,6 +7,7 @@ import { recordInternalNotification } from "@/server/internal-notifications";
 import { OperationPerformanceTrace } from "@/server/operation-performance";
 import { logOperationRefusal } from "@/server/operation-refusal-diagnostics";
 import { reconcileForwardingManifestRegistry } from "@/server/forwarding-manifest-registry";
+import { notifyForwardingPayment } from "@/server/forwarding-admin-notifications";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -47,6 +48,7 @@ export async function POST(request: Request) {
       await reconcileForwardingManifestRegistry(forwardingId).catch((cause) => {
         console.error("[forwarding-manifest-registry]", { forwardingId, paymentRequestId: requestId, error: cause instanceof Error ? cause.message : "UNKNOWN" });
       });
+      if (row.replayed !== true) await notifyForwardingPayment(forwardingId,requestId,{userId:auth.identity.userId,name:auth.identity.nom}).catch(()=>undefined);
     }
     if (row.replayed !== true) await trace.measure("notification", () => recordInternalNotification({ eventKey: `PAYMENT:${String(body.paymentRequestId)}`, agency: auth.identity.site, type: "PAYMENT", title: "Paiement enregistré", message: `${String(row.codeColis ?? body.trackingCode)} — ${Number(row.montantPaye ?? 0).toFixed(2)} USD — ${auth.identity.nom}`, actorUserId: auth.identity.userId, actorName: auth.identity.nom }).catch(() => undefined));
     const responseStartedAt = performance.now();
