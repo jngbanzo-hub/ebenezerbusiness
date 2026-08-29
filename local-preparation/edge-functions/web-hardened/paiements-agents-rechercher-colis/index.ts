@@ -42,6 +42,7 @@ const DESTINATION_NOM: Readonly<Record<string, string>> = {
 };
 
 const ALLOWED_BODY_KEYS = new Set(["destinationCode", "codeColis"]);
+const ADMIN_QR_CORRECTION_CONTEXT = "ADMIN_QR_CORRECTION";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "authorization, content-type",
@@ -106,13 +107,23 @@ Deno.serve(async (request: Request): Promise<Response> => {
     if (rawAgent.actif !== true) {
       return errorResponse("COMPTE_DESACTIVE", 403);
     }
-    if (rawAgent.role.trim().toUpperCase() !== "AGENT") {
+    const role = rawAgent.role.trim().toUpperCase();
+    if (role !== "AGENT" && role !== "ADMIN") {
       return errorResponse("ACCES_REFUSE", 403);
     }
 
-    const agence = rawAgent.agence.trim().toUpperCase();
-    if (!AGENCE_DESTINATION[agence]) {
-      return errorResponse("DESTINATION_INVALIDE", 403);
+    if (role === "ADMIN") {
+      if (
+        request.headers.get("X-Ebe-Operation-Context") !==
+        ADMIN_QR_CORRECTION_CONTEXT
+      ) {
+        return errorResponse("ACCES_REFUSE", 403);
+      }
+    } else {
+      const agence = rawAgent.agence.trim().toUpperCase();
+      if (!AGENCE_DESTINATION[agence]) {
+        return errorResponse("DESTINATION_INVALIDE", 403);
+      }
     }
 
     const body = await readRequestBody(request);

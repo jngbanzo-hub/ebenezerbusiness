@@ -9,8 +9,8 @@ export type CertifiedQrParcelIdentity = {
 
 export class QrIdentityCertificationError extends Error {
   constructor(
-    readonly code: "IDENTITY_NOT_FOUND" | "IDENTITY_SERVICE_UNAVAILABLE",
-    readonly status: 404 | 503,
+    readonly code: "IDENTITY_NOT_FOUND" | "IDENTITY_ACCESS_DENIED" | "IDENTITY_SERVICE_UNAVAILABLE",
+    readonly status: 403 | 404 | 503,
     readonly externalStatus?: number,
     readonly diagnosticCode?: string
   ) {
@@ -24,7 +24,8 @@ type Fetcher = typeof fetch;
 export async function certifyQrParcelIdentity(
   input: CertifiedQrParcelIdentity,
   bearerToken: string,
-  fetcher: Fetcher = fetch
+  fetcher: Fetcher = fetch,
+  operationContext?: "ADMIN_QR_CORRECTION"
 ): Promise<CertifiedQrParcelIdentity> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   if (!supabaseUrl || !bearerToken) {
@@ -39,7 +40,10 @@ export async function certifyQrParcelIdentity(
         method: "POST",
         headers: {
           Authorization: `Bearer ${bearerToken}`,
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          ...(operationContext
+            ? { "X-Ebe-Operation-Context": operationContext }
+            : {})
         },
         body: JSON.stringify({
           destinationCode: input.agency,
@@ -58,6 +62,14 @@ export async function certifyQrParcelIdentity(
   }
 
   const payload: unknown = await response.json().catch(() => null);
+  if (response.status === 403) {
+    throw new QrIdentityCertificationError(
+      "IDENTITY_ACCESS_DENIED",
+      403,
+      response.status,
+      readErrorCode(payload) ?? "IDENTITY_ACCESS_DENIED"
+    );
+  }
   if (response.status === 404) {
     throw new QrIdentityCertificationError(
       "IDENTITY_NOT_FOUND",

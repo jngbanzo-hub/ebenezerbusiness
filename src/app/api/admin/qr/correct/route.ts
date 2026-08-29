@@ -20,7 +20,7 @@ export async function POST(request:Request){
     trace("success",null);
 
     step="MANIFEST_CERTIFICATION";startedAt=performance.now();
-    const certified=await certifyQrParcelIdentity({agency:parsed.data.agency,trackingCode:parsed.data.trackingCode},token);
+    const certified=await certifyQrParcelIdentity({agency:parsed.data.agency,trackingCode:parsed.data.trackingCode},token,fetch,"ADMIN_QR_CORRECTION");
     trace("success",null,200);
 
     step="RPC_CORRECTION";startedAt=performance.now();

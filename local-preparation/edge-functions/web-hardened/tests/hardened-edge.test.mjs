@@ -204,10 +204,10 @@ function agentProfile(agence, overrides = {}) {
   };
 }
 
-function searchRequest(destinationCode, overrides = {}, token = "valid") {
+function searchRequest(destinationCode, overrides = {}, token = "valid", headers = {}) {
   return new Request("https://edge.test/search", {
     method: "POST",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers: token ? { Authorization: `Bearer ${token}`, ...headers } : headers,
     body: JSON.stringify({
       destinationCode,
       codeColis: "COLIS-001",
@@ -354,11 +354,30 @@ test("04 profil inactif refusé", async () => {
   assert.equal(result.body.error, "COMPTE_DESACTIVE");
 });
 
-test("05 rôle non-AGENT refusé", async () => {
-  reset(agentProfile("COTONOU", { role: "ADMIN" }));
+test("05 rôle inconnu refusé", async () => {
+  reset(agentProfile("COTONOU", { role: "UNKNOWN" }));
   const result = await json(await searchHandler(searchRequest("FIH")));
   assert.equal(result.status, 403);
   assert.equal(result.body.error, "ACCES_REFUSE");
+});
+
+test("05b ADMIN actif sans contexte QR serveur refusé", async () => {
+  reset(agentProfile("ADMIN", { role: "ADMIN" }));
+  runtime.upstream = searchSuccess("LSHI");
+  const result = await json(await searchHandler(searchRequest("LSHI")));
+  assert.equal(result.status, 403);
+  assert.equal(result.body.error, "ACCES_REFUSE");
+  assert.equal(runtime.fetchCalls.length, 0);
+});
+
+test("05c ADMIN actif avec contexte QR serveur autorisé sans agence Agent", async () => {
+  reset(agentProfile("ADMIN", { role: "ADMIN" }));
+  runtime.upstream = searchSuccess("LSHI");
+  const response = await searchHandler(searchRequest("LSHI", {}, "valid", {
+    "X-Ebe-Operation-Context": "ADMIN_QR_CORRECTION"
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(runtime.fetchCalls.length, 1);
 });
 
 test("06 AGENT actif autorisé", async () => {
