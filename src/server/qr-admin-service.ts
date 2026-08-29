@@ -21,8 +21,14 @@ export async function readAdminQr(actorId:string,selector:string) {
 }
 
 export async function correctAdminQr(input:{actorId:string;qrId:string;agency:string;trackingCode:string;reason:string;expectedVersion:number;requestId:string}) {
+  const startedAt=performance.now();
   const {data,error}=await client().rpc("correct_qr_assignment_server",{p_actor_id:input.actorId,p_qr_id:input.qrId,p_new_agency:input.agency,p_new_tracking_code:input.trackingCode,p_reason:input.reason,p_expected_version:input.expectedVersion,p_request_id:input.requestId});
-  if(error) throw new Error(readCode(error.message)); return data;
+  if(error){
+    console.error("[admin-qr-correct-trace]",{requestId:input.requestId,step:"RPC_CORRECTION_END",startedAt:new Date(Date.now()-(performance.now()-startedAt)).toISOString(),durationMs:Math.round(performance.now()-startedAt),status:"error",code:readCode(error.message),externalStatus:null,upstreamCode:error.code});
+    throw new Error(readCode(error.message));
+  }
+  console.info("[admin-qr-correct-trace]",{requestId:input.requestId,step:"RPC_CORRECTION_END",startedAt:new Date(Date.now()-(performance.now()-startedAt)).toISOString(),durationMs:Math.round(performance.now()-startedAt),status:"success",code:null,externalStatus:null});
+  return data;
 }
 export async function revokeAdminQr(input:{actorId:string;qrId:string;reason:string;expectedVersion:number;requestId:string}) {
   const {data,error}=await client().rpc("revoke_qr_label_server",{p_actor_id:input.actorId,p_qr_id:input.qrId,p_reason:input.reason,p_expected_version:input.expectedVersion,p_request_id:input.requestId});
