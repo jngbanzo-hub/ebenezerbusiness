@@ -463,11 +463,21 @@ function construirePaiementValide_(body) {
 }
 
 function enregistrerPaiementUnifie_(paiement) {
+  var performanceStartedAt = Date.now();
+  var performanceLastAt = performanceStartedAt;
+  var performanceSteps = {};
+  function mesurerEtape_(nom) {
+    var maintenant = Date.now();
+    performanceSteps[nom] = maintenant - performanceLastAt;
+    performanceLastAt = maintenant;
+  }
   var verrou = LockService.getScriptLock();
   var verrouObtenu = false;
 
   try {
+    mesurerEtape_("before_lock");
     verrouObtenu = verrou.tryLock(LOCK_TIMEOUT_MS);
+    mesurerEtape_("lock_wait");
     if (!verrouObtenu) {
       throw erreurPublique_(
         "VERROU_INDISPONIBLE",
@@ -482,6 +492,7 @@ function enregistrerPaiementUnifie_(paiement) {
       classeur,
       paiement.paymentRequestId
     );
+    mesurerEtape_("payment_request_lookup");
     if (paiementExistant) {
       if (paiement.operationType === "INTER_AGENCY_FORWARDING") {
         return reconstruireRejeuAcheminement_(paiement, paiementExistant);
@@ -501,6 +512,7 @@ function enregistrerPaiementUnifie_(paiement) {
           statutColis: "ARRIVÉ"
         }
       : rechercherColisSource_(paiement.sourceDestinationCode, paiement.codeColis);
+    mesurerEtape_("parcel_lookup");
     if (!colis) {
       throw erreurPublique_(
         "COLIS_INTROUVABLE",
@@ -586,6 +598,7 @@ function enregistrerPaiementUnifie_(paiement) {
         forwardingReference: paiement.forwardingReference
       }
     };
+    mesurerEtape_("business_validation_and_write_preparation");
 
     if (paiement.simulation) {
       return resultat;
@@ -625,7 +638,9 @@ function enregistrerPaiementUnifie_(paiement) {
     feuillePaiement
       .getRange(prochaineLigne, 1, 1, PAYMENT_HEADERS.length)
       .setValues([valeurs]);
+    mesurerEtape_("sheet_set_values");
     SpreadsheetApp.flush();
+    mesurerEtape_("spreadsheet_flush");
 
     return resultat;
   } catch (error) {
@@ -640,6 +655,13 @@ function enregistrerPaiementUnifie_(paiement) {
     if (verrouObtenu) {
       verrou.releaseLock();
     }
+    mesurerEtape_("lock_release");
+    journaliserPerformancePaiement_({
+      event: "payment_apps_script_performance",
+      requestId: String(paiement.paymentRequestId || "UNKNOWN").slice(0, 128),
+      totalMs: Date.now() - performanceStartedAt,
+      durationsMs: performanceSteps
+    });
   }
 }
 
@@ -968,6 +990,7 @@ function creerRequestId_() {
 }
 
 function reponseSucces_(data, requestId, action) {
+  var responseStartedAt = Date.now();
   var payload = {
     ok: true,
     data: data,
@@ -989,7 +1012,11 @@ function reponseSucces_(data, requestId, action) {
     payload.paymentRequestId = data.paymentRequestId;
   }
 
-  return sortieJson_(payload);
+  var output = sortieJson_(payload);
+  if (action === "enregistrerPaiement") {
+    journaliserPerformancePaiement_({ event: "payment_apps_script_response_performance", requestId: String(data.paymentRequestId || "UNKNOWN").slice(0, 128), responseGenerationMs: Date.now() - responseStartedAt });
+  }
+  return output;
 }
 
 function reponseErreur_(code, message, requestId, action) {
@@ -1053,6 +1080,12 @@ function sortieJson_(payload) {
   return ContentService
     .createTextOutput(JSON.stringify(payload))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+function journaliserPerformancePaiement_(payload) {
+  if (typeof console !== "undefined" && console && typeof console.info === "function") {
+    console.info(JSON.stringify(payload));
+  }
 }
 
 function erreurPublique_(code, message) {

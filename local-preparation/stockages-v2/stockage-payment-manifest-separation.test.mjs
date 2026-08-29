@@ -13,7 +13,7 @@ const sql = read("local-preparation/supabase/stockages-v2/009_paid_exit_forwardi
 
 test("Encaissements destination lit Stockage, historique et tarifs serveur", () => {
   assert.match(destination, /from\("stockage_parcels"\)/);
-  assert.match(destination, /readAdminPayments\(\)/);
+  assert.match(destination, /readAdminPayments\((?:trace)?\)/);
   assert.match(destination, /STANDARD_RATES_USD_PER_KG/);
   assert.doesNotMatch(destination, /readAdminManifestRows|MANIFESTE PUBLIC/);
   assert.match(workspace, /searchDestinationParcel/);
@@ -33,8 +33,8 @@ test("la présence physique est verrouillée avant tout paiement", () => {
   assert.match(begin, /delivery_status<>'AVAILABLE'/);
 });
 
-test("le contrôle Manifeste est intégré sans nouvelle navigation Agent", () => {
+test("le contrôle Manifeste est intégré et la consultation dédiée reste disponible", () => {
   assert.match(workspace, /AgentManifestControl/);
-  assert.doesNotMatch(dashboard, /\/agent\/manifeste/);
+  assert.match(dashboard, /\/agent\/manifeste/);
   assert.match(read("src/features/agent/agent-manifest-page.tsx"), /Information de contrôle uniquement/);
 });

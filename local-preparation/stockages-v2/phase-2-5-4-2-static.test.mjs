@@ -11,11 +11,10 @@ const route = read("src/app/api/agent/stockages/forwardings/route.ts");
 const routing = read("src/server/inter-agency-routing.ts");
 const sql = read("local-preparation/supabase/stockages-v2/009_paid_exit_forwarding_orchestration.sql");
 
-test("le navigateur ne peut fournir aucun contexte dérivé", () => {
-  assert.match(route, /new Set\(\["trackingCode", "sourceAgency", "paymentMode", "optionalReference", "optionalObservation", "paymentRequestId"\]\)/);
-  for (const key of ["operationContext", "collectionSiteCode", "forwardingDestinationCode", "forwardingReference", "amountPaid", "rate", "weight"]) {
-    assert.doesNotMatch(route, new RegExp(`body\\.${key}`));
-  }
+test("la route historique refuse tout paiement forwarding avant arrivée", () => {
+  assert.match(route, /FORWARDING_PAYMENT_BEFORE_ARRIVAL_FORBIDDEN/);
+  assert.doesNotMatch(route, /request\.json\(\)/);
+  assert.doesNotMatch(route, /record|create|insert|update|upsert/i);
 });
 
 test("le contexte interne est signé et vérifié avant d'être accepté", () => {

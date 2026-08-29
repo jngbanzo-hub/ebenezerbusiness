@@ -182,6 +182,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
   }
 
   const performanceTrace = new PaymentPerformanceTrace();
+  performanceTrace.mark("edge_reception");
   const authStartedAt = performance.now();
 
   try {
@@ -201,21 +202,25 @@ Deno.serve(async (request: Request): Promise<Response> => {
       auth: { autoRefreshToken: false, persistSession: false },
       global: { headers: { Authorization: `Bearer ${token}` } },
     });
+    const jwtStartedAt = performance.now();
     const {
       data: { user },
       error: authError,
     } = await supabase.auth.getUser(token);
+    performanceTrace.add("jwt_validation", jwtStartedAt);
     if (authError || !user) {
       return errorResponse("SESSION_EXPIREE", 401);
     }
 
     // Le profil est lu dans public.agents avec l'identité issue du JWT validé.
+    const profileStartedAt = performance.now();
     const { data: rawAgent, error: profileError } = await supabase
       .schema("public")
       .from("agents")
       .select("id, nom, agence, role, actif")
       .eq("id", user.id)
       .maybeSingle();
+    performanceTrace.add("profile_resolution", profileStartedAt);
     if (profileError) {
       return errorResponse("SERVICE_INDISPONIBLE", 503);
     }
@@ -229,15 +234,19 @@ Deno.serve(async (request: Request): Promise<Response> => {
       return errorResponse("ACCES_REFUSE", 403);
     }
 
+    const agencyValidationStartedAt = performance.now();
     const agence = rawAgent.agence.trim().toUpperCase();
     const agenceEncaissement = AGENCE_DESTINATION[agence];
     if (!agenceEncaissement) {
       return errorResponse("DESTINATION_INVALIDE", 403);
     }
+    performanceTrace.add("agency_validation", agencyValidationStartedAt);
     performanceTrace.add("edge_auth_profile", authStartedAt);
 
     const validationStartedAt = performance.now();
+    const requestBodyStartedAt = performance.now();
     const body = await readRequestBody(request);
+    performanceTrace.add("request_body_parse", requestBodyStartedAt);
     if (!body || !hasOnlyAllowedKeys(body)) {
       return errorResponse("ACCES_REFUSE", 400);
     }
@@ -409,9 +418,12 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
       appsScriptPayload.paymentRequestId = paymentInput.paymentRequestId;
 
+      const appsScriptPreparationStartedAt = performance.now();
+      const appsScriptBody = JSON.stringify(appsScriptPayload);
+      performanceTrace.add("apps_script_request_preparation", appsScriptPreparationStartedAt);
       const appsScriptStartedAt = performance.now();
       const upstreamResponse = await fetch(appsScriptUrl, {
-        body: JSON.stringify(appsScriptPayload),
+        body: appsScriptBody,
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
@@ -419,9 +431,15 @@ Deno.serve(async (request: Request): Promise<Response> => {
         method: "POST",
         signal: controller.signal,
       });
-
-      const upstreamPayload = await readUpstreamJson(upstreamResponse);
+      performanceTrace.add("apps_script_fetch_headers", appsScriptStartedAt);
+      const upstreamBodyStartedAt = performance.now();
+      const upstreamText = await upstreamResponse.text();
+      performanceTrace.add("apps_script_body_read", upstreamBodyStartedAt);
+      const upstreamParseStartedAt = performance.now();
+      const upstreamPayload = parseUpstreamJson(upstreamText);
+      performanceTrace.add("apps_script_json_parse", upstreamParseStartedAt);
       performanceTrace.add("apps_script_payment", appsScriptStartedAt);
+      const upstreamValidationStartedAt = performance.now();
       if (!upstreamResponse.ok || upstreamPayload === null) {
         const code = classifyUpstreamError(
           upstreamResponse.status,
@@ -457,6 +475,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
       if (!publicPayment) {
         return errorResponse("SERVICE_INDISPONIBLE", 503);
       }
+      performanceTrace.add("apps_script_response_validation", upstreamValidationStartedAt);
 
       if (usePaidExitOrchestration && cashClient) {
         const checkpointStartedAt = performance.now();
@@ -545,6 +564,10 @@ class PaymentPerformanceTrace {
     this.durations[step] = roundDuration(performance.now() - startedAt);
   }
 
+  mark(step: string): void {
+    this.durations[step] = roundDuration(performance.now() - this.startedAt);
+  }
+
   setContext(requestId: string, agency: string): void {
     this.requestId = requestId;
     this.agency = agency;
@@ -564,6 +587,14 @@ class PaymentPerformanceTrace {
       }));
     }
     return response;
+  }
+}
+
+function parseUpstreamJson(text: string): unknown | null {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
   }
 }
 
@@ -1119,10 +1150,10 @@ async function paymentSuccessResponse(
   });
   performanceTrace.add("notification", notificationStartedAt);
 
-  return performanceTrace.finish(
-    jsonResponse(confirmedPayment, 200),
-    result,
-  );
+  const serializationStartedAt = performance.now();
+  const response = jsonResponse(confirmedPayment, 200);
+  performanceTrace.add("response_serialization", serializationStartedAt);
+  return performanceTrace.finish(response, result);
 }
 
 function jsonResponse(payload: unknown, status: number): Response {

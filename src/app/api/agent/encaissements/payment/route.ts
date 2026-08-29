@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 import { authorizeAgentRequest } from "@/server/agent-authorization";
 import { recordDestinationPayment } from "@/server/destination-payment-parcel";
 import { requireStorageAgency, StockagesV2Error } from "@/server/stockages-v2";
-import { recordInternalNotification } from "@/server/internal-notifications";
 import { OperationPerformanceTrace } from "@/server/operation-performance";
 import { logOperationRefusal } from "@/server/operation-refusal-diagnostics";
 import { reconcileForwardingManifestRegistry } from "@/server/forwarding-manifest-registry";
@@ -53,7 +52,9 @@ export async function POST(request: Request) {
         if (row.replayed !== true) await notifyForwardingPayment(forwardingId,requestId,{userId:auth.identity.userId,name:auth.identity.nom}).catch(()=>undefined);
       });
     }
-    if (row.replayed !== true) await trace.measure("notification", () => recordInternalNotification({ eventKey: `PAYMENT:${String(body.paymentRequestId)}`, agency: auth.identity.site, type: "PAYMENT", title: "Paiement enregistré", message: `${String(row.codeColis ?? body.trackingCode)} — ${Number(row.montantPaye ?? 0).toFixed(2)} USD — ${auth.identity.nom}`, actorUserId: auth.identity.userId, actorName: auth.identity.nom }).catch(() => undefined));
+    // La notification native PAYMENT:<paymentRequestId> est déjà écrite de
+    // manière idempotente par l'Edge avant son succès. Ne pas refaire ici le
+    // même upsert réseau.
     const responseStartedAt = performance.now();
     const nextResponse = NextResponse.json(result, { status: 200 });
     trace.add("reponse_serveur", performance.now() - responseStartedAt);

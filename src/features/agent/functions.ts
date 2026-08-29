@@ -85,6 +85,9 @@ async function invokeAgentFunction<T>(
   payload: object,
   readOnly = false
 ): Promise<T> {
+  const timingStartedAt = performance.now();
+  const timing: Record<string, number> = {};
+  const requestId = isRecord(payload) && typeof payload.paymentRequestId === "string" ? payload.paymentRequestId : "UNKNOWN";
   const supabase = getSupabaseBrowserClient();
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -104,19 +107,28 @@ async function invokeAgentFunction<T>(
     response = await authenticatedRead(supabase.auth, `${supabaseUrl}/functions/v1/${functionName}`, init);
   } else {
     let accessToken: string;
+    const authStartedAt = performance.now();
     try {
       accessToken = await getVerifiedAgentWriteToken(supabase.auth);
     } catch (cause) {
       if (cause instanceof AgentWriteSessionError) throw new AgentApiError(cause.message, "SESSION_EXPIRED");
       throw cause;
     }
+    timing.local_auth = roundedMs(authStartedAt);
+    const fetchStartedAt = performance.now();
     response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
       ...init,
       headers: { ...init.headers, Authorization: `Bearer ${accessToken}` }
     });
+    timing.fetch_wait = roundedMs(fetchStartedAt);
   }
 
-  const rawData: unknown = await response.json().catch(() => null);
+  const bodyStartedAt = performance.now();
+  const responseText = await response.text();
+  timing.response_body_read = roundedMs(bodyStartedAt);
+  const parseStartedAt = performance.now();
+  const rawData: unknown = parseJson(responseText);
+  timing.response_json_parse = roundedMs(parseStartedAt);
   const data = isRecord(rawData) ? rawData : null;
 
   if (!response.ok) {
@@ -131,6 +143,7 @@ async function invokeAgentFunction<T>(
     throw createResponseError(data, "L’opération a été refusée.");
   }
 
+  if (functionName === FUNCTION_NAMES.payment) logPaymentClientTiming(requestId, timingStartedAt, timing);
   return data as T;
 }
 
@@ -215,22 +228,48 @@ export async function saveDestinationPayment(payload: {
   observation: string;
   paymentRequestId: string;
 }) {
+  const timingStartedAt = performance.now();
+  const timing: Record<string, number> = {};
   const auth = getSupabaseBrowserClient().auth;
   let accessToken: string;
+  const authStartedAt = performance.now();
   try {
     accessToken = await getVerifiedAgentWriteToken(auth);
   } catch (cause) {
     if (cause instanceof AgentWriteSessionError) throw new AgentApiError(cause.message, "SESSION_EXPIRED");
     throw cause;
   }
+  timing.local_auth = roundedMs(authStartedAt);
+  const payloadStartedAt = performance.now();
+  const body = JSON.stringify(payload);
+  timing.payload_preparation = roundedMs(payloadStartedAt);
+  const fetchStartedAt = performance.now();
   const response = await fetch("/api/agent/encaissements/payment", {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    body
   });
-  const raw = await response.json().catch(() => null) as Record<string, unknown> | null;
+  timing.fetch_wait = roundedMs(fetchStartedAt);
+  const bodyStartedAt = performance.now();
+  const responseText = await response.text();
+  timing.response_body_read = roundedMs(bodyStartedAt);
+  const parseStartedAt = performance.now();
+  const parsed = parseJson(responseText);
+  timing.response_json_parse = roundedMs(parseStartedAt);
+  const raw = isRecord(parsed) ? parsed : null;
+  logPaymentClientTiming(payload.paymentRequestId, timingStartedAt, timing);
   if (!response.ok || !raw) throw createResponseError(raw, "Le paiement a échoué.");
   return parsePaymentResult(raw);
+}
+
+function parseJson(value: string): unknown | null {
+  try { return JSON.parse(value) as unknown; } catch { return null; }
+}
+
+function roundedMs(startedAt: number) { return Math.round((performance.now() - startedAt) * 10) / 10; }
+
+function logPaymentClientTiming(requestId: string, startedAt: number, durationsMs: Record<string, number>) {
+  console.info(JSON.stringify({ type: "payment_client_performance", requestId: requestId.replace(/[^a-zA-Z0-9._:-]/g, "_").slice(0, 128), totalMs: roundedMs(startedAt), durationsMs }));
 }
 
 function parsePaymentResult(response: Record<string, unknown>): PaymentResult {

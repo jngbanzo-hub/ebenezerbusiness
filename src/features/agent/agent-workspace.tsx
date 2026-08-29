@@ -282,7 +282,11 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
 
     paymentLockRef.current = true;
     const performanceStartedAt = performance.now();
+    const uiDurations: Record<string, number> = {};
+    let uiStepStartedAt = performanceStartedAt;
+    const markUiStep = (step: string) => { const now = performance.now(); uiDurations[step] = Math.round((now - uiStepStartedAt) * 10) / 10; uiStepStartedAt = now; };
     setIsSaving(true);
+    markUiStep("button_lock");
 
     try {
       if (!profile || !parcel || !allowedPaymentAgencies.includes(sourceAgency)) {
@@ -325,6 +329,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
         fingerprintPaymentIntent(paymentIntent)
       );
       paymentAttemptRef.current = attempt;
+      markUiStep("validation_and_payload");
 
       setMessage(null);
       const result = profile.agence === "COTONOU"
@@ -337,6 +342,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
             observation: paymentIntent.observation,
             paymentRequestId: attempt.paymentRequestId
           });
+      markUiStep("payment_request_wait");
       paymentAttemptRef.current = null;
       logOperationPerformance({ operation: "encaissement", requestId: attempt.paymentRequestId, agency: profile.agence, startedAt: performanceStartedAt, result: "success" });
       setMessage({
@@ -359,6 +365,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
       setReferencePaiement("");
       setObservation("");
       setModePaiement("ESPECES");
+      markUiStep("ui_success_update");
     } catch (error) {
       logOperationPerformance({ operation: "encaissement", requestId: paymentAttemptRef.current?.paymentRequestId ?? "unknown", agency: profile?.agence ?? "unknown", startedAt: performanceStartedAt, result: error instanceof AgentApiError && error.code === "PAIEMENT_DEJA_ENREGISTRE" ? "success" : "error" });
       if (error instanceof AgentApiError && error.code === "PAIEMENT_DEJA_ENREGISTRE") {
@@ -375,6 +382,8 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
     } finally {
       paymentLockRef.current = false;
       setIsSaving(false);
+      markUiStep("button_unlock");
+      console.info(JSON.stringify({ type: "payment_ui_detail_performance", requestId: paymentAttemptRef.current?.paymentRequestId ?? "completed", totalMs: Math.round((performance.now() - performanceStartedAt) * 10) / 10, durationsMs: uiDurations }));
     }
   }
 
