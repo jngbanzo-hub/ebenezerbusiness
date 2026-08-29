@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getVerifiedAgentWriteToken } from "./verified-agent-token";
+// @ts-expect-error Node's strip-types test runner requires the explicit extension.
+import { AgentWriteSessionError, getVerifiedAgentWriteToken } from "./verified-agent-token.ts";
 
 function auth(options: { current?: string; valid?: string[]; refreshed?: string }) {
   const calls = { refresh: 0, verified: [] as string[] };
@@ -29,6 +30,21 @@ test("rafraîchit un JWT local refusé avant la commande Stockages", async () =>
 });
 
 test("refuse une session absente ou impossible à vérifier", async () => {
-  await assert.rejects(() => getVerifiedAgentWriteToken(auth({}).client), /Session expirée/);
-  await assert.rejects(() => getVerifiedAgentWriteToken(auth({ current: "stale" }).client), /Session expirée/);
+  await assert.rejects(() => getVerifiedAgentWriteToken(auth({}).client), AgentWriteSessionError);
+  await assert.rejects(() => getVerifiedAgentWriteToken(auth({ current: "stale" }).client), AgentWriteSessionError);
+});
+
+test("borne toute la certification Auth à cinq secondes sans retry financier", async () => {
+  const never = new Promise<never>(() => undefined);
+  const startedAt = Date.now();
+  await assert.rejects(
+    () => getVerifiedAgentWriteToken({
+      async getSession() { return never; },
+      async getUser() { return never; },
+      async refreshSession() { return never; }
+    }),
+    (error) => error instanceof AgentWriteSessionError && error.code === "SESSION_EXPIRED"
+  );
+  assert.ok(Date.now() - startedAt >= 4_900);
+  assert.ok(Date.now() - startedAt < 6_000);
 });

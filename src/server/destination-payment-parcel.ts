@@ -145,7 +145,12 @@ export async function recordDestinationPayment(input: {
   const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok || !payload || payload.success === false) {
     const code = typeof payload?.error === "string" ? payload.error : typeof payload?.code === "string" ? payload.code : "AGENT_SERVICE_UNAVAILABLE";
-    throw new StockagesV2Error(code, response.status || 503, undefined, "EDGE_FUNCTION", response.status || 503);
+    const status = code === "PARCEL_NOT_IN_STOCK" || code === "PARCEL_NOT_IN_AGENCY_STORAGE"
+      ? 409
+      : code === "SESSION_EXPIRED" || code === "SESSION_EXPIREE" || code === "SESSION_EXPIRED_REFRESHED"
+        ? 401
+        : response.status || 503;
+    throw new StockagesV2Error(code, status, undefined, "EDGE_FUNCTION", response.status || 503);
   }
   return Object.freeze({
     payment: payload,

@@ -36,8 +36,10 @@ test("instrumente les deux écritures sans retry", () => {
   for (const source of [paymentRoute, expenseRoute]) {
     assert.match(source, /Server-Timing/);
     assert.match(source, /auth_session/);
-    assert.doesNotMatch(source, /retry|setTimeout/);
+    assert.doesNotMatch(source, /retry/i);
   }
   assert.match(paymentRoute, /notification/);
+  assert.match(paymentRoute, /operation_secondaire/);
+  assert.match(paymentRoute, /PAYMENT_AUTH_TIMEOUT_MS = 5_000/);
   assert.match(expenseRoute, /notification/);
 });

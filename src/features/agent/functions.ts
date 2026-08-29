@@ -1,5 +1,6 @@
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { authenticatedRead } from "@/features/auth/authenticated-fetch";
+import { AgentWriteSessionError, getVerifiedAgentWriteToken } from "@/features/stockages/verified-agent-token";
 import {
   DESTINATIONS,
   type DestinationCode,
@@ -18,6 +19,9 @@ const ERROR_MESSAGES = {
   ACCES_REFUSE: "Accès Agent refusé.",
   COLIS_INTROUVABLE: "Aucun colis ne correspond à ce code pour la destination sélectionnée.",
   PARCEL_NOT_IN_AGENCY_STORAGE: "Ce colis n’est pas présent dans le Stockage de votre agence.",
+  PARCEL_NOT_IN_STOCK: "Ce colis n’est pas présent dans le Stockage de votre agence.",
+  SESSION_EXPIRED: "Votre session Agent a expiré. Veuillez vous reconnecter.",
+  SESSION_EXPIRED_REFRESHED: "Votre session Agent a expiré. Veuillez vous reconnecter.",
   DESTINATION_INVALIDE: "Destination invalide. Choisissez Kinshasa, Lubumbashi ou Kolwezi.",
   AGENCE_INVALIDE: "Agence invalide.",
   MONTANT_INVALIDE: "Le montant payé est invalide.",
@@ -99,11 +103,16 @@ async function invokeAgentFunction<T>(
   if (readOnly) {
     response = await authenticatedRead(supabase.auth, `${supabaseUrl}/functions/v1/${functionName}`, init);
   } else {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) throw new Error("Votre session a expiré. Veuillez vous reconnecter.");
+    let accessToken: string;
+    try {
+      accessToken = await getVerifiedAgentWriteToken(supabase.auth);
+    } catch (cause) {
+      if (cause instanceof AgentWriteSessionError) throw new AgentApiError(cause.message, "SESSION_EXPIRED");
+      throw cause;
+    }
     response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
       ...init,
-      headers: { ...init.headers, Authorization: `Bearer ${session.access_token}` }
+      headers: { ...init.headers, Authorization: `Bearer ${accessToken}` }
     });
   }
 
@@ -206,11 +215,17 @@ export async function saveDestinationPayment(payload: {
   observation: string;
   paymentRequestId: string;
 }) {
-  const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
-  if (!session?.access_token) throw new Error("Votre session a expiré. Veuillez vous reconnecter.");
+  const auth = getSupabaseBrowserClient().auth;
+  let accessToken: string;
+  try {
+    accessToken = await getVerifiedAgentWriteToken(auth);
+  } catch (cause) {
+    if (cause instanceof AgentWriteSessionError) throw new AgentApiError(cause.message, "SESSION_EXPIRED");
+    throw cause;
+  }
   const response = await fetch("/api/agent/encaissements/payment", {
     method: "POST",
-    headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
   const raw = await response.json().catch(() => null) as Record<string, unknown> | null;

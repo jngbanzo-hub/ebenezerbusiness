@@ -6,19 +6,47 @@ type AgentAuth = Readonly<{
   refreshSession: () => Promise<{ data: { session: Session }; error: unknown | null }>;
 }>;
 
-export async function getVerifiedAgentWriteToken(auth: AgentAuth): Promise<string> {
-  const { data: { session } } = await auth.getSession();
-  const currentToken = session?.access_token;
-  if (!currentToken) throw new Error("Session expirée.");
+const WRITE_AUTH_TIMEOUT_MS = 5_000;
 
-  const currentUser = await auth.getUser(currentToken);
+export class AgentWriteSessionError extends Error {
+  readonly code = "SESSION_EXPIRED";
+
+  constructor() {
+    super("Votre session a expiré. Veuillez vous reconnecter.");
+    this.name = "AgentWriteSessionError";
+  }
+}
+
+export async function getVerifiedAgentWriteToken(auth: AgentAuth): Promise<string> {
+  const deadline = Date.now() + WRITE_AUTH_TIMEOUT_MS;
+  const { data: { session } } = await withinAuthDeadline(auth.getSession(), deadline);
+  const currentToken = session?.access_token;
+  if (!currentToken) throw new AgentWriteSessionError();
+
+  const currentUser = await withinAuthDeadline(auth.getUser(currentToken), deadline);
   if (!currentUser.error && currentUser.data.user) return currentToken;
 
-  const refreshed = await auth.refreshSession();
+  const refreshed = await withinAuthDeadline(auth.refreshSession(), deadline);
   const refreshedToken = refreshed.data.session?.access_token;
-  if (refreshed.error || !refreshedToken) throw new Error("Session expirée.");
+  if (refreshed.error || !refreshedToken) throw new AgentWriteSessionError();
 
-  const refreshedUser = await auth.getUser(refreshedToken);
-  if (refreshedUser.error || !refreshedUser.data.user) throw new Error("Session expirée.");
+  const refreshedUser = await withinAuthDeadline(auth.getUser(refreshedToken), deadline);
+  if (refreshedUser.error || !refreshedUser.data.user) throw new AgentWriteSessionError();
   return refreshedToken;
+}
+
+async function withinAuthDeadline<T>(operation: Promise<T>, deadline: number): Promise<T> {
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) throw new AgentWriteSessionError();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new AgentWriteSessionError()), remainingMs);
+      })
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
