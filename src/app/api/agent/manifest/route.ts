@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { authorizeAgentRequest } from "@/server/agent-authorization";
-import { readAgentManifest, type AgentManifestAgency } from "@/server/agent-manifest";
+import { readAgentManifest, resolveForwardingManifestAgency, type AgentManifestAgency } from "@/server/agent-manifest";
+import { requireStorageAgency } from "@/server/stockages-v2";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,9 +17,21 @@ export async function GET(request: Request) {
     const cooModule = params.get("view") === "coo";
     if (cooModule && viewerAgency !== "COO") return fail("ACCESS_DENIED", 403);
     const requestedAgency = (params.get("agency") ?? "").trim().toUpperCase();
+    const forwardingId = (params.get("forwardingId") ?? "").trim();
+    const parcelId = (params.get("parcelId") ?? "").trim();
+    const forwardingManifest = viewerAgency !== "COO" && Boolean(forwardingId || parcelId || requestedAgency);
     const agency = viewerAgency === "COO"
       ? (["FIH", "LSHI", "KLZ"].includes(requestedAgency) ? requestedAgency : "FIH") as AgentManifestAgency
-      : viewerAgency;
+      : forwardingManifest
+        ? await resolveForwardingManifestAgency({
+            viewerAgency: requireStorageAgency(viewerAgency),
+            requestedAgency: requireStorageAgency(requestedAgency),
+            trackingCode: (params.get("code") ?? "").trim().toUpperCase(),
+            parcelId,
+            forwardingId,
+            weightKg: Number(params.get("weightKg"))
+          })
+        : viewerAgency;
     const result = await readAgentManifest({
       agency,
       compareStorage: viewerAgency !== "COO",

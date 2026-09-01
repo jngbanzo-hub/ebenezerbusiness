@@ -183,8 +183,19 @@ export type AgentManifestSearchRow = {
   sourceSite: string;
 };
 
-export async function searchAgentManifestControl(trackingCode: string) {
+export async function searchAgentManifestControl(trackingCode: string, forwarding?: {
+  originAgency: "FIH" | "LSHI" | "KLZ";
+  parcelId: string;
+  forwardingId: string;
+  weightKg: number;
+}) {
   const params = new URLSearchParams({ code: trackingCode, page: "1", pageSize: "25" });
+  if (forwarding) {
+    params.set("agency", forwarding.originAgency);
+    params.set("parcelId", forwarding.parcelId);
+    params.set("forwardingId", forwarding.forwardingId);
+    params.set("weightKg", String(forwarding.weightKg));
+  }
   const response = await authenticatedRead(
     getSupabaseBrowserClient().auth,
     `/api/agent/manifest?${params}`,
@@ -196,10 +207,13 @@ export async function searchAgentManifestControl(trackingCode: string) {
   if (!response.ok || !payload?.agency || !Array.isArray(payload.rows)) {
     throw new Error("Vérification du MANIFESTE PUBLIC indisponible.");
   }
-  const exact = payload.rows.find(
+  const exact = payload.rows.filter(
     (row) => row.trackingCode.trim().toUpperCase() === trackingCode.trim().toUpperCase()
   );
-  return { agency: payload.agency, row: exact ?? null };
+  const compatible = forwarding
+    ? exact.filter((row) => Math.abs(row.weightKg - forwarding.weightKg) < 0.001)
+    : exact;
+  return { agency: payload.agency, row: compatible.length === 1 ? compatible[0] : null, ambiguous: compatible.length > 1 };
 }
 
 export function savePayment(payload: {

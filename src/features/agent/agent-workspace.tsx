@@ -47,6 +47,7 @@ type StorageSearchResult =
 type ManifestSearchResult =
   | { state: "FOUND"; agency: string; row: AgentManifestSearchRow }
   | { state: "NOT_FOUND"; agency: string; code: string }
+  | { state: "AMBIGUOUS"; agency: string; code: string }
   | { state: "ERROR"; code: string };
 
 export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCode?: string }) {
@@ -169,16 +170,28 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
       const canonicalRequestedCode = requestedForwardingAlias?.trackingCode ?? normalizedCode;
       const destinationAgency = profile.agence === "COTONOU" ? requestedSourceAgency : profile.agence;
       if (profile.agence !== "COTONOU") {
-        const [storageOutcome, manifestOutcome] = await Promise.allSettled([
-          searchDestinationParcel(normalizedCode, requestedParcelId),
-          searchAgentManifestControl(canonicalRequestedCode)
-        ]);
+        const storageRequest = searchDestinationParcel(normalizedCode, requestedParcelId);
+        const manifestRequest = requestedForwardingAlias
+          ? storageRequest.then((rawParcel) => {
+              const resolvedParcel = parseParcelResponse(rawParcel);
+              if (!resolvedParcel.parcelId || !resolvedParcel.forwardingId) throw new Error("Identité forwarding incomplète.");
+              return searchAgentManifestControl(canonicalRequestedCode, {
+                originAgency: requestedForwardingAlias.originAgency,
+                parcelId: resolvedParcel.parcelId,
+                forwardingId: resolvedParcel.forwardingId,
+                weightKg: resolvedParcel.poidsKg
+              });
+            })
+          : searchAgentManifestControl(canonicalRequestedCode);
+        const [storageOutcome, manifestOutcome] = await Promise.allSettled([storageRequest, manifestRequest]);
         if (searchId !== activeSearchIdRef.current) return;
 
         if (manifestOutcome.status === "fulfilled") {
           setManifestSearchResult(manifestOutcome.value.row
             ? { state: "FOUND", agency: manifestOutcome.value.agency, row: manifestOutcome.value.row }
-            : { state: "NOT_FOUND", agency: manifestOutcome.value.agency, code: normalizedCode });
+            : manifestOutcome.value.ambiguous
+              ? { state: "AMBIGUOUS", agency: manifestOutcome.value.agency, code: normalizedCode }
+              : { state: "NOT_FOUND", agency: manifestOutcome.value.agency, code: normalizedCode });
         } else {
           setManifestSearchResult({ state: "ERROR", code: normalizedCode });
         }
@@ -537,9 +550,9 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
                     <tbody><tr className="border-t border-white/10">
                       <td className="py-3">{manifestSearchResult?.state === "FOUND" ? manifestSearchResult.row.date || "—" : "—"}</td>
                       <td>{manifestSearchResult?.state === "FOUND" ? manifestSearchResult.row.trackingCode : manifestSearchResult?.code ?? codeColis.trim().toUpperCase()}</td>
-                      <td>{manifestSearchResult?.state === "FOUND" ? manifestSearchResult.row.sourceSite : manifestSearchResult?.state === "NOT_FOUND" ? manifestSearchResult.agency : profile.agence}</td>
+                      <td>{manifestSearchResult?.state === "FOUND" ? manifestSearchResult.row.sourceSite : manifestSearchResult?.state === "NOT_FOUND" || manifestSearchResult?.state === "AMBIGUOUS" ? manifestSearchResult.agency : profile.agence}</td>
                       <td>{manifestSearchResult?.state === "FOUND" ? formatWeight(manifestSearchResult.row.weightKg) : "—"}</td>
-                      <td>{manifestSearchResult?.state === "FOUND" ? manifestStatusLabel(manifestSearchResult.row.status) : manifestSearchResult?.state === "NOT_FOUND" ? "INTROUVABLE" : "INDISPONIBLE"}</td>
+                      <td>{manifestSearchResult?.state === "FOUND" ? manifestStatusLabel(manifestSearchResult.row.status) : manifestSearchResult?.state === "NOT_FOUND" ? "INTROUVABLE" : manifestSearchResult?.state === "AMBIGUOUS" ? "AMBIGU" : "INDISPONIBLE"}</td>
                     </tr></tbody>
                   </table>
                 </div>

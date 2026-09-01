@@ -5,8 +5,10 @@ import test from "node:test";
 const workspace = readFileSync(new URL("./agent-workspace.tsx", import.meta.url), "utf8");
 const functions = readFileSync(new URL("./functions.ts", import.meta.url), "utf8");
 
-test("une recherche destination interroge Stockage V2 et le MANIFESTE en parallèle", () => {
-  assert.match(workspace, /Promise\.allSettled\(\[\s*searchDestinationParcel\(normalizedCode, requestedParcelId\),\s*searchAgentManifestControl\(canonicalRequestedCode\)/);
+test("une recherche native interroge Stockage V2 et le MANIFESTE sans changer de source", () => {
+  assert.match(workspace, /const storageRequest = searchDestinationParcel\(normalizedCode, requestedParcelId\)/);
+  assert.match(workspace, /: searchAgentManifestControl\(canonicalRequestedCode\)/);
+  assert.match(workspace, /Promise\.allSettled\(\[storageRequest, manifestRequest\]\)/);
   assert.match(functions, /new URLSearchParams\(\{ trackingCode \}\)/);
   assert.match(functions, /\/api\/agent\/encaissements\/parcel\?\$\{params\}/);
   assert.match(functions, /\/api\/agent\/manifest\?\$\{params\}/);

@@ -14,6 +14,36 @@ import { StockagesV2Error, type StorageAgency } from "@/server/stockages-v2";
 
 export type AgentManifestAgency = "COO" | StorageAgency;
 
+export async function resolveForwardingManifestAgency(input: {
+  viewerAgency: StorageAgency;
+  requestedAgency: StorageAgency;
+  trackingCode: string;
+  parcelId: string;
+  forwardingId: string;
+  weightKg: number;
+}) {
+  const client = serviceClient();
+  const [{ data: parcel, error: parcelError }, { data: forwarding, error: forwardingError }] = await Promise.all([
+    client.from("stockage_parcels")
+      .select("parcel_id,forwarding_id,tracking_code,agency,canonical_weight_kg,delivery_status")
+      .eq("parcel_id", input.parcelId)
+      .eq("forwarding_id", input.forwardingId)
+      .eq("tracking_code", input.trackingCode)
+      .eq("agency", input.viewerAgency)
+      .in("delivery_status", ["AVAILABLE", "PRESENT"])
+      .maybeSingle(),
+    client.from("stockage_forwardings")
+      .select("forwarding_id,origin_agency,destination_agency,canonical_weight_kg,status")
+      .eq("forwarding_id", input.forwardingId)
+      .maybeSingle()
+  ]);
+  if (parcelError || forwardingError) throw new StockagesV2Error("MANIFEST_FORWARDING_IDENTITY_UNAVAILABLE", 503);
+  if (!parcel || !forwarding || !Number.isFinite(input.weightKg) || Math.abs(Number(parcel.canonical_weight_kg) - input.weightKg) >= 0.001 || Math.abs(Number(forwarding.canonical_weight_kg) - input.weightKg) >= 0.001 || forwarding.status !== "ARRIVAL_CONFIRMED" || forwarding.destination_agency !== input.viewerAgency || forwarding.origin_agency !== input.requestedAgency) {
+    throw new StockagesV2Error("MANIFEST_FORWARDING_IDENTITY_MISMATCH", 403);
+  }
+  return input.requestedAgency;
+}
+
 export async function readAgentManifest(input: {
   agency: AgentManifestAgency;
   compareStorage?: boolean;
