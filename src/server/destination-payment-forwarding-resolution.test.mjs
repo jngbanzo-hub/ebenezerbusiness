@@ -4,6 +4,7 @@ import test from "node:test";
 
 const identity = readFileSync(new URL("./storage-parcel-identity.ts", import.meta.url), "utf8");
 const resolver = readFileSync(new URL("./destination-payment-parcel.ts", import.meta.url), "utf8");
+const resolverRead = resolver.slice(resolver.indexOf("export async function resolveDestinationPaymentParcel"), resolver.indexOf("export async function recordDestinationPayment"));
 const workspace = readFileSync(new URL("../features/agent/agent-workspace.tsx", import.meta.url), "utf8");
 
 function parseAlias(value) {
@@ -40,9 +41,20 @@ test("the UI validates the canonical code and the returned forwarding identity",
 });
 
 test("a forwarding must be physically present and arrival-confirmed before payment", () => {
+  assert.match(resolver, /global: \{ fetch: noStoreFetch \}/);
+  assert.match(resolver, /fetch\(input, \{ \.\.\.init, cache: "no-store" \}\)/);
   assert.match(resolver, /\.eq\("agency", agency\)/);
   assert.match(resolver, /\.in\("delivery_status", \["AVAILABLE", "PRESENT"\]\)/);
   assert.match(resolver, /forwarding\.status !== "ARRIVAL_CONFIRMED"/);
+});
+
+test("fresh storage reads keep their identity semantics and never write", () => {
+  assert.match(resolver, /\.eq\("tracking_code", code\)/);
+  assert.match(resolver, /\.eq\("agency", agency\)/);
+  assert.match(resolver, /\.in\("delivery_status", \["AVAILABLE", "PRESENT"\]\)/);
+  assert.match(resolver, /candidate\.originAgency === alias\.originAgency/);
+  assert.match(resolver, /candidate\.destinationAgency === alias\.destinationAgency/);
+  assert.doesNotMatch(resolverRead, /\.insert\(|\.upsert\(|\.update\(|\.delete\(/);
 });
 
 test("homonyms require an explicit forwarding route or parcel identity", () => {
