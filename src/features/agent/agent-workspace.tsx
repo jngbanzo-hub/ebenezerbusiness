@@ -27,6 +27,7 @@ import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { getVerifiedAgentWriteToken } from "@/features/stockages/verified-agent-token";
 import { logOperationPerformance } from "@/features/agent/operation-performance-client";
 import { authenticatedRead, AuthenticatedRequestError, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
+import { parseForwardingAlias } from "@/server/storage-parcel-identity";
 import {
   PAYMENT_MODES,
   DESTINATIONS,
@@ -164,11 +165,13 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
 
     try {
       const normalizedCode = requestedCode.trim().toUpperCase();
+      const requestedForwardingAlias = parseForwardingAlias(normalizedCode);
+      const canonicalRequestedCode = requestedForwardingAlias?.trackingCode ?? normalizedCode;
       const destinationAgency = profile.agence === "COTONOU" ? requestedSourceAgency : profile.agence;
       if (profile.agence !== "COTONOU") {
         const [storageOutcome, manifestOutcome] = await Promise.allSettled([
           searchDestinationParcel(normalizedCode, requestedParcelId),
-          searchAgentManifestControl(normalizedCode)
+          searchAgentManifestControl(canonicalRequestedCode)
         ]);
         if (searchId !== activeSearchIdRef.current) return;
 
@@ -195,15 +198,25 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
         }
 
         const foundParcel = parseParcelResponse(storageOutcome.value);
+        const returnedForwardingAlias = parseForwardingAlias(foundParcel.displayCode);
+        const forwardingIdentityMatches = !requestedForwardingAlias || (
+          Boolean(foundParcel.parcelId) &&
+          Boolean(foundParcel.forwardingId) &&
+          returnedForwardingAlias?.trackingCode === requestedForwardingAlias.trackingCode &&
+          returnedForwardingAlias.originAgency === requestedForwardingAlias.originAgency &&
+          returnedForwardingAlias.destinationAgency === requestedForwardingAlias.destinationAgency
+        );
         if (
-          foundParcel.codeColis.toUpperCase() !== normalizedCode ||
-          foundParcel.destinationCode !== profile.agence
+          foundParcel.codeColis.toUpperCase() !== canonicalRequestedCode ||
+          foundParcel.destinationCode !== profile.agence ||
+          (requestedParcelId !== undefined && foundParcel.parcelId !== requestedParcelId) ||
+          !forwardingIdentityMatches
         ) {
           throw new Error("La réponse de recherche ne correspond pas au colis demandé.");
         }
         setStorageSearchResult({ state: "FOUND", parcel: foundParcel });
         setParcel(foundParcel);
-        setParcelAction(await loadParcelAction(foundParcel.codeColis));
+        setParcelAction(foundParcel.forwardingId ? null : await loadParcelAction(foundParcel.codeColis));
         setMontantPaye(String(foundParcel.soldeRestant));
         return;
       }

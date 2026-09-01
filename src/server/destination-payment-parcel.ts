@@ -64,6 +64,9 @@ export async function resolveDestinationPaymentParcel(
   }
 
   const forwarding = parcel.forwarding_id ? contextById.get(parcel.forwarding_id) : null;
+  if (forwarding && forwarding.status !== "ARRIVAL_CONFIRMED") {
+    throw new StockagesV2Error("FORWARDING_ARRIVAL_NOT_CONFIRMED", 409, undefined, "resolveDestinationPaymentParcel");
+  }
   const amountExpected = forwarding
     ? money(Number(forwarding.amount_expected))
     : money(weightKg * STANDARD_RATES_USD_PER_KG[agency]);

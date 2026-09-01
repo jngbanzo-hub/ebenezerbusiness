@@ -15,7 +15,7 @@ export type ForwardingAlias = Readonly<{
 
 export function parseForwardingAlias(value: unknown): ForwardingAlias | null {
   const normalized = String(value ?? "").trim().toUpperCase();
-  const match = normalized.match(/^([A-Z0-9][A-Z0-9._/]{1,63}?)(?: |-|)(KLZ|LSHI|FIH)-(KLZ|LSHI|FIH)$/);
+  const match = normalized.match(/^([A-Z0-9][A-Z0-9._/]{1,63}?)(?:\s*·\s*| |-|)(KLZ|LSHI|FIH)-(KLZ|LSHI|FIH)$/);
   if (!match) return null;
   const originAgency = match[2] as "KLZ" | "LSHI" | "FIH";
   const destinationAgency = match[3] as "KLZ" | "LSHI" | "FIH";

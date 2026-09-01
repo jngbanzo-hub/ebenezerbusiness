@@ -6,8 +6,9 @@ const workspace = readFileSync(new URL("./agent-workspace.tsx", import.meta.url)
 const functions = readFileSync(new URL("./functions.ts", import.meta.url), "utf8");
 
 test("une recherche destination interroge Stockage V2 et le MANIFESTE en parallèle", () => {
-  assert.match(workspace, /Promise\.allSettled\(\[\s*searchDestinationParcel\(normalizedCode\),\s*searchAgentManifestControl\(normalizedCode\)/);
-  assert.match(functions, /\/api\/agent\/encaissements\/parcel\?trackingCode=/);
+  assert.match(workspace, /Promise\.allSettled\(\[\s*searchDestinationParcel\(normalizedCode, requestedParcelId\),\s*searchAgentManifestControl\(canonicalRequestedCode\)/);
+  assert.match(functions, /new URLSearchParams\(\{ trackingCode \}\)/);
+  assert.match(functions, /\/api\/agent\/encaissements\/parcel\?\$\{params\}/);
   assert.match(functions, /\/api\/agent\/manifest\?\$\{params\}/);
 });
 
