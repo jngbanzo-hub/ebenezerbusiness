@@ -127,16 +127,36 @@ export async function readAdminStorageParcels(agency: StorageAgency) {
 }
 
 export async function readStorageReportEvents(from: string, to = from, agency?: string) {
-  let query = serviceClient()
+  const client = serviceClient();
+  let query = client
     .from("stockage_events")
-    .select("event_id,event_type,agency,business_date,occurred_at,parcel_count_delta,weight_kg_delta,tracking_code,actor_name,metadata")
+    .select("event_id,event_type,agency,business_date,occurred_at,parcel_count_delta,weight_kg_delta,tracking_code,actor_name,source_type,source_request_id,metadata")
     .gte("business_date", from)
     .lte("business_date", to)
     .order("occurred_at", { ascending: true });
   if (agency) query = query.eq("agency", agency);
   const { data, error } = await query;
   if (error) throw new StockagesV2Error("STORAGE_REPORT_READ_FAILED", 503);
-  return data ?? [];
+  const events = data ?? [];
+  const forwardingIds = Array.from(new Set(events.flatMap((row) => {
+    if (row.source_type !== "INTER_AGENCY_FORWARDING") return [];
+    const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata as Record<string, unknown> : {};
+    const forwardingId = String(metadata.forwardingId ?? row.source_request_id ?? "");
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(forwardingId) ? [forwardingId] : [];
+  })));
+  if (!forwardingIds.length) return events;
+  const { data: forwardings, error: forwardingError } = await client
+    .from("stockage_forwardings")
+    .select("forwarding_id,original_tracking_code,origin_agency,destination_agency")
+    .in("forwarding_id", forwardingIds);
+  if (forwardingError) throw new StockagesV2Error("STORAGE_REPORT_READ_FAILED", 503);
+  const forwardingById = new Map((forwardings ?? []).map((row) => [row.forwarding_id, row]));
+  return events.map((row) => {
+    const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata as Record<string, unknown> : {};
+    const forwardingId = String(metadata.forwardingId ?? row.source_request_id ?? "");
+    const forwarding = forwardingById.get(forwardingId);
+    return forwarding ? { ...row, forwarding_identity: { forwardingId: forwarding.forwarding_id, trackingCode: forwarding.original_tracking_code, originAgency: forwarding.origin_agency, destinationAgency: forwarding.destination_agency } } : row;
+  });
 }
 
 export type ArrivalParcel = Readonly<{ trackingCode: string; weightKg: number }>;

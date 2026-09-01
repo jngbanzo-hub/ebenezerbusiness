@@ -28,3 +28,34 @@ test("expose le report mensuel Stockage sans altérer les détails", () => {
   const report = buildDailyAgencyReport({ agency: "FIH", payments: [], expenses: [], storageEvents: [], cash: null, storage });
   assert.deepEqual(report.storage, storage);
 });
+
+test("conserve le code natif et enrichit uniquement une identité forwarding complète", () => {
+  const events = [
+    { agency: "LSHI", event_type: "SORTIE_APRES_PAIEMENT_TOTAL_DESTINATION", tracking_code: "AT02326", weight_kg_delta: -5, actor_name: "Agent", occurred_at: "2026-09-01T20:00:00Z" },
+    { agency: "LSHI", event_type: "SORTIE_APRES_PAIEMENT_TOTAL_DESTINATION", tracking_code: "AT02326", weight_kg_delta: -9, actor_name: "Agent", occurred_at: "2026-09-01T22:02:00Z", forwarding_identity: { forwardingId: "f259103f-1e58-4fc8-bcda-e10d5fec7328", trackingCode: "AT02326", originAgency: "KLZ", destinationAgency: "LSHI" } }
+  ];
+  const report = buildDailyAgencyReport({ agency: "LSHI", payments: [], expenses: [], storageEvents: events, cash: null });
+  assert.deepEqual(report.departures.map((row) => row.code), ["AT02326", "AT02326 · KLZ-LSHI"]);
+  assert.equal(report.departureCount, 2);
+  assert.equal(report.departureWeightKg, 14);
+});
+
+test("formate les six trajets forwarding depuis leur identité canonique", () => {
+  const routes = [["KLZ", "LSHI"], ["KLZ", "FIH"], ["LSHI", "KLZ"], ["LSHI", "FIH"], ["FIH", "LSHI"], ["FIH", "KLZ"]] as const;
+  for (const [originAgency, destinationAgency] of routes) {
+    const report = buildDailyAgencyReport({ agency: destinationAgency, payments: [], expenses: [], cash: null, storageEvents: [{ agency: destinationAgency, event_type: "SORTIE_APRES_PAIEMENT_TOTAL_DESTINATION", tracking_code: "CODE1", weight_kg_delta: -4, actor_name: "Agent", occurred_at: "2026-09-01T22:02:00Z", forwarding_identity: { forwardingId: `${originAgency}-${destinationAgency}-identity`, trackingCode: "CODE1", originAgency, destinationAgency } }] });
+    assert.equal(report.departures[0]?.code, `CODE1 · ${originAgency}-${destinationAgency}`);
+    assert.equal(report.departureCount, 1);
+    assert.equal(report.departureWeightKg, 4);
+  }
+});
+
+test("une identité forwarding absente ou incomplète n'invente jamais un trajet", () => {
+  const report = buildDailyAgencyReport({ agency: "FIH", payments: [], expenses: [], cash: null, storageEvents: [
+    { agency: "FIH", event_type: "SORTIE_APRES_PAIEMENT_TOTAL_DESTINATION", tracking_code: "NATIVE1", weight_kg_delta: -2 },
+    { agency: "FIH", event_type: "SORTIE_APRES_PAIEMENT_TOTAL_DESTINATION", tracking_code: "SAFE1", weight_kg_delta: -3, forwarding_identity: { forwardingId: "forwarding", trackingCode: "SAFE1", originAgency: "KLZ" } }
+  ] });
+  assert.deepEqual(report.departures.map((row) => row.code), ["NATIVE1", "SAFE1"]);
+  assert.equal(report.departureCount, 2);
+  assert.equal(report.departureWeightKg, 5);
+});

@@ -4,6 +4,7 @@ import {
   summarizeAdminPaymentsByAgent
 } from "@/features/admin/payments";
 import type { AdminExpenseListResponse } from "@/server/agent-expenses-apps-script";
+import { departureDisplayCode } from "./departure-display-code";
 
 export const REPORT_AGENCIES = ["COO", "FIH", "LSHI", "KLZ"] as const;
 export type ReportAgency = (typeof REPORT_AGENCIES)[number];
@@ -44,7 +45,7 @@ export function buildDailyAgencyReport(input: { agency: ReportAgency; payments: 
   const modes = aggregate(payments, (row) => row.modePaiement || "Non renseigné");
   const paymentSummary = calculateAdminPaymentsSummary(payments).sites[input.agency];
   const arrivals = events.filter((row) => ARRIVALS.has(String(row.event_type))).flatMap(arrivalDetails);
-  const departures = events.filter((row) => DEPARTURES.has(String(row.event_type))).map((row) => ({ code: String(row.tracking_code ?? "—"), weightKg: Math.abs(Number(row.weight_kg_delta ?? 0)), actor: String(row.actor_name ?? "—"), occurredAt: String(row.occurred_at ?? "") }));
+  const departures = events.filter((row) => DEPARTURES.has(String(row.event_type))).map((row) => ({ code: departureDisplayCode(row), weightKg: Math.abs(Number(row.weight_kg_delta ?? 0)), actor: String(row.actor_name ?? "—"), occurredAt: String(row.occurred_at ?? "") }));
   const expensesByCurrency: Record<string, number> = {};
   for (const row of expenses) expensesByCurrency[row.devise] = cents((expensesByCurrency[row.devise] ?? 0) + row.montant);
   const operationAgents = new Set([...agents.map((row) => row.name), ...arrivals.map((row) => row.actor), ...departures.map((row) => row.actor)].filter((name) => name && name !== "—"));
