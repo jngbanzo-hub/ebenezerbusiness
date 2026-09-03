@@ -1790,15 +1790,32 @@ function enregistrerDepenseSecurisee_(acteur, donnees) {
     acteur.agence
   );
   const verrou = LockService.getScriptLock();
+  const performanceDepenses = {
+    debut: Date.now(),
+    etapes: {},
+    resultat: 'ERREUR'
+  };
 
   try {
-    verrou.waitLock(30000);
+    mesurerEtapeDepenses_(
+      performanceDepenses,
+      'attente_verrou',
+      function() {
+        verrou.waitLock(30000);
+      }
+    );
 
     const classeur =
       SpreadsheetApp.getActiveSpreadsheet();
-    const existante = trouverDepenseParId_(
-      classeur,
-      expenseRequestId
+    const existante = mesurerEtapeDepenses_(
+      performanceDepenses,
+      'recherche_idempotence',
+      function() {
+        return trouverDepenseParId_(
+          classeur,
+          expenseRequestId
+        );
+      }
     );
 
     if (existante) {
@@ -1812,6 +1829,7 @@ function enregistrerDepenseSecurisee_(acteur, donnees) {
         );
       }
 
+      performanceDepenses.resultat = 'REPLAY';
       return {
         success: true,
         code: 'DEPENSE_DEJA_ENREGISTREE',
@@ -1848,46 +1866,84 @@ function enregistrerDepenseSecurisee_(acteur, donnees) {
       ''
     ];
 
-    feuille
-      .getRange(
-        feuille.getLastRow() + 1,
-        1,
-        1,
-        CONFIG_DEPENSES.entetes.length
-      )
-      .setValues([ligne]);
-
-    ajouterAuditDepenses_(classeur, {
-      typeEvenement: 'CREATION',
-      dateHeure: dateHeure,
-      expenseRequestId: expenseRequestId,
-      correctionRequestId: '',
-      agence: feuilleAgence,
-      feuilleSource: feuilleAgence,
-      acteur: acteur,
-      statutAvant: '',
-      statutApres: 'ACTIVE',
-      avant: null,
-      apres: valeursMetierDepuisLigne_(ligne),
-      motif: '',
-      resultat: 'SUCCES',
-      referenceTechnique: expenseRequestId
-    });
-
-    mettreAJourStatistiquesDepensesCibleesSousVerrou_(
-      classeur,
-      ligne,
-      feuilleAgence
+    mesurerEtapeDepenses_(
+      performanceDepenses,
+      'ecriture_depense',
+      function() {
+        feuille
+          .getRange(
+            feuille.getLastRow() + 1,
+            1,
+            1,
+            CONFIG_DEPENSES.entetes.length
+          )
+          .setValues([ligne]);
+      }
     );
 
+    mesurerEtapeDepenses_(
+      performanceDepenses,
+      'ecriture_audit',
+      function() {
+        ajouterAuditDepenses_(classeur, {
+          typeEvenement: 'CREATION',
+          dateHeure: dateHeure,
+          expenseRequestId: expenseRequestId,
+          correctionRequestId: '',
+          agence: feuilleAgence,
+          feuilleSource: feuilleAgence,
+          acteur: acteur,
+          statutAvant: '',
+          statutApres: 'ACTIVE',
+          avant: null,
+          apres: valeursMetierDepuisLigne_(ligne),
+          motif: '',
+          resultat: 'SUCCES',
+          referenceTechnique: expenseRequestId
+        });
+      }
+    );
+
+    mesurerEtapeDepenses_(
+      performanceDepenses,
+      'statistiques',
+      function() {
+        mettreAJourStatistiquesDepensesCibleesSousVerrou_(
+          classeur,
+          ligne,
+          feuilleAgence
+        );
+      }
+    );
+
+    performanceDepenses.resultat = 'SUCCES';
     return {
       success: true,
       code: 'DEPENSE_ENREGISTREE',
       expenseRequestId: expenseRequestId
     };
   } finally {
+    journaliserPerformanceDepenses_(performanceDepenses);
     verrou.releaseLock();
   }
+}
+
+function mesurerEtapeDepenses_(performanceDepenses, nom, action) {
+  const debut = Date.now();
+  try {
+    return action();
+  } finally {
+    performanceDepenses.etapes[nom] = Date.now() - debut;
+  }
+}
+
+function journaliserPerformanceDepenses_(performanceDepenses) {
+  console.info(JSON.stringify({
+    type: 'depenses_apps_script_performance',
+    resultat: performanceDepenses.resultat,
+    durationsMs: performanceDepenses.etapes,
+    totalMs: Date.now() - performanceDepenses.debut
+  }));
 }
 
 /**
@@ -2529,26 +2585,144 @@ function mettreAJourStatistiquesDepensesCibleesSousVerrou_(
     return;
   }
 
-  traiterLigneStatistique_(
+  const misesAJour = preparerMisesAJourStatistiquesDepenses_(
     ligne,
     nomAgence,
-    resume.statistiquesJournalieres,
-    resume.statistiquesMensuelles,
-    resume.anomalies
+    resume
   );
 
-  ecrireStatistiques_(
-    feuilleStatistiques,
-    convertirStatistiquesEnLignes_(
-      resume.statistiquesJournalieres,
-      'JOURNALIER'
-    ),
-    convertirStatistiquesEnLignes_(
-      resume.statistiquesMensuelles,
-      'MENSUEL'
-    ),
-    resume.anomalies
+  if (!misesAJour) {
+    recalculerStatistiquesDepensesSousVerrou_(classeur);
+    return;
+  }
+
+  misesAJour.forEach(function(miseAJour) {
+    feuilleStatistiques
+      .getRange(miseAJour.ligne, 5, 1, 2)
+      .setValues([[
+        miseAJour.total,
+        miseAJour.nombreOperations
+      ]]);
+  });
+
+  feuilleStatistiques
+    .getRange('A2:F2')
+    .setValue(
+      'Dernière actualisation : ' +
+      Utilities.formatDate(
+        new Date(),
+        CONFIG_DEPENSES.fuseauHoraire,
+        'dd/MM/yyyy HH:mm:ss'
+      )
+    );
+}
+
+/**
+ * Prépare les quatre mises à jour affectées par une création : jour/mois,
+ * agence/tous les sites. Toute structure absente ou incohérente impose le
+ * recalcul intégral existant.
+ */
+function preparerMisesAJourStatistiquesDepenses_(
+  ligne,
+  nomAgence,
+  resume
+) {
+  const date = analyserDateDepense_(ligne[0]);
+  const montant = analyserMontantDepense_(ligne[5]);
+  const devise = normaliserTexte_(ligne[6]);
+  const statut = normaliserTexte_(ligne[11]);
+
+  if (
+    !date ||
+    montant === null ||
+    !CONFIG_DEPENSES.devises.includes(devise) ||
+    statut !== 'ACTIVE'
+  ) {
+    return null;
+  }
+
+  const jour = Utilities.formatDate(
+    date,
+    CONFIG_DEPENSES.fuseauHoraire,
+    'yyyy-MM-dd'
   );
+  const mois = Utilities.formatDate(
+    date,
+    CONFIG_DEPENSES.fuseauHoraire,
+    'yyyy-MM'
+  );
+  const cles = [
+    ['JOURNALIER', jour, nomAgence],
+    ['JOURNALIER', jour, 'TOUS LES SITES'],
+    ['MENSUEL', mois, nomAgence],
+    ['MENSUEL', mois, 'TOUS LES SITES']
+  ];
+  const misesAJour = [];
+
+  for (let index = 0; index < cles.length; index++) {
+    const type = cles[index][0];
+    const periode = cles[index][1];
+    const site = cles[index][2];
+    const cle = [type, periode, site, devise].join('|');
+    const entree = resume.lignesParCle.get(cle);
+
+    if (
+      !entree ||
+      !Number.isFinite(entree.total) ||
+      !Number.isInteger(entree.nombreOperations) ||
+      entree.nombreOperations < 0
+    ) {
+      return null;
+    }
+
+    misesAJour.push({
+      ligne: entree.ligne,
+      total: entree.total + montant,
+      nombreOperations: entree.nombreOperations + 1
+    });
+  }
+
+  return misesAJour;
+}
+
+/**
+ * Normalise une période matérialisée dans STAT DEPENSES sans interpréter
+ * les chaînes ambiguës. Google Sheets renvoie les cellules de date comme de
+ * vrais objets Date avec getValues(), tandis que les périodes mensuelles et
+ * certains historiques peuvent déjà être des chaînes normalisées.
+ */
+function normaliserPeriodeStatistique_(valeur, type) {
+  const format = type === 'JOURNALIER'
+    ? 'yyyy-MM-dd'
+    : type === 'MENSUEL'
+      ? 'yyyy-MM'
+      : null;
+
+  if (!format) {
+    return null;
+  }
+
+  if (valeur instanceof Date) {
+    if (!Number.isFinite(valeur.getTime())) {
+      return null;
+    }
+    return Utilities.formatDate(
+      valeur,
+      CONFIG_DEPENSES.fuseauHoraire,
+      format
+    );
+  }
+
+  if (typeof valeur !== 'string') {
+    return null;
+  }
+
+  const periode = valeur.trim();
+  const formatValide = type === 'JOURNALIER'
+    ? /^\d{4}-\d{2}-\d{2}$/.test(periode)
+    : /^\d{4}-\d{2}$/.test(periode);
+
+  return formatValide ? periode : null;
 }
 
 /**
@@ -2565,6 +2739,7 @@ function lireResumeStatistiquesDepenses_(feuille) {
     .getValues();
   const statistiquesJournalieres = new Map();
   const statistiquesMensuelles = new Map();
+  const lignesParCle = new Map();
   const anomalies = {
     datesInvalides: null,
     montantsInvalides: null,
@@ -2579,7 +2754,7 @@ function lireResumeStatistiquesDepenses_(feuille) {
   };
   let invalide = false;
 
-  lignes.forEach(function(ligne) {
+  lignes.forEach(function(ligne, index) {
     if (invalide) {
       return;
     }
@@ -2605,20 +2780,17 @@ function lireResumeStatistiquesDepenses_(feuille) {
       return;
     }
 
-    const periode = String(ligne[1] || '').trim();
+    const periode = normaliserPeriodeStatistique_(ligne[1], type);
     const site = String(ligne[2] || '').trim();
     const devise = String(ligne[3] || '').trim();
     const total = Number(ligne[4]);
     const nombreOperations = Number(ligne[5]);
-    const periodeValide = type === 'JOURNALIER'
-      ? /^\d{4}-\d{2}-\d{2}$/.test(periode)
-      : /^\d{4}-\d{2}$/.test(periode);
     const siteValide =
       site === 'TOUS LES SITES' ||
       CONFIG_DEPENSES.feuillesAgences.includes(site);
 
     if (
-      !periodeValide ||
+      !periode ||
       !siteValide ||
       !CONFIG_DEPENSES.devises.includes(devise) ||
       !Number.isFinite(total) ||
@@ -2633,16 +2805,27 @@ function lireResumeStatistiquesDepenses_(feuille) {
       ? statistiquesJournalieres
       : statistiquesMensuelles;
     const cle = [periode, site, devise].join('|');
+    const cleAvecType = [type, periode, site, devise]
+      .join('|');
 
-    if (statistiques.has(cle)) {
+    if (
+      statistiques.has(cle) ||
+      lignesParCle.has(cleAvecType)
+    ) {
       invalide = true;
       return;
     }
 
-    statistiques.set(cle, {
+    const valeur = {
       periode: periode,
       site: site,
       devise: devise,
+      total: total,
+      nombreOperations: nombreOperations
+    };
+    statistiques.set(cle, valeur);
+    lignesParCle.set(cleAvecType, {
+      ligne: index + 5,
       total: total,
       nombreOperations: nombreOperations
     });
@@ -2660,7 +2843,8 @@ function lireResumeStatistiquesDepenses_(feuille) {
   return {
     statistiquesJournalieres: statistiquesJournalieres,
     statistiquesMensuelles: statistiquesMensuelles,
-    anomalies: anomalies
+    anomalies: anomalies,
+    lignesParCle: lignesParCle
   };
 }
 
@@ -2682,28 +2866,28 @@ function trouverDepenseParId_(
       continue;
     }
 
-    const ids = feuille
+    const cellule = feuille
       .getRange(2, 2, feuille.getLastRow() - 1, 1)
-      .getDisplayValues();
+      .createTextFinder(expenseRequestId)
+      .matchCase(false)
+      .matchEntireCell(true)
+      .useRegularExpression(false)
+      .findNext();
 
-    for (let ligne = 0; ligne < ids.length; ligne++) {
-      if (
-        normaliserUuidDepenses_(ids[ligne][0]) ===
-        expenseRequestId
-      ) {
-        return {
-          feuille: feuille,
-          ligne: ligne + 2,
-          valeurs: feuille
-            .getRange(
-              ligne + 2,
-              1,
-              1,
-              CONFIG_DEPENSES.entetes.length
-            )
-            .getValues()[0]
-        };
-      }
+    if (cellule) {
+      const numeroLigne = cellule.getRow();
+      return {
+        feuille: feuille,
+        ligne: numeroLigne,
+        valeurs: feuille
+          .getRange(
+            numeroLigne,
+            1,
+            1,
+            CONFIG_DEPENSES.entetes.length
+          )
+          .getValues()[0]
+      };
     }
   }
 
