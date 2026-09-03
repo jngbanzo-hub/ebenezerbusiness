@@ -101,11 +101,27 @@ export async function recordDestinationPayment(input: {
   agentAccessToken: string;
   parcelId?: string;
 }, trace?: OperationPerformanceTrace) {
-  const parcel = await resolveDestinationPaymentParcel(input.trackingCode, input.agency, trace, input.parcelId);
-  const validationStartedAt = performance.now();
-  if (parcel.soldeRestant <= 0) throw new StockagesV2Error("PARCEL_ALREADY_PAID", 409, undefined, "recordDestinationPayment");
   validateUuid(input.paymentRequestId);
   const paymentMode = requiredPaymentMode(input.paymentMode);
+  const canonicalCode = normalizeTrackingCode(parseForwardingAlias(input.trackingCode)?.trackingCode ?? input.trackingCode);
+  const existing = await readPaymentOrchestration(input.paymentRequestId);
+  if (existing && (existing.tracking_code !== canonicalCode || existing.agency !== input.agency)) {
+    throw new StockagesV2Error("IDEMPOTENCY_CONFLICT", 409, undefined, "recordDestinationPayment");
+  }
+  if (existing?.parcel_id && input.parcelId && existing.parcel_id !== input.parcelId) {
+    throw new StockagesV2Error("IDEMPOTENCY_CONFLICT", 409, undefined, "recordDestinationPayment");
+  }
+  if (existing?.state === "COMPLETED") {
+    if (!existing.cash_event_id || !existing.stockage_event_id) throw new StockagesV2Error("PAYMENT_ORCHESTRATION_PARTIAL_EFFECT", 409, undefined, "recordDestinationPayment");
+    return Object.freeze({ payment: completedReplayPayload({ codeColis: canonicalCode, montantAttendu: Number(existing.expected_amount) }, input.paymentRequestId), forwardingId: existing.forwarding_id ?? null });
+  }
+  const parcel = await resolveDestinationPaymentParcel(input.trackingCode, input.agency, trace, input.parcelId);
+  const validationStartedAt = performance.now();
+  if (parcel.soldeRestant <= 0) {
+    const resumed = await resumePendingPaidDestination(input, parcel, paymentMode, existing, trace);
+    if (resumed) return resumed;
+    throw new StockagesV2Error("PARCEL_ALREADY_PAID", 409, undefined, "recordDestinationPayment");
+  }
   const operationContext = {
     type: "STORAGE_DESTINATION_PAYMENT",
     sourceDestinationCode: input.agency,
@@ -158,6 +174,114 @@ export async function recordDestinationPayment(input: {
   return Object.freeze({
     payment: payload,
     forwardingId: parcel.forwardingId ?? null
+  });
+}
+
+async function resumePendingPaidDestination(
+  input: { trackingCode: string; agency: StorageAgency; paymentReference: string; observation: string; paymentRequestId: string; parcelId?: string },
+  parcel: Readonly<Parcel>,
+  paymentMode: string,
+  existing: PaymentOrchestrationRow | null,
+  trace?: OperationPerformanceTrace
+) {
+  if (parcel.forwardingId) return null;
+  const client = serviceClient();
+  const orchestration = existing;
+  if (!orchestration) return null;
+  if (orchestration.tracking_code !== parcel.codeColis || orchestration.agency !== input.agency) {
+    throw new StockagesV2Error("IDEMPOTENCY_CONFLICT", 409, undefined, "resumePendingPaidDestination");
+  }
+  if (orchestration.parcel_id && orchestration.parcel_id !== parcel.parcelId) {
+    throw new StockagesV2Error("IDEMPOTENCY_CONFLICT", 409, undefined, "resumePendingPaidDestination");
+  }
+  if (orchestration.state !== "PENDING" || orchestration.stockage_event_id) {
+    throw new StockagesV2Error("PAYMENT_ORCHESTRATION_PARTIAL_EFFECT", 409, undefined, "resumePendingPaidDestination");
+  }
+  const [{ data: cashRows, error: cashError }, { data: storageRows, error: storageError }] = await Promise.all([
+    client.from("cash_events").select("agency,amount,direction,metadata").eq("source_type", "PAYMENT_ENGINE").eq("source_request_id", input.paymentRequestId),
+    client.from("stockage_events").select("event_id").eq("request_id", input.paymentRequestId)
+  ]);
+  if (cashError || storageError) throw new StockagesV2Error("STORAGE_READ_FAILED", 503, undefined, "resumePendingPaidDestination");
+  if ((storageRows?.length ?? 0) !== 0 || (cashRows?.length ?? 0) > 1) {
+    throw new StockagesV2Error("PAYMENT_ORCHESTRATION_PARTIAL_EFFECT", 409, undefined, "resumePendingPaidDestination");
+  }
+  const existingCash = cashRows?.[0];
+  if (existingCash && (existingCash.agency !== input.agency || existingCash.direction !== "CREDIT" || money(Number(existingCash.amount)) !== money(Number(orchestration.paid_amount)) || existingCash.metadata?.commandFingerprint !== orchestration.command_fingerprint)) {
+    throw new StockagesV2Error("IDEMPOTENCY_CONFLICT", 409, undefined, "resumePendingPaidDestination");
+  }
+
+  const payments = await readAdminPayments(trace);
+  const canonical = payments.filter((payment) =>
+    payment.paymentRequestId?.toLowerCase() === input.paymentRequestId.toLowerCase() &&
+    normalizeTrackingCode(payment.codeColis) === parcel.codeColis &&
+    payment.destinationCode === input.agency &&
+    money(payment.montantPaye) === money(Number(orchestration.paid_amount)) &&
+    money(payment.montantAttendu ?? 0) === money(Number(orchestration.expected_amount)) &&
+    money(payment.soldeRestant ?? -1) === 0 &&
+    money(payment.poidsKg ?? 0) === money(parcel.poidsKg) &&
+    payment.agent.trim() === String(orchestration.actor_name).trim() &&
+    requiredPaymentMode(payment.modePaiement) === paymentMode
+  );
+  if (canonical.length !== 1) throw new StockagesV2Error("CANONICAL_PAYMENT_NOT_CERTIFIED", 409, undefined, "resumePendingPaidDestination");
+  const payment = canonical[0];
+  const paymentResponse = {
+    codeColis: parcel.codeColis,
+    datePaiement: payment.dateTime,
+    destinationCode: input.agency,
+    destinationNom: parcel.destinationNom,
+    montantPaye: payment.montantPaye,
+    nouveauSolde: 0,
+    nouveauTotalPaye: parcel.montantAttendu,
+    statutPaiement: "SOLDE"
+  };
+  if (!orchestration.payment_created || !orchestration.payment_response) {
+    const checkpoint = await client.rpc("checkpoint_paid_destination_payment", {
+      p_request_id: input.paymentRequestId,
+      p_command_fingerprint: orchestration.command_fingerprint,
+      p_payment_response: paymentResponse
+    });
+    if (checkpoint.error) throw new StockagesV2Error("PAYMENT_ORCHESTRATION_INCOMPLETE", 503, undefined, "checkpoint_paid_destination_payment");
+  }
+  const finalized = await client.rpc("finalize_paid_destination_orchestration", {
+    p_request_id: input.paymentRequestId,
+    p_command_fingerprint: orchestration.command_fingerprint,
+    p_business_date: payment.dateKey,
+    p_payment_mode: payment.modePaiement,
+    p_payment_reference: parcel.codeColis,
+    p_observation: payment.observation
+  });
+  if (finalized.error || finalized.data?.state !== "COMPLETED") throw new StockagesV2Error("PAYMENT_ORCHESTRATION_INCOMPLETE", 503, undefined, "finalize_paid_destination_orchestration");
+  return Object.freeze({ payment: completedReplayPayload(parcel, input.paymentRequestId), forwardingId: null });
+}
+
+type ReplayParcel = Pick<Parcel, "codeColis" | "montantAttendu">;
+type PaymentOrchestrationRow = {
+  request_id: string; command_fingerprint: string; tracking_code: string; agency: string; actor_name: string;
+  expected_amount: number | string; paid_amount: number | string; payment_created: boolean; payment_response: unknown;
+  cash_event_id: string | null; stockage_event_id: string | null; state: string; parcel_id: string | null; forwarding_id: string | null;
+};
+
+async function readPaymentOrchestration(requestId: string): Promise<PaymentOrchestrationRow | null> {
+  const { data, error } = await serviceClient().from("stockage_payment_orchestrations")
+    .select("request_id,command_fingerprint,tracking_code,agency,actor_name,expected_amount,paid_amount,payment_created,payment_response,cash_event_id,stockage_event_id,state,parcel_id,forwarding_id")
+    .eq("request_id", requestId)
+    .maybeSingle();
+  if (error) throw new StockagesV2Error("STORAGE_READ_FAILED", 503, undefined, "readPaymentOrchestration");
+  return data as PaymentOrchestrationRow | null;
+}
+
+function completedReplayPayload(parcel: ReplayParcel, paymentRequestId: string) {
+  return Object.freeze({
+    success: true,
+    codeColis: parcel.codeColis,
+    montantPaye: parcel.montantAttendu,
+    nouveauTotalPaye: parcel.montantAttendu,
+    nouveauSolde: 0,
+    statutPaiement: "SOLDE",
+    cashRecorded: true,
+    cashStatus: "RECORDED",
+    paymentRequestId,
+    replayed: true
   });
 }
 
