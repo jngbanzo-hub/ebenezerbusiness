@@ -13,6 +13,7 @@ import {
   type RequestIdAttempt
 } from "@/features/agent/request-id-attempt";
 import { logOperationPerformance } from "@/features/agent/operation-performance-client";
+import { expenseSuccessDetail } from "@/features/agent/expense-success-message";
 import { EXPENSE_CATEGORIES } from "@/features/expenses/categories";
 
 const CURRENCIES = ["USD", "FCFA", "CDF"] as const;
@@ -68,6 +69,8 @@ export function AgentExpenseForm() {
   const [result, setResult] = useState<{
     type: "success" | "error";
     text: string;
+    detail?: string;
+    note?: string;
   } | null>(null);
 
   function updateValue<Key extends keyof ExpenseFormValues>(
@@ -93,6 +96,12 @@ export function AgentExpenseForm() {
       });
       return;
     }
+
+    const submittedExpense = Object.freeze({
+      category: values.categorie,
+      amount,
+      currency: values.devise
+    });
 
     requestLockRef.current = true;
     const performanceStartedAt = performance.now();
@@ -148,12 +157,16 @@ export function AgentExpenseForm() {
           payload.code === "DEPENSE_DEJA_ENREGISTREE";
         setResult({
           type: "success",
-          text:
+          text: alreadyRecorded
+            ? "Cette dépense avait déjà été enregistrée."
+            : "Dépense enregistrée avec succès",
+          detail: alreadyRecorded
+            ? undefined
+            : expenseSuccessDetail(submittedExpense),
+          note:
             payload.cashStatus === "ACCOUNT_NOT_ACTIVE"
-              ? "Dépense enregistrée avec succès. La caisse de l’agence n’est pas encore ouverte ; aucun débit de caisse n’a été créé."
-              : alreadyRecorded
-                ? "Cette dépense avait déjà été enregistrée."
-                : "Dépense enregistrée avec succès.",
+              ? "La caisse de l’agence n’est pas encore ouverte ; aucun débit de caisse n’a été créé."
+              : undefined
         });
         attemptRef.current = null;
         setValues(INITIAL_VALUES);
@@ -357,6 +370,12 @@ export function AgentExpenseForm() {
                 }`}
               >
                 <p>{result.text}</p>
+                {result.detail ? (
+                  <p className="mt-1 font-medium">{result.detail}</p>
+                ) : null}
+                {result.note ? (
+                  <p className="mt-2 text-xs">{result.note}</p>
+                ) : null}
               </div>
             ) : null}
           </GlassPanel>
