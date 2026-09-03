@@ -1793,7 +1793,22 @@ function enregistrerDepenseSecurisee_(acteur, donnees) {
   const performanceDepenses = {
     debut: Date.now(),
     etapes: {},
-    resultat: 'ERREUR'
+    resultat: 'ERROR',
+    cheminStatistiques: null,
+    raisonFallback: null,
+    appelsSheets: {
+      textFinder: 0,
+      getRange: 0,
+      getValues: 0,
+      setValue: 0,
+      setValues: 0,
+      insertRows: 0,
+      clear: 0,
+      formatage: 0,
+      autoResize: 0,
+      flush: 0,
+      autres: 0
+    }
   };
 
   try {
@@ -1807,13 +1822,15 @@ function enregistrerDepenseSecurisee_(acteur, donnees) {
 
     const classeur =
       SpreadsheetApp.getActiveSpreadsheet();
+    compterAppelDepenses_(performanceDepenses, 'autres');
     const existante = mesurerEtapeDepenses_(
       performanceDepenses,
       'recherche_idempotence',
       function() {
         return trouverDepenseParId_(
           classeur,
-          expenseRequestId
+          expenseRequestId,
+          performanceDepenses
         );
       }
     );
@@ -1829,11 +1846,12 @@ function enregistrerDepenseSecurisee_(acteur, donnees) {
         );
       }
 
-      performanceDepenses.resultat = 'REPLAY';
+      performanceDepenses.resultat = 'SUCCESS';
       return {
         success: true,
         code: 'DEPENSE_DEJA_ENREGISTREE',
-        expenseRequestId: expenseRequestId
+        expenseRequestId: expenseRequestId,
+        performanceTelemetry: performanceDepenses
       };
     }
 
@@ -1870,6 +1888,8 @@ function enregistrerDepenseSecurisee_(acteur, donnees) {
       performanceDepenses,
       'ecriture_depense',
       function() {
+        compterAppelDepenses_(performanceDepenses, 'getRange');
+        compterAppelDepenses_(performanceDepenses, 'setValues');
         feuille
           .getRange(
             feuille.getLastRow() + 1,
@@ -1900,7 +1920,7 @@ function enregistrerDepenseSecurisee_(acteur, donnees) {
           motif: '',
           resultat: 'SUCCES',
           referenceTechnique: expenseRequestId
-        });
+        }, performanceDepenses);
       }
     );
 
@@ -1911,16 +1931,18 @@ function enregistrerDepenseSecurisee_(acteur, donnees) {
         mettreAJourStatistiquesDepensesCibleesSousVerrou_(
           classeur,
           ligne,
-          feuilleAgence
+          feuilleAgence,
+          performanceDepenses
         );
       }
     );
 
-    performanceDepenses.resultat = 'SUCCES';
+    performanceDepenses.resultat = 'SUCCESS';
     return {
       success: true,
       code: 'DEPENSE_ENREGISTREE',
-      expenseRequestId: expenseRequestId
+      expenseRequestId: expenseRequestId,
+      performanceTelemetry: performanceDepenses
     };
   } finally {
     journaliserPerformanceDepenses_(performanceDepenses);
@@ -1938,12 +1960,35 @@ function mesurerEtapeDepenses_(performanceDepenses, nom, action) {
 }
 
 function journaliserPerformanceDepenses_(performanceDepenses) {
+  performanceDepenses.fin = Date.now();
+  performanceDepenses.startedAt = new Date(
+    performanceDepenses.debut
+  ).toISOString();
+  performanceDepenses.finishedAt = new Date(
+    performanceDepenses.fin
+  ).toISOString();
+  performanceDepenses.totalMs =
+    performanceDepenses.fin - performanceDepenses.debut;
+  performanceDepenses.stepsMs = performanceDepenses.etapes;
+  performanceDepenses.statisticsPath =
+    performanceDepenses.cheminStatistiques;
+  performanceDepenses.fallbackReason =
+    performanceDepenses.raisonFallback;
+  performanceDepenses.sheetCalls =
+    performanceDepenses.appelsSheets;
   console.info(JSON.stringify({
     type: 'depenses_apps_script_performance',
     resultat: performanceDepenses.resultat,
     durationsMs: performanceDepenses.etapes,
     totalMs: Date.now() - performanceDepenses.debut
   }));
+}
+
+function compterAppelDepenses_(performanceDepenses, type, nombre) {
+  if (!performanceDepenses || !performanceDepenses.appelsSheets) {
+    return;
+  }
+  performanceDepenses.appelsSheets[type] += nombre || 1;
 }
 
 /**
@@ -2573,14 +2618,26 @@ function recalculerStatistiquesDepensesSousVerrou_(
 function mettreAJourStatistiquesDepensesCibleesSousVerrou_(
   classeur,
   ligne,
-  nomAgence
+  nomAgence,
+  performanceDepenses
 ) {
   const feuilleStatistiques =
     creerOuPreparerFeuilleStatistiques_(classeur);
-  const resume =
-    lireResumeStatistiquesDepenses_(feuilleStatistiques);
+  const resume = mesurerEtapeDepenses_(
+    performanceDepenses,
+    'lecture_validation_statistiques',
+    function() {
+      return lireResumeStatistiquesDepenses_(
+        feuilleStatistiques,
+        performanceDepenses
+      );
+    }
+  );
 
   if (!resume) {
+    performanceDepenses.cheminStatistiques = 'FULL_FALLBACK';
+    performanceDepenses.raisonFallback =
+      'RESUME_ABSENT_OU_STRUCTURE_INVALIDE';
     recalculerStatistiquesDepensesSousVerrou_(classeur);
     return;
   }
@@ -2588,33 +2645,46 @@ function mettreAJourStatistiquesDepensesCibleesSousVerrou_(
   const misesAJour = preparerMisesAJourStatistiquesDepenses_(
     ligne,
     nomAgence,
-    resume
+    resume,
+    performanceDepenses
   );
 
   if (!misesAJour) {
+    performanceDepenses.cheminStatistiques = 'FULL_FALLBACK';
     recalculerStatistiquesDepensesSousVerrou_(classeur);
     return;
   }
 
-  misesAJour.forEach(function(miseAJour) {
-    feuilleStatistiques
-      .getRange(miseAJour.ligne, 5, 1, 2)
-      .setValues([[
-        miseAJour.total,
-        miseAJour.nombreOperations
-      ]]);
-  });
+  performanceDepenses.cheminStatistiques = 'INCREMENTAL';
+  mesurerEtapeDepenses_(
+    performanceDepenses,
+    'mise_a_jour_statistiques',
+    function() {
+      misesAJour.forEach(function(miseAJour) {
+        compterAppelDepenses_(performanceDepenses, 'getRange');
+        compterAppelDepenses_(performanceDepenses, 'setValues');
+        feuilleStatistiques
+          .getRange(miseAJour.ligne, 5, 1, 2)
+          .setValues([[
+            miseAJour.total,
+            miseAJour.nombreOperations
+          ]]);
+      });
 
-  feuilleStatistiques
-    .getRange('A2:F2')
-    .setValue(
-      'Dernière actualisation : ' +
-      Utilities.formatDate(
-        new Date(),
-        CONFIG_DEPENSES.fuseauHoraire,
-        'dd/MM/yyyy HH:mm:ss'
-      )
-    );
+      compterAppelDepenses_(performanceDepenses, 'getRange');
+      compterAppelDepenses_(performanceDepenses, 'setValue');
+      feuilleStatistiques
+        .getRange('A2:F2')
+        .setValue(
+          'Dernière actualisation : ' +
+          Utilities.formatDate(
+            new Date(),
+            CONFIG_DEPENSES.fuseauHoraire,
+            'dd/MM/yyyy HH:mm:ss'
+          )
+        );
+    }
+  );
 }
 
 /**
@@ -2625,7 +2695,8 @@ function mettreAJourStatistiquesDepensesCibleesSousVerrou_(
 function preparerMisesAJourStatistiquesDepenses_(
   ligne,
   nomAgence,
-  resume
+  resume,
+  performanceDepenses
 ) {
   const date = analyserDateDepense_(ligne[0]);
   const montant = analyserMontantDepense_(ligne[5]);
@@ -2633,11 +2704,21 @@ function preparerMisesAJourStatistiquesDepenses_(
   const statut = normaliserTexte_(ligne[11]);
 
   if (
-    !date ||
-    montant === null ||
-    !CONFIG_DEPENSES.devises.includes(devise) ||
-    statut !== 'ACTIVE'
+    !date
   ) {
+    performanceDepenses.raisonFallback = 'DATE_INVALIDE';
+    return null;
+  }
+  if (montant === null) {
+    performanceDepenses.raisonFallback = 'MONTANT_INVALIDE';
+    return null;
+  }
+  if (!CONFIG_DEPENSES.devises.includes(devise)) {
+    performanceDepenses.raisonFallback = 'DEVISE_INVALIDE';
+    return null;
+  }
+  if (statut !== 'ACTIVE') {
+    performanceDepenses.raisonFallback = 'STATUT_INVALIDE';
     return null;
   }
 
@@ -2667,11 +2748,19 @@ function preparerMisesAJourStatistiquesDepenses_(
     const entree = resume.lignesParCle.get(cle);
 
     if (
-      !entree ||
+      !entree
+    ) {
+      performanceDepenses.raisonFallback = type === 'JOURNALIER'
+        ? 'AGREGAT_JOURNALIER_ABSENT'
+        : 'AGREGAT_MENSUEL_ABSENT';
+      return null;
+    }
+    if (
       !Number.isFinite(entree.total) ||
       !Number.isInteger(entree.nombreOperations) ||
       entree.nombreOperations < 0
     ) {
+      performanceDepenses.raisonFallback = 'AGREGAT_INVALIDE';
       return null;
     }
 
@@ -2729,11 +2818,13 @@ function normaliserPeriodeStatistique_(valeur, type) {
  * Relit uniquement le petit résumé matérialisé. Toute incohérence force le
  * repli vers le recalcul intégral afin de ne jamais propager un agrégat douteux.
  */
-function lireResumeStatistiquesDepenses_(feuille) {
+function lireResumeStatistiquesDepenses_(feuille, performanceDepenses) {
   if (feuille.getLastRow() < 8) {
     return null;
   }
 
+  compterAppelDepenses_(performanceDepenses, 'getRange');
+  compterAppelDepenses_(performanceDepenses, 'getValues');
   const lignes = feuille
     .getRange(5, 1, feuille.getLastRow() - 4, 6)
     .getValues();
@@ -2850,7 +2941,8 @@ function lireResumeStatistiquesDepenses_(feuille) {
 
 function trouverDepenseParId_(
   classeur,
-  expenseRequestId
+  expenseRequestId,
+  performanceDepenses
 ) {
   for (
     let index = 0;
@@ -2866,6 +2958,8 @@ function trouverDepenseParId_(
       continue;
     }
 
+    compterAppelDepenses_(performanceDepenses, 'getRange');
+    compterAppelDepenses_(performanceDepenses, 'textFinder');
     const cellule = feuille
       .getRange(2, 2, feuille.getLastRow() - 1, 1)
       .createTextFinder(expenseRequestId)
@@ -2876,6 +2970,8 @@ function trouverDepenseParId_(
 
     if (cellule) {
       const numeroLigne = cellule.getRow();
+      compterAppelDepenses_(performanceDepenses, 'getRange');
+      compterAppelDepenses_(performanceDepenses, 'getValues');
       return {
         feuille: feuille,
         ligne: numeroLigne,
@@ -2934,7 +3030,7 @@ function trouverCorrectionParId_(
   return null;
 }
 
-function ajouterAuditDepenses_(classeur, evenement) {
+function ajouterAuditDepenses_(classeur, evenement, performanceDepenses) {
   const feuille = exigerFeuilleDepenses_(
     classeur,
     CONFIG_DEPENSES.feuilleAudit
@@ -2975,6 +3071,8 @@ function ajouterAuditDepenses_(classeur, evenement) {
     evenement.referenceTechnique || ''
   ];
 
+  compterAppelDepenses_(performanceDepenses, 'getRange');
+  compterAppelDepenses_(performanceDepenses, 'setValues');
   feuille
     .getRange(
       feuille.getLastRow() + 1,

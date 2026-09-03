@@ -105,6 +105,7 @@ export function AgentExpenseForm() {
 
     requestLockRef.current = true;
     const performanceStartedAt = performance.now();
+    let fetchStartedAt = performanceStartedAt;
     setIsSubmitting(true);
     setResult(null);
 
@@ -123,6 +124,7 @@ export function AgentExpenseForm() {
       const attempt = getOrCreateRequestIdAttempt(attemptRef.current, fingerprint);
       attemptRef.current = attempt;
 
+      fetchStartedAt = performance.now();
       const response = await fetch("/api/agent/expenses", {
         method: "POST",
         headers: {
@@ -143,6 +145,7 @@ export function AgentExpenseForm() {
           }
         })
       });
+      const responseReceivedAt = performance.now();
       const payload = (await response.json().catch(() => null)) as
         | ExpenseResult
         | null;
@@ -155,6 +158,7 @@ export function AgentExpenseForm() {
         logOperationPerformance({ operation: "depense", requestId: attempt.requestId, agency: "agent", startedAt: performanceStartedAt, response, result: "success" });
         const alreadyRecorded =
           payload.code === "DEPENSE_DEJA_ENREGISTREE";
+        const setResultAt = performance.now();
         setResult({
           type: "success",
           text: alreadyRecorded
@@ -170,6 +174,22 @@ export function AgentExpenseForm() {
         });
         attemptRef.current = null;
         setValues(INITIAL_VALUES);
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          const renderedAt = performance.now();
+          void fetch("/api/agent/expenses/telemetry", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ expenseRequestId: attempt.requestId, metrics: {
+              clickToFetch: fetchStartedAt - performanceStartedAt,
+              fetchToResponse: responseReceivedAt - fetchStartedAt,
+              responseToSetResult: setResultAt - responseReceivedAt,
+              setResultToRendered: renderedAt - setResultAt,
+              clickToRendered: renderedAt - performanceStartedAt
+            } }),
+            cache: "no-store",
+            keepalive: true
+          }).catch(() => undefined);
+        }));
         return;
       }
 

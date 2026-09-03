@@ -6,12 +6,16 @@ import {
   forwardAgentExpenseRequest
 } from "@/server/agent-expenses-apps-script";
 import { recordInternalNotification } from "@/server/internal-notifications";
+import { persistExpensePerformanceTelemetry } from "@/server/expense-performance-telemetry";
 import { OperationPerformanceTrace } from "@/server/operation-performance";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  const serverStartedAt = new Date().toISOString();
+  let telemetryRequestId = "unknown";
+  let telemetryAgency = "UNKNOWN";
   let trace: OperationPerformanceTrace | null = null;
   try {
     const authStartedAt = performance.now();
@@ -29,6 +33,8 @@ export async function POST(request: Request) {
     const command = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {};
     const details = command.donnees && typeof command.donnees === "object" && !Array.isArray(command.donnees) ? command.donnees as Record<string, unknown> : {};
     trace = new OperationPerformanceTrace("depense", String(details.expenseRequestId ?? "unknown"), authorization.identity.site, authStartedAt);
+    telemetryRequestId = String(details.expenseRequestId ?? "unknown");
+    telemetryAgency = authorization.identity.site;
     trace.add("auth_session", performance.now() - authStartedAt);
     const result = await forwardAgentExpenseRequest(
       authorization.identity,
@@ -37,14 +43,39 @@ export async function POST(request: Request) {
     );
     const response = result && typeof result === "object" && !Array.isArray(result) ? result as Record<string, unknown> : {};
     if (command.action === "ENREGISTRER_DEPENSE" && response.replayed !== true && typeof details.expenseRequestId === "string") await trace.measure("notification", () => recordInternalNotification({ eventKey: `EXPENSE:${details.expenseRequestId}`, agency: authorization.identity.site, type: "EXPENSE", title: "Dépense enregistrée", message: `${String(details.categorie ?? "Dépense")} — ${Number(details.montant ?? 0).toFixed(2)} ${String(details.devise ?? "")} — ${authorization.identity.nom}`, actorUserId: authorization.identity.userId, actorName: authorization.identity.nom }).catch(() => undefined));
+    const telemetryStartedAt = performance.now();
+    await persistExpensePerformanceTelemetry({
+      requestId: String(details.expenseRequestId ?? "unknown"),
+      agency: authorization.identity.site,
+      result: "SUCCESS",
+      serverStartedAt,
+      serverFinishedAt: new Date().toISOString(),
+      serverDurationsMs: trace.snapshot(),
+      appsScript: isRecord(response.performanceTelemetry) ? response.performanceTelemetry : null,
+      telemetryCostMs: performance.now() - telemetryStartedAt
+    }).catch(() => false);
+    trace.add("telemetry", performance.now() - telemetryStartedAt);
+    const publicResult = { ...response };
+    delete publicResult.performanceTelemetry;
     const responseStartedAt = performance.now();
-    const nextResponse = NextResponse.json(result, { headers: privateNoStoreHeaders() });
+    const nextResponse = NextResponse.json(publicResult, { headers: privateNoStoreHeaders() });
     trace.add("reponse_serveur", performance.now() - responseStartedAt);
     trace.complete("success");
     nextResponse.headers.set("Server-Timing", trace.serverTiming());
     return nextResponse;
   } catch (error) {
     trace?.complete("error");
+    if (trace) {
+      await persistExpensePerformanceTelemetry({
+        requestId: telemetryRequestId,
+        agency: telemetryAgency,
+        result: "ERROR",
+        serverStartedAt,
+        serverFinishedAt: new Date().toISOString(),
+        serverDurationsMs: trace.snapshot(),
+        appsScript: null
+      }).catch(() => false);
+    }
     if (error instanceof AgentExpenseRequestError) {
       return jsonError(error.message, error.status);
     }
@@ -54,6 +85,10 @@ export async function POST(request: Request) {
       503
     );
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function jsonError(message: string, status: number) {

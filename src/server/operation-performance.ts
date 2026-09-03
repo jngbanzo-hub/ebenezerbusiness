@@ -60,6 +60,10 @@ export class OperationPerformanceTrace {
       .map(([step, duration]) => `${safeMetric(step)};dur=${duration.toFixed(1)}`)
       .join(", ");
   }
+
+  snapshot() {
+    return Object.freeze(Object.fromEntries(this.durations));
+  }
 }
 
 function finiteMilliseconds(value: number) {
