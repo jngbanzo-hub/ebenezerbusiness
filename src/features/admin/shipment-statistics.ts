@@ -78,8 +78,8 @@ function summarizeShipments(shipments: ShipmentStatisticRow[]): ShipmentStatisti
     if (row.parcelCodes.length) {
       for (const code of row.parcelCodes) {
         detailedCodes.add(code);
-        if (row.company === "ETHIOPIAN" && row.destination === "LSHI") {
-          destinationCodes[classifyEthiopianLshiParcel(code)].add(code);
+        if (usesLshiKlzBreakdown(row)) {
+          destinationCodes[classifyLshiKlzParcel(code)].add(code);
         } else if (["ASKY", "DHL"].includes(row.company) && row.destination === "FIH") {
           destinationCodes.fih.add(code);
         }
@@ -87,12 +87,12 @@ function summarizeShipments(shipments: ShipmentStatisticRow[]): ShipmentStatisti
     } else {
       const count = row.parcelCount ?? 0;
       fallbackParcels += count;
-      if (row.company === "ETHIOPIAN" && row.destination === "LSHI") fallbackDestinationParcels.lshi += count;
+      if (usesLshiKlzBreakdown(row)) fallbackDestinationParcels.lshi += count;
       if (["ASKY", "DHL"].includes(row.company) && row.destination === "FIH") fallbackDestinationParcels.fih += count;
     }
-    if (row.company === "ETHIOPIAN" && row.destination === "LSHI") {
+    if (usesLshiKlzBreakdown(row)) {
       for (const parcel of row.parcelDetails ?? []) {
-        destinationManifestWeightKg[classifyEthiopianLshiParcel(parcel.code)] += parcel.weightKg;
+        destinationManifestWeightKg[classifyLshiKlzParcel(parcel.code)] += parcel.weightKg;
       }
     }
   }
@@ -112,7 +112,11 @@ function summarizeShipments(shipments: ShipmentStatisticRow[]): ShipmentStatisti
   };
 }
 
-function classifyEthiopianLshiParcel(code: string) {
+function usesLshiKlzBreakdown(row: ShipmentStatisticRow) {
+  return row.destination === "LSHI" && ["ETHIOPIAN", "DHL"].includes(row.company);
+}
+
+function classifyLshiKlzParcel(code: string) {
   return code.endsWith("KLZ") ? "klz" as const : "lshi" as const;
 }
 

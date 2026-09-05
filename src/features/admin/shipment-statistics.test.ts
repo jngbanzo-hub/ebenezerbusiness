@@ -120,3 +120,25 @@ test("recalcule les poids après les filtres date, compagnie, statut et recherch
   const filtered = filterShipmentStatistics(parsed.shipments, { from: "2026-08-01", to: "2026-08-01", company: "ETHIOPIAN", destination: "LSHI", status: "ARRIVE", arrival: "ARRIVED", search: "GROUPAGE A" });
   assert.deepEqual(filtered.totals.destinationManifestWeightKg, { lshi: 3, klz: 2 });
 });
+
+test("ventile DHL vers LSHI sans confondre AT102526 et AT102426", () => {
+  const lshi = [
+    ...Array.from({ length: 131 }, (_, index) => `DL${String(index + 1).padStart(5, "0")}26 : 5kgs`),
+    "DL9999926 : 59kgs",
+    "AT102526 : 6kgs",
+    "AT102426 : 10kgs"
+  ];
+  const klz = [
+    ...Array.from({ length: 13 }, (_, index) => `DK${String(index + 1).padStart(5, "0")}26klz : 4kgs`),
+    "DK9999926klz : 10kgs"
+  ];
+  const filtered = filterShipmentStatistics(parseShipmentStatistics([
+    ["Date"],
+    ["31/08/2026", "DHL", "LSHI", 23, 775, [...lshi, ...klz].join("\n"), 0, 0, "792 kg", "148 COLIS"]
+  ]).shipments, { from: "2026-08-01", to: "2026-08-31", company: "DHL", destination: "LSHI" });
+
+  assert.equal(filtered.totals.parcels, 148);
+  assert.deepEqual(filtered.totals.destinationParcels, { fih: 0, lshi: 134, klz: 14 });
+  assert.deepEqual(filtered.totals.destinationManifestWeightKg, { lshi: 730, klz: 62 });
+  assert.equal(filtered.totals.destinationManifestWeightKg.lshi + filtered.totals.destinationManifestWeightKg.klz, filtered.totals.manifestWeightKg);
+});
