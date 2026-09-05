@@ -70,3 +70,53 @@ test("classe tous les colis ASKY et DHL vers FIH", () => {
   assert.equal(dhl.totals.destinationParcels.fih, 1);
   assert.equal(parsed.totals.parcels, 3);
 });
+
+test("reproduit les poids LSHI et KLZ certifiés pour août 2026", () => {
+  const lshi = [
+    ...Array.from({ length: 952 }, (_, index) => `AT${String(index + 1).padStart(5, "0")}26 : 5kgs`),
+    "AT9999926 : 48kgs"
+  ];
+  const klz = [
+    ...Array.from({ length: 149 }, (_, index) => `KZ${String(index + 1).padStart(5, "0")}26klz : 5kgs`),
+    "KZ9999926klz : 31kgs",
+    "KZ9999926klz : 31kgs"
+  ];
+  const filtered = filterShipmentStatistics(parseShipmentStatistics([
+    ["Date"],
+    ["15/08/2026", "ETHIOPIAN", "LSHI", 158, 5457, [...lshi, ...klz].join("\n"), 0, 0, "5615 kg", "1103 COLIS"]
+  ]).shipments, { from: "2026-08-01", to: "2026-08-31", company: "ETHIOPIAN", destination: "LSHI" });
+
+  assert.equal(filtered.totals.weightKg, 5457);
+  assert.equal(filtered.totals.manifestWeightKg, 5615);
+  assert.deepEqual(filtered.totals.destinationParcels, { fih: 0, lshi: 953, klz: 150 });
+  assert.deepEqual(filtered.totals.destinationManifestWeightKg, { lshi: 4808, klz: 807 });
+  assert.equal(filtered.totals.destinationManifestWeightKg.lshi + filtered.totals.destinationManifestWeightKg.klz, filtered.totals.manifestWeightKg);
+});
+
+test("additionne les occurrences de poids sans casser la déduplication des colis", () => {
+  const totals = parseShipmentStatistics([
+    ["Date"],
+    ["15/08/2026", "ETHIOPIAN", "LSHI", 1, 8, "AT10026klz : 3kgs\nAT10026klz : 5kgs", 0, 0, "8 kg", "1 COLIS"]
+  ]).totals;
+  assert.equal(totals.destinationParcels.klz, 1);
+  assert.equal(totals.destinationManifestWeightKg.klz, 8);
+});
+
+test("ignore les détails sans poids valide et retourne zéro sans résultat", () => {
+  const malformed = parseShipmentStatistics([
+    ["Date"],
+    ["15/08/2026", "ETHIOPIAN", "LSHI", 1, 0, "AT10026 : poids inconnu\nAT10126klz : -3kgs", 0, 0, "", "2 COLIS"]
+  ]);
+  assert.deepEqual(malformed.totals.destinationManifestWeightKg, { lshi: 0, klz: 0 });
+  assert.deepEqual(filterShipmentStatistics(malformed.shipments, { search: "ABSENT" }).totals.destinationManifestWeightKg, { lshi: 0, klz: 0 });
+});
+
+test("recalcule les poids après les filtres date, compagnie, statut et recherche", () => {
+  const parsed = parseShipmentStatistics([
+    ["Date"],
+    ["01/08/2026", "ETHIOPIAN", "LSHI", 1, 5, "GROUPAGE A\nAT10026 : 3kgs\nAT10126klz : 2kgs", 0, 0, "5 kg", "2 COLIS", "Arrivé", "", "GROUPAGE A"],
+    ["02/08/2026", "ETHIOPIAN", "LSHI", 1, 7, "GROUPAGE B\nAT10226 : 7kgs", 0, 0, "7 kg", "1 COLIS", "En Attente", "", ""]
+  ]);
+  const filtered = filterShipmentStatistics(parsed.shipments, { from: "2026-08-01", to: "2026-08-01", company: "ETHIOPIAN", destination: "LSHI", status: "ARRIVE", arrival: "ARRIVED", search: "GROUPAGE A" });
+  assert.deepEqual(filtered.totals.destinationManifestWeightKg, { lshi: 3, klz: 2 });
+});

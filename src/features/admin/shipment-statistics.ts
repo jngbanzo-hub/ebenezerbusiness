@@ -6,6 +6,7 @@ export type ShipmentStatisticRow = {
   groupageWeights: string; manifestTotal: string; status: string; arrivalDate: string;
   arrivedGroupages: string; klzPackages: string; parcelCount: number | null;
   manifestWeightKg: number; parcelCodes: string[];
+  parcelDetails?: Array<{ code: string; weightKg: number }>;
 };
 
 export type ShipmentStatistics = {
@@ -14,6 +15,7 @@ export type ShipmentStatistics = {
     shipments: number; groupages: number; weightKg: number; manifestWeightKg: number;
     amountUsd: number; parcels: number;
     destinationParcels: { fih: number; lshi: number; klz: number };
+    destinationManifestWeightKg: { lshi: number; klz: number };
   };
   byCompany: Array<{ label: string; shipments: number; weightKg: number }>;
   byDestination: Array<{ label: string; shipments: number; weightKg: number }>;
@@ -42,7 +44,8 @@ export function parseShipmentStatistics(rows: unknown[][]): ShipmentStatistics {
       klzPackages: text(row[13]),
       parcelCount: parseParcelCount(row[9], row[13]),
       manifestWeightKg: parseManifestWeight(row[8]),
-      parcelCodes: parseParcelCodes(row[5])
+      parcelCodes: parseParcelCodes(row[5]),
+      parcelDetails: parseParcelDetails(row[5])
     } satisfies ShipmentStatisticRow];
   });
   return summarizeShipments(shipments);
@@ -70,12 +73,13 @@ function summarizeShipments(shipments: ShipmentStatisticRow[]): ShipmentStatisti
   const destinationCodes = { fih: new Set<string>(), lshi: new Set<string>(), klz: new Set<string>() };
   let fallbackParcels = 0;
   const fallbackDestinationParcels = { fih: 0, lshi: 0, klz: 0 };
+  const destinationManifestWeightKg = { lshi: 0, klz: 0 };
   for (const row of shipments) {
     if (row.parcelCodes.length) {
       for (const code of row.parcelCodes) {
         detailedCodes.add(code);
         if (row.company === "ETHIOPIAN" && row.destination === "LSHI") {
-          destinationCodes[code.endsWith("KLZ") ? "klz" : "lshi"].add(code);
+          destinationCodes[classifyEthiopianLshiParcel(code)].add(code);
         } else if (["ASKY", "DHL"].includes(row.company) && row.destination === "FIH") {
           destinationCodes.fih.add(code);
         }
@@ -85,6 +89,11 @@ function summarizeShipments(shipments: ShipmentStatisticRow[]): ShipmentStatisti
       fallbackParcels += count;
       if (row.company === "ETHIOPIAN" && row.destination === "LSHI") fallbackDestinationParcels.lshi += count;
       if (["ASKY", "DHL"].includes(row.company) && row.destination === "FIH") fallbackDestinationParcels.fih += count;
+    }
+    if (row.company === "ETHIOPIAN" && row.destination === "LSHI") {
+      for (const parcel of row.parcelDetails ?? []) {
+        destinationManifestWeightKg[classifyEthiopianLshiParcel(parcel.code)] += parcel.weightKg;
+      }
     }
   }
   return {
@@ -96,10 +105,15 @@ function summarizeShipments(shipments: ShipmentStatisticRow[]): ShipmentStatisti
         fih: destinationCodes.fih.size + fallbackDestinationParcels.fih,
         lshi: destinationCodes.lshi.size + fallbackDestinationParcels.lshi,
         klz: destinationCodes.klz.size + fallbackDestinationParcels.klz
-      }
+      },
+      destinationManifestWeightKg
     }),
     byCompany: aggregate("company"), byDestination: aggregate("destination")
   };
+}
+
+function classifyEthiopianLshiParcel(code: string) {
+  return code.endsWith("KLZ") ? "klz" as const : "lshi" as const;
 }
 
 function text(value: unknown) { return typeof value === "string" ? value.trim() : String(value ?? "").trim(); }
@@ -119,5 +133,16 @@ function parseManifestWeight(value: unknown) {
 function parseParcelCodes(value: unknown) {
   const matches = text(value).toUpperCase().match(/[A-Z]{1,10}[ \t]*-?[ \t]*\d{2,}(?:[ \t]*[A-Z]{1,5})?/g) ?? [];
   return Array.from(new Set(matches.map((code) => code.replace(/[^A-Z0-9]/g, "")).filter((code) => !/^(?:GROUPAGE|GRP)\d+$/.test(code))));
+}
+function parseParcelDetails(value: unknown) {
+  const raw = text(value).toUpperCase();
+  const pattern = /\b([A-Z]{1,10}[ \t]*-?[ \t]*\d{2,}(?:[ \t]*[A-Z]{1,5})?)\s*:\s*(-?\d+(?:[.,]\d+)?)\s*(?:KGS?|KILOGRAMMES?)\b/g;
+  return Array.from(raw.matchAll(pattern)).flatMap((match) => {
+    const code = match[1].replace(/[^A-Z0-9]/g, "");
+    const weightKg = Number(match[2].replace(",", "."));
+    return code && !/^(?:GROUPAGE|GRP)\d+$/.test(code) && Number.isFinite(weightKg) && weightKg > 0
+      ? [{ code, weightKg }]
+      : [];
+  });
 }
 function normalize(value: unknown) { return text(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim().replace(/\s+/g, " "); }
