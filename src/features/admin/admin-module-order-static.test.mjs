@@ -16,7 +16,8 @@ const expected = [
   "Statistiques du manifeste",
   "Statistiques des expéditions",
   "SUIVI DES EXPÉDITIONS",
-  "Gestion des associations QR"
+    "Gestion des associations QR"
+    ,"Bilan"
 ];
 
 test("les cartes Admin suivent exactement l’ordre UX demandé", () => {

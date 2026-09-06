@@ -580,6 +580,7 @@ const ADMIN_MODULES = [
   ,{ title: "Statistiques des expéditions", description: "Consultez les expéditions, groupages, compagnies et destinations.", href: "/admin/statistiques-expeditions", icon: Send }
   ,{ title: "SUIVI DES EXPÉDITIONS", description: "Consultez et mettez à jour le statut des groupages.", href: "/admin/suivi-expeditions", icon: Send }
   ,{ title: "Gestion des associations QR", description: "Recherchez, auditez, corrigez ou révoquez exceptionnellement un QR.", href: "/admin/qr-associations", icon: QrCode }
+  ,{ title: "Bilan", description: "Consultez les cohortes, périodes, charges, trésorerie et résultats certifiables en lecture seule.", href: "/admin/bilan", icon: BarChart3 }
 ] as const;
 
 function AdminModuleGrid() {
