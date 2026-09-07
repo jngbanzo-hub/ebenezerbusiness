@@ -37,7 +37,7 @@ export function aggregatePeriodExpenses(
       add(excludedFromProfitByCategoryAndCurrency[expense.category], expense.currency, expense.amount);
       continue;
     }
-    const excludedFromProfit = isDeclarantCategory(expense.category) || isFixedCostExpenseCategory(expense.category, expense.agency);
+    const excludedFromProfit = isDeclarantCategory(expense.category) || isBonusCategory(expense.category) || isFixedCostExpenseCategory(expense.category, expense.agency);
     const profitTarget = excludedFromProfit ? excludedFromProfitByCategoryAndCurrency : deductibleOperationalByCategoryAndCurrency;
     profitTarget[expense.category] ??= {};
     add(profitTarget[expense.category], expense.currency, expense.amount);
@@ -81,6 +81,7 @@ function freezeRecord(value: Record<string, number>) { return Object.freeze({ ..
 function freezeNested(value: Record<string, Record<string, number>>) { return Object.freeze(Object.fromEntries(Object.entries(value).map(([key, totals]) => [key, freezeRecord(totals)]))); }
 function isDeclarantCategory(value: string) { return value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("fr")==="declarant"; }
 function isConnectionCategory(value: string) { return value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("fr")==="connexion"; }
+function isBonusCategory(value: string) { return value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("fr")==="prime"; }
 function expenseAgency(value: string) { const agency = value.trim().toUpperCase(); return agency === "FIH" || agency === "LSHI" || agency === "KLZ" || agency === "COO" ? agency : null; }
 function money(value: number) { return Math.round((value + Number.EPSILON) * 100) / 100; }
 function issue(type: string, source: string, reference: string, agency: string | null, cohortId: CohortId | null, impact: string): AggregatedQualityIssue { return Object.freeze({ type, source, reference, agency, cohortId, impact }); }

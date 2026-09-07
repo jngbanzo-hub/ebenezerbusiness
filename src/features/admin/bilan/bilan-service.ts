@@ -13,6 +13,8 @@ import { aggregatePeriodExpenses, calculateDirectMargin, resultOperationalPeriod
 import { calculateMonthlyFixedCosts } from "./fixed-cost-aggregations";
 import { readBilanExpenses, readBilanPayments } from "./financial-readers";
 import { readBilanManifestParcels, readBilanOfficialTransit, readBilanShipments, reconcileOfficialTransit } from "./manifest-readers";
+import { aggregateMonthlyAgentBonuses, applyMonthlyBonuses } from "./monthly-bonus-aggregations";
+import { readMonthlyAgentBonuses } from "./monthly-bonus-reader";
 import { aggregateCohortPayments, aggregatePeriodReceiptsUsd } from "./payment-aggregations";
 import { aggregateReadAnomalies } from "./quality-aggregations";
 import { calculateAgencyProfits, calculateAutomaticKlzShipmentCost, calculateCertifiedCohortRevenue, calculateRealProfit, calculateTheoreticalReceivable } from "./revenue-aggregations";
@@ -29,10 +31,11 @@ const sheetsSource: BilanRangeReader = Object.freeze({
 });
 
 export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdmin) {
-  const [fih, lshi, klz, shipmentsRead, officialRead, paymentsRead, expensesRead] = await Promise.all([
+  const [fih, lshi, klz, shipmentsRead, officialRead, paymentsRead, expensesRead, bonusRows] = await Promise.all([
     readBilanManifestParcels(sheetsSource, "FIH"), readBilanManifestParcels(sheetsSource, "LSHI"), readBilanManifestParcels(sheetsSource, "KLZ"),
     readBilanShipments(sheetsSource), readBilanOfficialTransit(sheetsSource), readBilanPayments(() => readAdminPayments()),
-    query.period ? readBilanExpenses(() => readAllExpenses(admin, query.period!)) : Promise.resolve({ rows: [], anomalies: [] } as const)
+    query.period ? readBilanExpenses(() => readAllExpenses(admin, query.period!)) : Promise.resolve({ rows: [], anomalies: [] } as const),
+    readMonthlyAgentBonuses(`${query.cohort.year}-${String(query.cohort.month).padStart(2, "0")}`)
   ]);
   if ([fih, lshi, klz, shipmentsRead, officialRead, paymentsRead, expensesRead].some((read) => read.anomalies.some((anomaly) => anomaly.code === "SOURCE_INDISPONIBLE"))) {
     throw new Error("BILAN_SOURCE_UNAVAILABLE");
@@ -67,6 +70,8 @@ export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdm
     unallocatedCostsByAgency: unallocatedDirectCostsByAgency(unallocated),
     unallocatedCostsUsd: directCostsSummary.totalUnallocatedUsd + unallocatedOperationalUsd
   });
+  const monthlyBonuses = aggregateMonthlyAgentBonuses(`${query.cohort.year}-${String(query.cohort.month).padStart(2, "0")}`, bonusRows);
+  const profitAfterBonuses = applyMonthlyBonuses(agencyProfits, monthlyBonuses);
   return deepFreeze({
     meta: {
       cohort: query.cohort.prefix, cohortId: query.cohort.id, cohortYear: query.cohort.year, cohortMonth: query.cohort.month,
@@ -92,6 +97,7 @@ export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdm
     payments: { ...payments, remainingAmount: payments.collectionRate === null ? null : round(payments.recordedExpectedAmount - payments.receivedAmount) },
     directCosts: directCostsSummary,
     fixedCosts,
+    monthlyBonuses,
     transit: { ...transit, rateUsdPerKg: 1.7, cohortAllocatedAmountUsd: cents(cohortCosts.filter((cost) => cost.kind === "TRANSIT_FIH_LSHI")), status: reconciliation.missing.length || reconciliation.ambiguous.length ? "PARTIEL" : "CERTIFIE", additionalFihProofRequired: false },
     periodExpenses: periodExpenses ? { byCategoryAndCurrency: periodExpenses.operationalByCategoryAndCurrency, byCurrency: periodExpenses.operationalByCurrency, deductibleByCategoryAndCurrency: periodExpenses.deductibleOperationalByCategoryAndCurrency, deductibleByCurrency: periodExpenses.deductibleOperationalByCurrency, deductibleByAgencyAndCurrency: periodExpenses.deductibleOperationalByAgencyAndCurrency, deductibleConnectionByAgencyAndCurrency: periodExpenses.deductibleConnectionByAgencyAndCurrency, deductibleUnallocatedByCurrency: periodExpenses.deductibleOperationalUnallocatedByCurrency, excludedFromProfitByCategoryAndCurrency: periodExpenses.excludedFromProfitByCategoryAndCurrency } : null,
     treasury: periodExpenses ? { tfBeninByCurrency: periodExpenses.tfBeninByCurrency, revenue: false, deductibleExpense: false, treasury: true, remainingToTransfer: null } : null,
@@ -100,6 +106,7 @@ export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdm
       theoreticalReceivableUsd: calculateTheoreticalReceivable(revenue.totalUsd, payments.receivedAmount),
       realProfit,
       agencyProfits,
+      profitAfterBonuses,
       RESULTAT_OPERATIONNEL_PERIODE_USD: periodExpenses && receivedPeriodUsd !== null ? resultOperationalPeriodUsd(receivedPeriodUsd, periodExpenses) : null,
       directMargin: calculateDirectMargin({ historicalRevenueUsd: null, certifiedDirectCostsUsd: cents(cohortCosts), hasUnallocatedDirectCosts: unallocated.length > 0 })
     },

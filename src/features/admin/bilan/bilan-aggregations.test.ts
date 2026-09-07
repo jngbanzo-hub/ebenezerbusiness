@@ -176,6 +176,16 @@ test("conserve Déclarant dans l’historique mais l’exclut des dépenses déd
   assert.deepEqual(result.deductibleOperationalByCategoryAndCurrency.Sacs, { USD: 20 });
 });
 
+test("conserve Prime dans l’historique/Caisse mais l’exclut du bénéfice mensuel", () => {
+  const result = aggregatePeriodExpenses([
+    expense({ sourceReference: "DEP:PRIME", category: "Prime", agency: "LSHI", amount: 100 }),
+    expense({ sourceReference: "DEP:SACS", category: "Sacs", agency: "LSHI", amount: 20 })
+  ], august);
+  assert.equal(result.operationalByCurrency.USD, 120);
+  assert.equal(result.deductibleOperationalByCurrency.USD, 20);
+  assert.deepEqual(result.excludedFromProfitByCategoryAndCurrency.Prime, { USD: 100 });
+});
+
 test("reconnaît la catégorie Declarant sans accent sans exclure les autres catégories", () => {
   const result = aggregatePeriodExpenses([
     expense({ sourceReference: "DEP:DECLARANT", category: "Declarant", amount: 100 }),

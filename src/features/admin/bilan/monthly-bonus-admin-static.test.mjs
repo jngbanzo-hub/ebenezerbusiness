@@ -1,0 +1,11 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+const sql=readFileSync("local-preparation/supabase/bilan/023_bilan_monthly_agent_bonuses.sql","utf8");
+const seed=readFileSync("local-preparation/supabase/bilan/023_bilan_august_2026_bonus_seed.sql","utf8");
+const route=readFileSync("src/app/api/admin/bilan/bonuses/route.ts","utf8");
+const ui=readFileSync("src/features/admin/bilan/admin-monthly-bonus-page.tsx","utf8");
+test("bénéficiaire Prime est indépendant de Auth",()=>{assert.match(sql,/auth_agent_id uuid references auth\.users\(id\) on delete set null/);assert.match(sql,/email text/);assert.doesNotMatch(sql,/agent_id uuid not null references auth\.users/);});
+test("seed août contient 12 personnes, 7 liaisons exigées et 600 USD",()=>{for(const name of ["Christian Sacre","Kiss Esda BOMEME","Trésor","Yannick","Jean Remy Ilela","Sera NGBANZO","Benedicte Ngbanzo","Paul Ngbanzo","Clever KAYEMBE","Isaac ILELA","Prisca Ilela","Maman Deborah"])assert.match(seed,new RegExp(name));assert.match(seed,/linked <> 7/);assert.match(seed,/total <> 600/);assert.doesNotMatch(seed,/@/);});
+test("API Prime exige Admin et ne touche qu'au registre dédié",()=>{assert.match(route,/authorizeAdminRequest/);assert.match(route,/export async function GET/);assert.match(route,/export async function PUT/);assert.doesNotMatch(route,/expenses|cash|stockage|forwarding/i);});
+test("interface Admin gère mois, montants et certification sans email",()=>{for(const text of ["Primes mensuelles","Prime USD","Sans compte","Certifier la Prime du mois","TOTAL EEB"])assert.match(ui,new RegExp(text));assert.doesNotMatch(ui,/email/i);});
