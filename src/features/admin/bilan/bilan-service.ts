@@ -6,13 +6,14 @@ import { readAdminPayments } from "@/server/admin-payments-sheets";
 import { readAdminExpenses } from "@/server/agent-expenses-apps-script";
 
 import { aggregateCohortActivity } from "./activity-aggregations";
+import { aggregateAirFreight } from "./air-freight-aggregations";
 import type { BilanApiQuery } from "./bilan-api-query";
 import type { AggregatedQualityIssue, CohortDirectCost } from "./bilan-aggregation-contracts";
 import type { BilanRangeRead, BilanRangeReader } from "./bilan-readers-contracts";
 import { aggregatePeriodExpenses, calculateDirectMargin, resultOperationalPeriodUsd } from "./expense-aggregations";
 import { calculateMonthlyFixedCosts } from "./fixed-cost-aggregations";
 import { readBilanExpenses, readBilanPayments } from "./financial-readers";
-import { readBilanManifestParcels, readBilanOfficialTransit, readBilanShipments, reconcileOfficialTransit } from "./manifest-readers";
+import { readBilanAirFreight, readBilanManifestParcels, readBilanOfficialTransit, readBilanShipments, reconcileOfficialTransit } from "./manifest-readers";
 import { aggregateMonthlyAgentBonuses, applyMonthlyBonuses } from "./monthly-bonus-aggregations";
 import { readMonthlyAgentBonuses } from "./monthly-bonus-reader";
 import { aggregateCohortPayments, aggregatePeriodReceiptsUsd } from "./payment-aggregations";
@@ -31,13 +32,13 @@ const sheetsSource: BilanRangeReader = Object.freeze({
 });
 
 export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdmin) {
-  const [fih, lshi, klz, shipmentsRead, officialRead, paymentsRead, expensesRead, bonusRows] = await Promise.all([
+  const [fih, lshi, klz, shipmentsRead, officialRead, airFreightRead, paymentsRead, expensesRead, bonusRows] = await Promise.all([
     readBilanManifestParcels(sheetsSource, "FIH"), readBilanManifestParcels(sheetsSource, "LSHI"), readBilanManifestParcels(sheetsSource, "KLZ"),
-    readBilanShipments(sheetsSource), readBilanOfficialTransit(sheetsSource), readBilanPayments(() => readAdminPayments()),
+    readBilanShipments(sheetsSource), readBilanOfficialTransit(sheetsSource), readBilanAirFreight(sheetsSource), readBilanPayments(() => readAdminPayments()),
     query.period ? readBilanExpenses(() => readAllExpenses(admin, query.period!)) : Promise.resolve({ rows: [], anomalies: [] } as const),
     readMonthlyAgentBonuses(`${query.cohort.year}-${String(query.cohort.month).padStart(2, "0")}`)
   ]);
-  if ([fih, lshi, klz, shipmentsRead, officialRead, paymentsRead, expensesRead].some((read) => read.anomalies.some((anomaly) => anomaly.code === "SOURCE_INDISPONIBLE"))) {
+  if ([fih, lshi, klz, shipmentsRead, officialRead, airFreightRead, paymentsRead, expensesRead].some((read) => read.anomalies.some((anomaly) => anomaly.code === "SOURCE_INDISPONIBLE"))) {
     throw new Error("BILAN_SOURCE_UNAVAILABLE");
   }
   const manifestRows = [...fih.rows, ...lshi.rows, ...klz.rows];
@@ -45,12 +46,13 @@ export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdm
   const shipment = aggregateShipmentByAgency(manifestRows, shipmentsRead.rows, query.cohort.id);
   const revenue = calculateCertifiedCohortRevenue({ FIH: shipment.FIH.registeredWeightKg, LSHI: shipment.LSHI.registeredWeightKg, KLZ: shipment.KLZ.registeredWeightKg });
   const shipmentStructure = summarizeShipmentStructure(shipmentsRead.rows, query.cohort.id);
+  const airFreight = aggregateAirFreight(airFreightRead.rows, shipmentsRead.rows, query.cohort.id);
   const payments = aggregateCohortPayments(paymentsRead.rows, query.cohort.id);
   const reconciliation = reconcileOfficialTransit(officialRead.rows, shipmentsRead.rows);
   const transit = summarizeOfficialTransit(officialRead.rows);
   const directCosts = [...calculateDeclarantDirectCosts(shipmentsRead.rows), ...calculateLshiDhlDeclarantDirectCosts(reconciliation.matches), ...calculateTransitDirectCosts(reconciliation.matches), calculateAutomaticKlzShipmentCost(shipment.KLZ.registeredWeightKg, query.cohort.id)];
   const periodExpenses = query.period ? aggregatePeriodExpenses(expensesRead.rows, query.period) : null;
-  const quality = collectQuality(query, { fih, lshi, klz, shipmentsRead, officialRead, paymentsRead, expensesRead }, activity.anomalies, shipment.qualityIssues, payments.anomalies, periodExpenses?.anomalies ?? []);
+  const quality = collectQuality(query, { fih, lshi, klz, shipmentsRead, officialRead, airFreightRead, paymentsRead, expensesRead }, activity.anomalies, shipment.qualityIssues, payments.anomalies, periodExpenses?.anomalies ?? []);
   const cohortCosts = directCosts.filter((cost) => cost.cohortId === query.cohort.id);
   const unallocated = [...directCosts.filter((cost) => cost.status === "NON IMPUTÉ"), ...(periodExpenses?.directCostsUnallocated ?? [])];
   const globalStatus = reconciliation.missing.length || reconciliation.ambiguous.length ? "PARTIEL" : "PROVISOIRE";
@@ -72,6 +74,7 @@ export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdm
   });
   const monthlyBonuses = aggregateMonthlyAgentBonuses(`${query.cohort.year}-${String(query.cohort.month).padStart(2, "0")}`, bonusRows);
   const profitAfterBonuses = applyMonthlyBonuses(agencyProfits, monthlyBonuses);
+  const finalProfit = calculateFinalProfit(profitAfterBonuses, airFreight);
   return deepFreeze({
     meta: {
       cohort: query.cohort.prefix, cohortId: query.cohort.id, cohortYear: query.cohort.year, cohortMonth: query.cohort.month,
@@ -98,6 +101,7 @@ export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdm
     directCosts: directCostsSummary,
     fixedCosts,
     monthlyBonuses,
+    airFreight,
     transit: { ...transit, rateUsdPerKg: 1.7, cohortAllocatedAmountUsd: cents(cohortCosts.filter((cost) => cost.kind === "TRANSIT_FIH_LSHI")), status: reconciliation.missing.length || reconciliation.ambiguous.length ? "PARTIEL" : "CERTIFIE", additionalFihProofRequired: false },
     periodExpenses: periodExpenses ? { byCategoryAndCurrency: periodExpenses.operationalByCategoryAndCurrency, byCurrency: periodExpenses.operationalByCurrency, deductibleByCategoryAndCurrency: periodExpenses.deductibleOperationalByCategoryAndCurrency, deductibleByCurrency: periodExpenses.deductibleOperationalByCurrency, deductibleByAgencyAndCurrency: periodExpenses.deductibleOperationalByAgencyAndCurrency, deductibleConnectionByAgencyAndCurrency: periodExpenses.deductibleConnectionByAgencyAndCurrency, deductibleUnallocatedByCurrency: periodExpenses.deductibleOperationalUnallocatedByCurrency, excludedFromProfitByCategoryAndCurrency: periodExpenses.excludedFromProfitByCategoryAndCurrency } : null,
     treasury: periodExpenses ? { tfBeninByCurrency: periodExpenses.tfBeninByCurrency, revenue: false, deductibleExpense: false, treasury: true, remainingToTransfer: null } : null,
@@ -107,11 +111,26 @@ export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdm
       realProfit,
       agencyProfits,
       profitAfterBonuses,
+      finalProfit,
       RESULTAT_OPERATIONNEL_PERIODE_USD: periodExpenses && receivedPeriodUsd !== null ? resultOperationalPeriodUsd(receivedPeriodUsd, periodExpenses) : null,
       directMargin: calculateDirectMargin({ historicalRevenueUsd: null, certifiedDirectCostsUsd: cents(cohortCosts), hasUnallocatedDirectCosts: unallocated.length > 0 })
     },
     dataQuality: quality
   });
+}
+
+function calculateFinalProfit(
+  afterBonus: ReturnType<typeof applyMonthlyBonuses>,
+  airFreight: ReturnType<typeof aggregateAirFreight>
+) {
+  const byAgency = Object.freeze(Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => [agency, Object.freeze({
+    beforeAirFreightUsd: afterBonus.byAgency[agency].afterBonusUsd,
+    airFreightUsd: airFreight.byAgency[agency],
+    amountUsd: round(afterBonus.byAgency[agency].afterBonusUsd - airFreight.byAgency[agency])
+  })])) as Record<'FIH' | 'LSHI' | 'KLZ', { beforeAirFreightUsd: number; airFreightUsd: number; amountUsd: number }>);
+  const consolidatedUsd = round(afterBonus.afterBonusUsd - airFreight.totalUsd);
+  const centralCostsUsd = round(Object.values(afterBonus.byAgency).reduce((sum, item) => sum + item.afterBonusUsd, 0) - afterBonus.afterBonusUsd);
+  return Object.freeze({ status: airFreight.status, byAgency, consolidatedUsd, reconciliationDifferenceUsd: round(consolidatedUsd - (Object.values(byAgency).reduce((sum, item) => sum + item.amountUsd, 0) - centralCostsUsd)) });
 }
 
 async function readAllExpenses(admin: AuthorizedAdmin, period: { from: string; to: string }) {

@@ -1,6 +1,7 @@
 import type { BilanAgency, ShipmentContext } from "./bilan-contracts";
 import type {
   BilanManifestParcel,
+  BilanAirFreightRow,
   BilanOfficialTransitRow,
   BilanRangeReader,
   BilanReadAnomaly,
@@ -66,6 +67,33 @@ export function adaptShipmentRows(rows: readonly (readonly unknown[])[], firstRo
 
 export async function readBilanOfficialTransit(source: BilanRangeReader) {
   return readSafely(() => source.read({ spreadsheet: "MANIFESTE_PUBLIC", range: "'STATISTIQUES DES EXPÉDITIONS'!A2:F" }), "STATISTIQUES DES EXPÉDITIONS", (rows) => adaptOfficialTransitRows(rows, 2));
+}
+
+export async function readBilanAirFreight(source: BilanRangeReader) {
+  return readSafely(() => source.read({ spreadsheet: "MANIFESTE_PUBLIC", range: "'STATISTIQUES DES EXPÉDITIONS'!A2:H" }), "STATISTIQUES DES EXPÉDITIONS", (rows) => adaptAirFreightRows(rows, 2));
+}
+
+export function adaptAirFreightRows(rows: readonly (readonly unknown[])[], firstRow = 2): BilanReadResult<BilanAirFreightRow> {
+  const result: BilanAirFreightRow[] = [];
+  const anomalies: BilanReadAnomaly[] = [];
+  rows.forEach((row, index) => {
+    const sourceRow = firstRow + index;
+    const destination = agency(row[2]);
+    if (destination !== "FIH" && destination !== "LSHI") return;
+    const date = sheetDate(row[0]);
+    const company = text(row[1]).toUpperCase();
+    const declaredGroupCount = numeric(row[3]);
+    const officialWeightKg = numeric(row[4]);
+    const details = text(row[5]);
+    const rateUsdPerKg = numeric(row[6]);
+    const amountUsd = numeric(row[7]);
+    if (!date || !company || declaredGroupCount === null || officialWeightKg === null || rateUsdPerKg === null || amountUsd === null) {
+      anomalies.push(anomaly("CHAMP_MANQUANT", "STATISTIQUES DES EXPÉDITIONS", sourceRow, "Date, compagnie, nombre de groupages, poids, prix/kg ou montant aérien absent."));
+      return;
+    }
+    result.push(Object.freeze({ date, company, destination, declaredGroupCount, officialWeightKg, details, rateUsdPerKg, amountUsd, sourceSheet: "STATISTIQUES DES EXPÉDITIONS", sourceRow }));
+  });
+  return freezeResult(result, anomalies);
 }
 
 export function adaptOfficialTransitRows(rows: readonly (readonly unknown[])[], firstRow = 2): BilanReadResult<BilanOfficialTransitRow> {

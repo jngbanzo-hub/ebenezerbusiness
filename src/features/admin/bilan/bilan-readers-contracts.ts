@@ -58,6 +58,19 @@ export type BilanOfficialTransitRow = Readonly<{
   sourceRow: number;
 }>;
 
+export type BilanAirFreightRow = Readonly<{
+  date: string;
+  company: string;
+  destination: "FIH" | "LSHI";
+  declaredGroupCount: number;
+  officialWeightKg: number;
+  details: string;
+  rateUsdPerKg: number;
+  amountUsd: number;
+  sourceSheet: "STATISTIQUES DES EXPÉDITIONS";
+  sourceRow: number;
+}>;
+
 export type BilanPayment = Readonly<{
   paymentDate: string;
   code: string;
