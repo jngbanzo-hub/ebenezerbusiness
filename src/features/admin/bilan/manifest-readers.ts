@@ -21,7 +21,7 @@ export function adaptManifestParcelRows(rows: readonly (readonly unknown[])[], a
   const anomalies: BilanReadAnomaly[] = [];
   rows.forEach((row, index) => {
     const sourceRow = firstRow + index;
-    if (isEmpty(row)) return;
+    if (!isMeaningfulManifestParcelRow(row)) return;
     const date = sheetDate(row[0]);
     const rawCode = text(row[1]);
     const code = canonicalParcelCode(rawCode);
@@ -44,7 +44,7 @@ export function adaptShipmentRows(rows: readonly (readonly unknown[])[], firstRo
   const anomalies: BilanReadAnomaly[] = [];
   rows.forEach((row, index) => {
     const sourceRow = firstRow + index;
-    if (isEmpty(row)) return;
+    if (!isMeaningfulShipmentRow(row)) return;
     const date = sheetDate(row[0]);
     const company = text(row[1]).toUpperCase();
     const destination = agency(row[2]);
@@ -149,7 +149,16 @@ function numeric(value: unknown) {
 
 function nonNegative(value: unknown) { const parsed = numeric(value); return parsed !== null && parsed >= 0 ? parsed : null; }
 function text(value: unknown) { return String(value ?? "").trim(); }
-function isEmpty(row: readonly unknown[]) { return row.every((cell) => !text(cell)); }
+export function isMeaningfulManifestParcelRow(row: readonly unknown[]) {
+  const date = text(row[0]);
+  const code = text(row[1]);
+  const weight = numeric(row[4]);
+  const expectedAmount = numeric(row[5]);
+  return Boolean(date || code || (weight !== null && weight !== 0) || (expectedAmount !== null && expectedAmount !== 0));
+}
+export function isMeaningfulShipmentRow(row: readonly unknown[]) {
+  return Boolean(text(row[0]) || text(row[1]) || text(row[2]) || text(row[5]));
+}
 function anomaly(code: BilanReadAnomaly["code"], source: string, rowNumber: number, message: string): BilanReadAnomaly { return Object.freeze({ code, source, rowNumber, message }); }
 function freezeResult<T>(rows: T[], anomalies: BilanReadAnomaly[]): BilanReadResult<T> { return Object.freeze({ rows: Object.freeze(rows), anomalies: Object.freeze(anomalies) }); }
 async function readSafely<T>(

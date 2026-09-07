@@ -20,6 +20,23 @@ test("signale code et poids invalides sans corriger la source", () => {
   assert.deepEqual(result.anomalies.map(({ code }) => code), ["CODE_ABSENT", "POIDS_INVALIDE"]);
 });
 
+test("ignore une ligne totalement vide ou préformatée avec des zéros neutres", () => {
+  const result = adaptManifestParcelRows([
+    ["", "", "", "", "", ""],
+    ["", "", "", "", 0, 0],
+    ["   ", "   ", "", "", "0", "0,00"]
+  ], "FIH", 1267);
+  assert.equal(result.rows.length, 0);
+  assert.deepEqual(result.anomalies, []);
+});
+
+test("conserve les anomalies des lignes partiellement remplies", () => {
+  const missingWeight = adaptManifestParcelRows([["01/08/2026", "AT12326", "", "", "", ""]], "FIH");
+  assert.deepEqual(missingWeight.anomalies.map(({ code }) => code), ["POIDS_INVALIDE"]);
+  const missingCode = adaptManifestParcelRows([["01/08/2026", "", "", "", 5, ""]], "FIH");
+  assert.deepEqual(missingCode.anomalies.map(({ code }) => code), ["CODE_ABSENT"]);
+});
+
 test("lit EXPÉDITION et segmente ses groupages", () => {
   const result = adaptShipmentRows([["02/08/2026", "DHL", "LSHI", 2, 10, "GROUPAGE 1\nAT10126 : 4kgs\nGROUPAGE 2\nAT10226 : 6kgs"]]);
   assert.equal(result.rows[0].groups.length, 2);

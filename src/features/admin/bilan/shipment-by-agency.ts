@@ -113,7 +113,9 @@ export function aggregateShipmentByAgency(
             ? certifiedCorrection?.shipmentRawCode ?? null
             : null;
       if (!matches.length || !shipmentRawCode) {
-        anomalies.push(anomaly("NON_RETROUVE", source, null, []));
+        // A valid registered parcel with no shipment occurrence is legitimate
+        // remaining stock. Its weight stays in remainingWeightKg and is not a
+        // data-quality anomaly.
         continue;
       }
 

@@ -28,8 +28,21 @@ test("ne généralise jamais la projection KLZ aux feuilles FIH ou LSHI", () => 
     "2026-08"
   );
   assert.equal(result.LSHI.certifiedShippedWeightKg, 0);
-  assert.equal(result.LSHI.anomalies[0].type, "NON_RETROUVE");
+  assert.equal(result.LSHI.remainingWeightKg, 5);
+  assert.deepEqual(result.LSHI.anomalies, []);
   assert.equal(result.KLZ.anomalies[0].type, "EXPEDIE_SANS_SOURCE");
+});
+
+test("classe 54 colis FIH non expédiés comme reste réel sans NON_RETROUVE", () => {
+  const remaining = Array.from({ length: 54 }, (_, index) => manifest(`AT${String(300 + index).padStart(3, "0")}26`, index === 53 ? 33 : 5, "FIH", 1000 + index));
+  const result = aggregateShipmentByAgency(
+    [manifest("AT00126", 1227, "FIH", 2), ...remaining],
+    shipmentRows([["01/09/2026", "DHL", "FIH", 1, 1227, "GROUPAGE 1\nAT00126 : 1227kgs"]]),
+    "2026-08"
+  );
+  assert.deepEqual(pick(result.FIH), { registeredWeightKg: 1525, certifiedShippedWeightKg: 1227, remainingWeightKg: 298, status: "CERTIFIED" });
+  assert.equal(result.FIH.anomalies.filter(({ type }) => type === "NON_RETROUVE").length, 0);
+  assert.equal(result.qualityIssues.filter(({ type }) => type === "NON_RETROUVE").length, 0);
 });
 
 test("refuse collision, multi-groupages et poids divergent sans choisir silencieusement", () => {
@@ -92,7 +105,7 @@ test("ne réactive pas l’ancienne correction PDG et ne la généralise pas", (
     "2026-08"
   );
   assert.equal(result.KLZ.certifiedShippedWeightKg, 0);
-  assert.deepEqual(result.KLZ.anomalies.map(({ type }) => type), ["NON_RETROUVE", "EXPEDIE_SANS_SOURCE"]);
+  assert.deepEqual(result.KLZ.anomalies.map(({ type }) => type), ["EXPEDIE_SANS_SOURCE"]);
 });
 
 test("reproduit la référence historique AT sans activer une résolution PDG obsolète", () => {
