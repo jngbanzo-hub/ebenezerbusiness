@@ -183,17 +183,30 @@ test("reconnaît la catégorie Declarant sans accent sans exclure les autres cat
     expense({ sourceReference: "DEP:SACS", category: "Sacs", amount: 20 })
   ], august);
   assert.equal(result.operationalByCurrency.USD, 130);
-  assert.equal(result.deductibleOperationalByCurrency.USD, 20);
-  assert.deepEqual(result.excludedFromProfitByCategoryAndCurrency.Connexion, { USD: 10 });
+  assert.equal(result.deductibleOperationalByCurrency.USD, 30);
+  assert.deepEqual(result.deductibleConnectionByAgencyAndCurrency.FIH, { USD: 10 });
+});
+
+test("Connexion Agent est déductible pour FIH LSHI KLZ mais reste couverte par la charge fixe COO", () => {
+  const result = aggregatePeriodExpenses([
+    expense({ sourceReference: "DEP:FIH:CONNEXION", agency: "FIH", category: "Connexion", amount: 4 }),
+    expense({ sourceReference: "DEP:LSHI:CONNEXION", agency: "LSHI", category: "Connexion", amount: 5 }),
+    expense({ sourceReference: "DEP:KLZ:CONNEXION", agency: "KLZ", category: "Connexion", amount: 17 }),
+    expense({ sourceReference: "DEP:COO:CONNEXION", agency: "COO", category: "Connexion", amount: 8 })
+  ], august);
+  assert.equal(result.operationalByCurrency.USD, 34);
+  assert.equal(result.deductibleOperationalByCurrency.USD, 26);
+  assert.deepEqual(result.deductibleConnectionByAgencyAndCurrency, { FIH: { USD: 4 }, LSHI: { USD: 5 }, KLZ: { USD: 17 } });
+  assert.deepEqual(result.excludedFromProfitByCategoryAndCurrency.Connexion, { USD: 8 });
 });
 
 test("conserve les charges fixes Agent dans l’historique sans les redéduire du bénéfice", () => {
   const result = aggregatePeriodExpenses([
-    expense({ sourceReference: "DEP:SALAIRE", category: "Salaire", amount: 300 }),
-    expense({ sourceReference: "DEP:LOYER", category: "Loyer", amount: 250 }),
-    expense({ sourceReference: "DEP:EAU", category: "Eau et Électricité", amount: 200 }),
-    expense({ sourceReference: "DEP:CHAUFFEUR", category: "Chauffeur", amount: 100 }),
-    expense({ sourceReference: "DEP:SACS", category: "Sacs", amount: 25 })
+    expense({ sourceReference: "DEP:SALAIRE", agency: "LSHI", category: "Salaire", amount: 300 }),
+    expense({ sourceReference: "DEP:LOYER", agency: "LSHI", category: "Loyer", amount: 250 }),
+    expense({ sourceReference: "DEP:EAU", agency: "LSHI", category: "Eau et Électricité", amount: 200 }),
+    expense({ sourceReference: "DEP:CHAUFFEUR", agency: "LSHI", category: "Chauffeur", amount: 100 }),
+    expense({ sourceReference: "DEP:SACS", agency: "LSHI", category: "Sacs", amount: 25 })
   ], august);
   assert.equal(result.operationalByCurrency.USD, 875);
   assert.equal(result.deductibleOperationalByCurrency.USD, 25);

@@ -17,8 +17,15 @@ export function calculateMonthlyFixedCosts() {
   });
 }
 
-export function isFixedCostExpenseCategory(value: string) {
-  return new Set(["salaire", "loyer", "connexion", "eau", "electricite", "eau et electricite", "chauffeur"]).has(normalize(value));
+export function isFixedCostExpenseCategory(value: string, agency: string) {
+  const category = normalize(value);
+  const fixedByAgency: Readonly<Record<string, ReadonlySet<string>>> = {
+    COO: new Set(["salaire", "loyer", "connexion"]),
+    FIH: new Set(["salaire"]),
+    LSHI: new Set(["salaire", "loyer", "eau", "electricite", "eau et electricite", "chauffeur"]),
+    KLZ: new Set(["salaire"])
+  };
+  return fixedByAgency[agency.trim().toUpperCase()]?.has(category) ?? false;
 }
 
 function normalize(value: string) {

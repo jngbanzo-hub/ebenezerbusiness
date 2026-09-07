@@ -66,6 +66,7 @@ export type PeriodExpenseSummary = Readonly<{
   deductibleOperationalByCurrency: Readonly<Record<string, number>>;
   deductibleOperationalByCategoryAndCurrency: Readonly<Record<string, Readonly<Record<string, number>>>>;
   deductibleOperationalByAgencyAndCurrency: Readonly<Record<string, Readonly<Record<string, number>>>>;
+  deductibleConnectionByAgencyAndCurrency: Readonly<Record<string, Readonly<Record<string, number>>>>;
   deductibleOperationalUnallocatedByCurrency: Readonly<Record<string, number>>;
   excludedFromProfitByCategoryAndCurrency: Readonly<Record<string, Readonly<Record<string, number>>>>;
   tfBeninByCurrency: Readonly<Record<string, number>>;
