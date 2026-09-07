@@ -56,6 +56,7 @@ import {
   type AdminSite
 } from "@/features/admin/types";
 import { getAdminProfile, signOutAgent } from "@/features/agent/auth";
+import { withinAuthTimeout } from "@/features/auth/auth-resilience";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import type { AdminProfile } from "@/features/agent/types";
 
@@ -153,20 +154,20 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
         const supabase = getSupabaseBrowserClient();
         const {
           data: { session }
-        } = await supabase.auth.getSession();
+        } = await withinAuthTimeout("admin_get_session", supabase.auth.getSession());
 
         if (!session?.user || !session.access_token) {
           router.replace("/auth/sign-in");
           return;
         }
 
-        const adminProfile = await getAdminProfile(session.user);
+        const adminProfile = await withinAuthTimeout("admin_profile", getAdminProfile(session.user));
         if (active) {
           accessTokenRef.current = session.access_token;
           setProfile(adminProfile);
         }
       } catch (error) {
-        await signOutAgent().catch(() => undefined);
+        void signOutAgent().catch(() => undefined);
         if (active) {
           setAuthError(error instanceof Error ? error.message : "Accès refusé.");
         }
@@ -276,9 +277,9 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
               <p role="alert" className="mt-3 text-sm text-red-200">
                 {authError}
               </p>
-              <Button variant="growth" className="mt-6" onClick={() => router.replace("/auth/sign-in")}>
+              <div className="mt-6 flex justify-center gap-3"><Button variant="outline" onClick={() => window.location.reload()}>Réessayer</Button><Button variant="growth" onClick={() => router.replace("/auth/sign-in")}>
                 Retour à la connexion
-              </Button>
+              </Button></div>
             </>
           ) : (
             <p className="text-muted-foreground">Vérification de votre accès…</p>

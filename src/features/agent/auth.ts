@@ -7,6 +7,7 @@ import type {
   AgentProfile,
   ProfessionalProfile
 } from "@/features/agent/types";
+import { withinAuthTimeout } from "@/features/auth/auth-resilience";
 
 interface RawProfile {
   id?: unknown;
@@ -103,5 +104,5 @@ export async function getAdminProfile(user: User): Promise<AdminProfile> {
 
 export async function signOutAgent() {
   const supabase = getSupabaseBrowserClient();
-  await supabase.auth.signOut();
+  await withinAuthTimeout("sign_out", supabase.auth.signOut());
 }

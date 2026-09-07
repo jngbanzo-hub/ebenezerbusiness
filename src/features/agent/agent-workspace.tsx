@@ -11,6 +11,7 @@ import { formatWeight } from "@/lib/format-weight";
 import { manifestStatusLabel } from "@/lib/manifest-status";
 import { getAllowedDestinations } from "@/features/agent/agencies";
 import { getAgentProfile, signOutAgent } from "@/features/agent/auth";
+import { withinAuthTimeout } from "@/features/auth/auth-resilience";
 import { AgentApiError, ParcelIdentitySelectionRequiredError, saveDestinationPayment, savePayment, searchAgentManifestControl, searchDestinationParcel, searchParcel, type AgentManifestSearchRow, type ParcelIdentityCandidate } from "@/features/agent/functions";
 import { EncaissementQrScanner } from "@/features/agent/encaissement-qr-scanner";
 import { resolveQrById } from "@/features/agent/qr-association-client";
@@ -95,20 +96,20 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
         const supabase = getSupabaseBrowserClient();
         const {
           data: { session }
-        } = await supabase.auth.getSession();
+        } = await withinAuthTimeout("agent_get_session", supabase.auth.getSession());
 
         if (!session?.user) {
           router.replace("/auth/sign-in");
           return;
         }
 
-        const agentProfile = await getAgentProfile(session.user);
+        const agentProfile = await withinAuthTimeout("agent_profile", getAgentProfile(session.user));
         if (!active) return;
 
         setProfile(agentProfile);
         setSourceAgency(getAllowedDestinations(agentProfile.agence)[0]);
       } catch (error) {
-        await signOutAgent().catch(() => undefined);
+        void signOutAgent().catch(() => undefined);
         if (!active) return;
         setAuthError(error instanceof Error ? error.message : "Accès refusé.");
       }
@@ -436,9 +437,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
             <>
               <h1 className="text-xl font-semibold">Accès refusé</h1>
               <p role="alert" className="mt-3 text-sm text-red-200">{authError}</p>
-              <Button className="mt-6" onClick={() => router.replace("/auth/sign-in")}>
-                Retour à la connexion
-              </Button>
+              <div className="mt-6 flex justify-center gap-3"><Button variant="outline" onClick={() => window.location.reload()}>Réessayer</Button><Button onClick={() => router.replace("/auth/sign-in")}>Retour à la connexion</Button></div>
             </>
           ) : (
             <p className="text-muted-foreground">Vérification de votre accès…</p>
