@@ -13,7 +13,7 @@ const schema = z.object({
     displayNumber: z.string().max(32),
     agency: z.string().max(16),
     trackingCode: z.string().max(128)
-  }).strict()).min(1).max(100)
+  }).strict()).min(1).max(250)
 }).strict();
 
 export async function POST(request: Request) {

@@ -53,5 +53,7 @@ test("groupe la confirmation finale avec un requestId stable par ligne", () => {
 test("la prévalidation serveur refuse les Agents hors COO et ne mute rien", () => {
   assert.match(route, /auth\.identity\.site !== "COO"/);
   assert.match(route, /QR_AGENCY_ACCESS_DENIED/);
+  assert.match(route, /\.min\(1\)\.max\(250\)/);
+  assert.doesNotMatch(route, /\.min\(1\)\.max\(100\)/);
   assert.doesNotMatch(route, /assignQrLabelInternally|assign_qr_label_server/);
 });

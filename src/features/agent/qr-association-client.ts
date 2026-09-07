@@ -231,6 +231,7 @@ export function messageForQrError(code: string) {
     QR_VERSION_CONFLICT: "L’état du QR a changé. Relancez la prévalidation.",
     QR_IDEMPOTENCY_CONFLICT: "Cette demande est en conflit avec une opération précédente.",
     QR_PARCEL_ALREADY_ASSIGNED: "Ce colis est déjà associé à un autre QR.",
+    INVALID_QR_BATCH: "Le lot QR dépasse le nombre maximal autorisé.",
     IDENTITY_SERVICE_UNAVAILABLE: "La source métier est temporairement indisponible.",
     QR_SERVICE_UNAVAILABLE: "Le service QR est temporairement indisponible."
   };
