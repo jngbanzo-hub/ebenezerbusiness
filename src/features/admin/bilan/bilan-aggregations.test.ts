@@ -142,13 +142,16 @@ test("transit sans poids individuel imputable conserve le total en NON IMPUTÉ",
   assert.equal(costs[0].amountCents, 1700);
 });
 
-test("Expédition KLZ reste non imputée sans lien certifié et devient imputée avec lien", () => {
-  const row = expense({ category: "Expédition KLZ", sourceReference: "DEP:1" });
-  const unallocated = aggregatePeriodExpenses([row], august);
-  const allocated = aggregatePeriodExpenses([row], august, { "DEP:1": "2026-08" });
-  assert.equal(unallocated.directCostsUnallocated[0].status, "NON IMPUTÉ");
-  assert.equal(allocated.directCostsAllocated[0].status, "CERTIFIÉ");
-  assert.equal(allocated.directCostsUnallocated.length, 0);
+test("Expédition KLZ historique reste visible sans double déduction ni charge non imputée", () => {
+  const rows = [64, 18, 17].map((amount, index) => expense({ category: "Expédition KLZ", amount, sourceReference: `DEP:KLZ:${index + 1}` }));
+  const result = aggregatePeriodExpenses(rows, august);
+  assert.equal(result.operationalByCurrency.USD, 99);
+  assert.deepEqual(result.operationalByCategoryAndCurrency["Expédition KLZ"], { USD: 99 });
+  assert.deepEqual(result.excludedFromProfitByCategoryAndCurrency["Expédition KLZ"], { USD: 99 });
+  assert.equal(result.deductibleOperationalByCurrency.USD ?? 0, 0);
+  assert.equal(result.directCostsAllocated.length, 0);
+  assert.equal(result.directCostsUnallocated.length, 0);
+  assert.equal(result.anomalies.some(({ type }) => type === "CHARGE_DIRECTE_NON_IMPUTEE"), false);
 });
 
 test("TF Bénin est trésorerie séparée et exclue des charges", () => {
@@ -160,6 +163,59 @@ test("TF Bénin est trésorerie séparée et exclue des charges", () => {
 test("conserve des totaux séparés par devise sans conversion", () => {
   const result = aggregatePeriodExpenses([expense({ amount: 10 }), expense({ sourceReference: "DEP:2", currency: "CDF", amount: 2000 })], august);
   assert.deepEqual(result.operationalByCurrency, { USD: 10, CDF: 2000 });
+});
+
+test("conserve Déclarant dans l’historique mais l’exclut des dépenses déductibles", () => {
+  const result = aggregatePeriodExpenses([
+    expense({ sourceReference: "DEP:DECLARANT", category: "Déclarant", amount: 300 }),
+    expense({ sourceReference: "DEP:SACS", category: "Sacs", amount: 20 })
+  ], august);
+  assert.equal(result.operationalByCurrency.USD, 320);
+  assert.equal(result.deductibleOperationalByCurrency.USD, 20);
+  assert.deepEqual(result.excludedFromProfitByCategoryAndCurrency.Déclarant, { USD: 300 });
+  assert.deepEqual(result.deductibleOperationalByCategoryAndCurrency.Sacs, { USD: 20 });
+});
+
+test("reconnaît la catégorie Declarant sans accent sans exclure les autres catégories", () => {
+  const result = aggregatePeriodExpenses([
+    expense({ sourceReference: "DEP:DECLARANT", category: "Declarant", amount: 100 }),
+    expense({ sourceReference: "DEP:CONNEXION", category: "Connexion", amount: 10 }),
+    expense({ sourceReference: "DEP:SACS", category: "Sacs", amount: 20 })
+  ], august);
+  assert.equal(result.operationalByCurrency.USD, 130);
+  assert.equal(result.deductibleOperationalByCurrency.USD, 20);
+  assert.deepEqual(result.excludedFromProfitByCategoryAndCurrency.Connexion, { USD: 10 });
+});
+
+test("conserve les charges fixes Agent dans l’historique sans les redéduire du bénéfice", () => {
+  const result = aggregatePeriodExpenses([
+    expense({ sourceReference: "DEP:SALAIRE", category: "Salaire", amount: 300 }),
+    expense({ sourceReference: "DEP:LOYER", category: "Loyer", amount: 250 }),
+    expense({ sourceReference: "DEP:EAU", category: "Eau et Électricité", amount: 200 }),
+    expense({ sourceReference: "DEP:CHAUFFEUR", category: "Chauffeur", amount: 100 }),
+    expense({ sourceReference: "DEP:SACS", category: "Sacs", amount: 25 })
+  ], august);
+  assert.equal(result.operationalByCurrency.USD, 875);
+  assert.equal(result.deductibleOperationalByCurrency.USD, 25);
+  assert.deepEqual(result.deductibleOperationalByCategoryAndCurrency.Sacs, { USD: 25 });
+});
+
+test("COO conserve ses dépenses fixes en historique et déduit seulement les frais centraux supplémentaires", () => {
+  const result = aggregatePeriodExpenses([
+    expense({ sourceReference: "DEP:COO:SALAIRE", agency: "COO", category: "Salaire", amount: 300 }),
+    expense({ sourceReference: "DEP:COO:SACS", agency: "COO", category: "Sacs", amount: 80 }),
+    expense({ sourceReference: "DEP:COO:TRANSPORT", agency: "COO", category: "Transport local", amount: 25 })
+  ], august);
+  assert.equal(result.operationalByCurrency.USD, 405);
+  assert.deepEqual(result.excludedFromProfitByCategoryAndCurrency.Salaire, { USD: 300 });
+  assert.deepEqual(result.deductibleOperationalByAgencyAndCurrency.COO, { USD: 105 });
+  assert.deepEqual(result.deductibleOperationalUnallocatedByCurrency, {});
+});
+
+test("une dépense sans agence certifiée reste non imputée sans répartition silencieuse", () => {
+  const result = aggregatePeriodExpenses([expense({ agency: "Cotonou ?", category: "Sacs", amount: 40 })], august);
+  assert.deepEqual(result.deductibleOperationalUnallocatedByCurrency, { USD: 40 });
+  assert.deepEqual(result.deductibleOperationalByAgencyAndCurrency, {});
 });
 
 test("calcule uniquement RESULTAT_OPERATIONNEL_PERIODE_USD", () => {

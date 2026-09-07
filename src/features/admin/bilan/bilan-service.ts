@@ -10,10 +10,12 @@ import type { BilanApiQuery } from "./bilan-api-query";
 import type { AggregatedQualityIssue, CohortDirectCost } from "./bilan-aggregation-contracts";
 import type { BilanRangeRead, BilanRangeReader } from "./bilan-readers-contracts";
 import { aggregatePeriodExpenses, calculateDirectMargin, resultOperationalPeriodUsd } from "./expense-aggregations";
+import { calculateMonthlyFixedCosts } from "./fixed-cost-aggregations";
 import { readBilanExpenses, readBilanPayments } from "./financial-readers";
 import { readBilanManifestParcels, readBilanOfficialTransit, readBilanShipments, reconcileOfficialTransit } from "./manifest-readers";
 import { aggregateCohortPayments, aggregatePeriodReceiptsUsd } from "./payment-aggregations";
 import { aggregateReadAnomalies } from "./quality-aggregations";
+import { calculateAgencyProfits, calculateAutomaticKlzShipmentCost, calculateCertifiedCohortRevenue, calculateRealProfit, calculateTheoreticalReceivable } from "./revenue-aggregations";
 import { calculateDeclarantDirectCosts, calculateLshiDhlDeclarantDirectCosts, calculateTransitDirectCosts, summarizeOfficialTransit, summarizeShipmentStructure } from "./shipment-aggregations";
 import { aggregateShipmentByAgency } from "./shipment-by-agency";
 
@@ -38,17 +40,33 @@ export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdm
   const manifestRows = [...fih.rows, ...lshi.rows, ...klz.rows];
   const activity = aggregateCohortActivity(manifestRows, query.cohort.id, query.period);
   const shipment = aggregateShipmentByAgency(manifestRows, shipmentsRead.rows, query.cohort.id);
+  const revenue = calculateCertifiedCohortRevenue({ FIH: shipment.FIH.registeredWeightKg, LSHI: shipment.LSHI.registeredWeightKg, KLZ: shipment.KLZ.registeredWeightKg });
   const shipmentStructure = summarizeShipmentStructure(shipmentsRead.rows, query.cohort.id);
   const payments = aggregateCohortPayments(paymentsRead.rows, query.cohort.id);
   const reconciliation = reconcileOfficialTransit(officialRead.rows, shipmentsRead.rows);
   const transit = summarizeOfficialTransit(officialRead.rows);
-  const directCosts = [...calculateDeclarantDirectCosts(shipmentsRead.rows), ...calculateLshiDhlDeclarantDirectCosts(reconciliation.matches), ...calculateTransitDirectCosts(reconciliation.matches)];
+  const directCosts = [...calculateDeclarantDirectCosts(shipmentsRead.rows), ...calculateLshiDhlDeclarantDirectCosts(reconciliation.matches), ...calculateTransitDirectCosts(reconciliation.matches), calculateAutomaticKlzShipmentCost(shipment.KLZ.registeredWeightKg, query.cohort.id)];
   const periodExpenses = query.period ? aggregatePeriodExpenses(expensesRead.rows, query.period) : null;
   const quality = collectQuality(query, { fih, lshi, klz, shipmentsRead, officialRead, paymentsRead, expensesRead }, activity.anomalies, shipment.qualityIssues, payments.anomalies, periodExpenses?.anomalies ?? []);
   const cohortCosts = directCosts.filter((cost) => cost.cohortId === query.cohort.id);
   const unallocated = [...directCosts.filter((cost) => cost.status === "NON IMPUTÉ"), ...(periodExpenses?.directCostsUnallocated ?? [])];
-  const globalStatus = reconciliation.missing.length || reconciliation.ambiguous.length ? "PARTIEL" : unallocated.length || payments.historicalRevenueStatus === "NON CERTIFIÉ" ? "PROVISOIRE" : "CERTIFIE";
+  const globalStatus = reconciliation.missing.length || reconciliation.ambiguous.length ? "PARTIEL" : "PROVISOIRE";
   const receivedPeriodUsd = query.period ? aggregatePeriodReceiptsUsd(paymentsRead.rows, query.period) : null;
+  const directCostsSummary = summarizeDirectCosts(cohortCosts, unallocated);
+  const fixedCosts = calculateMonthlyFixedCosts();
+  const allocatedOperationalUsd = (["FIH", "LSHI", "KLZ", "COO"] as const).reduce((total, agency) => total + (periodExpenses?.deductibleOperationalByAgencyAndCurrency[agency]?.USD ?? 0), 0);
+  const unallocatedOperationalUsd = periodExpenses?.deductibleOperationalUnallocatedByCurrency.USD ?? 0;
+  const realProfit = calculateRealProfit(revenue.totalUsd, directCostsSummary.totalAllocatedUsd, fixedCosts.totalUsd, allocatedOperationalUsd, unallocated.length > 0 || unallocatedOperationalUsd > 0);
+  const agencyProfits = calculateAgencyProfits({
+    revenueByAgency: revenue.byAgency,
+    directCostsByAgency: directCostsByAgency(directCostsSummary),
+    fixedCostsByAgency: { FIH: fixedCosts.byAgency.FIH, LSHI: fixedCosts.byAgency.LSHI, KLZ: fixedCosts.byAgency.KLZ },
+    operationalExpensesByAgency: { FIH: periodExpenses?.deductibleOperationalByAgencyAndCurrency.FIH?.USD ?? 0, LSHI: periodExpenses?.deductibleOperationalByAgencyAndCurrency.LSHI?.USD ?? 0, KLZ: periodExpenses?.deductibleOperationalByAgencyAndCurrency.KLZ?.USD ?? 0 },
+    centralCooFixedCostUsd: fixedCosts.byAgency.COO,
+    centralCooOperationalExpensesUsd: periodExpenses?.deductibleOperationalByAgencyAndCurrency.COO?.USD ?? 0,
+    unallocatedCostsByAgency: unallocatedDirectCostsByAgency(unallocated),
+    unallocatedCostsUsd: directCostsSummary.totalUnallocatedUsd + unallocatedOperationalUsd
+  });
   return deepFreeze({
     meta: {
       cohort: query.cohort.prefix, cohortId: query.cohort.id, cohortYear: query.cohort.year, cohortMonth: query.cohort.month,
@@ -72,11 +90,16 @@ export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdm
       }
     },
     payments: { ...payments, remainingAmount: payments.collectionRate === null ? null : round(payments.recordedExpectedAmount - payments.receivedAmount) },
-    directCosts: summarizeDirectCosts(cohortCosts, unallocated),
+    directCosts: directCostsSummary,
+    fixedCosts,
     transit: { ...transit, rateUsdPerKg: 1.7, cohortAllocatedAmountUsd: cents(cohortCosts.filter((cost) => cost.kind === "TRANSIT_FIH_LSHI")), status: reconciliation.missing.length || reconciliation.ambiguous.length ? "PARTIEL" : "CERTIFIE", additionalFihProofRequired: false },
-    periodExpenses: periodExpenses ? { byCategoryAndCurrency: periodExpenses.operationalByCategoryAndCurrency, byCurrency: periodExpenses.operationalByCurrency } : null,
+    periodExpenses: periodExpenses ? { byCategoryAndCurrency: periodExpenses.operationalByCategoryAndCurrency, byCurrency: periodExpenses.operationalByCurrency, deductibleByCategoryAndCurrency: periodExpenses.deductibleOperationalByCategoryAndCurrency, deductibleByCurrency: periodExpenses.deductibleOperationalByCurrency, deductibleByAgencyAndCurrency: periodExpenses.deductibleOperationalByAgencyAndCurrency, deductibleUnallocatedByCurrency: periodExpenses.deductibleOperationalUnallocatedByCurrency, excludedFromProfitByCategoryAndCurrency: periodExpenses.excludedFromProfitByCategoryAndCurrency } : null,
     treasury: periodExpenses ? { tfBeninByCurrency: periodExpenses.tfBeninByCurrency, revenue: false, deductibleExpense: false, treasury: true, remainingToTransfer: null } : null,
     results: {
+      realRevenue: revenue,
+      theoreticalReceivableUsd: calculateTheoreticalReceivable(revenue.totalUsd, payments.receivedAmount),
+      realProfit,
+      agencyProfits,
       RESULTAT_OPERATIONNEL_PERIODE_USD: periodExpenses && receivedPeriodUsd !== null ? resultOperationalPeriodUsd(receivedPeriodUsd, periodExpenses) : null,
       directMargin: calculateDirectMargin({ historicalRevenueUsd: null, certifiedDirectCostsUsd: cents(cohortCosts), hasUnallocatedDirectCosts: unallocated.length > 0 })
     },
@@ -100,6 +123,21 @@ function exposeAgency(value: { occurrences: number; certifiedUniqueIdentities: n
 function summarizeDirectCosts(allocated: readonly CohortDirectCost[], unallocated: readonly CohortDirectCost[]) {
   const byKind = (kind: CohortDirectCost["kind"]) => cents(allocated.filter((cost) => cost.kind === kind));
   return { declarantLshiUsd: byKind("DECLARANT_LSHI_GROUP"), declarantLshiDhlUsd: byKind("DECLARANT_LSHI_DHL_WEIGHT"), declarantFihStandardUsd: byKind("DECLARANT_FIH_STANDARD_GROUP"), declarantFihDhlUsd: byKind("DECLARANT_FIH_DHL_WEIGHT"), transitFihLshiUsd: byKind("TRANSIT_FIH_LSHI"), expeditionKlzUsd: byKind("EXPEDITION_KLZ"), otherCertifiedUsd: 0, totalAllocatedUsd: cents(allocated), totalUnallocatedUsd: cents(unallocated), allocated, unallocated };
+}
+function directCostsByAgency(summary: ReturnType<typeof summarizeDirectCosts>) {
+  return {
+    FIH: round(summary.declarantFihStandardUsd + summary.declarantFihDhlUsd),
+    LSHI: round(summary.declarantLshiUsd + summary.declarantLshiDhlUsd + summary.transitFihLshiUsd),
+    KLZ: round(summary.expeditionKlzUsd + summary.otherCertifiedUsd)
+  };
+}
+function unallocatedDirectCostsByAgency(costs: readonly CohortDirectCost[]) {
+  const amount = (kinds: readonly CohortDirectCost["kind"][]) => cents(costs.filter((cost) => kinds.includes(cost.kind)));
+  return {
+    FIH: amount(["DECLARANT_FIH_STANDARD_GROUP", "DECLARANT_FIH_DHL_WEIGHT"]),
+    LSHI: amount(["DECLARANT_LSHI_GROUP", "DECLARANT_LSHI_DHL_WEIGHT", "TRANSIT_FIH_LSHI"]),
+    KLZ: amount(["EXPEDITION_KLZ"])
+  };
 }
 function cents(costs: readonly CohortDirectCost[]) { return round(costs.reduce((sum, cost) => sum + cost.amountCents / 100, 0)); }
 function round(value: number) { return Math.round((value + Number.EPSILON) * 100) / 100; }
