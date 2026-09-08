@@ -5,6 +5,8 @@ export type BrowserAuth = Readonly<{
   refreshSession: () => Promise<{ data: { session: Session }; error: unknown | null }>;
 }>;
 
+const refreshFlights = new WeakMap<object, Promise<{ data: { session: Session }; error: unknown | null }>>();
+
 export class AuthenticatedRequestError extends Error {
   readonly status: number;
   readonly code: string;
@@ -39,12 +41,27 @@ export async function authenticatedRead(
   }
 
   if (response.status === 401) {
-    const refreshed = await auth.refreshSession();
+    const refreshed = await refreshSingleFlight(auth);
     const refreshedToken = refreshed.data.session?.access_token;
     if (refreshed.error || !refreshedToken) {
+      if (!isDefinitiveRefreshFailure(refreshed.error)) {
+        throw new AuthenticatedRequestError(
+          "Le service rencontre un problème temporaire. Réessayez dans quelques instants.",
+          503,
+          "AUTH_REFRESH_TEMPORARILY_UNAVAILABLE"
+        );
+      }
       throw new AuthenticatedRequestError("Votre session a expiré. Veuillez vous reconnecter.", 401, "SESSION_EXPIRED");
     }
-    return send(fetcher, input, init, refreshedToken);
+    const replay = await send(fetcher, input, init, refreshedToken);
+    if (replay.status === 401) {
+      throw new AuthenticatedRequestError(
+        "Le service rencontre un problème temporaire. Réessayez dans quelques instants.",
+        503,
+        "AUTH_GATEWAY_REJECTED_REFRESHED_TOKEN"
+      );
+    }
+    return replay;
   }
 
   if (TRANSIENT_STATUSES.has(response.status)) {
@@ -52,6 +69,24 @@ export async function authenticatedRead(
   }
 
   return response;
+}
+
+function refreshSingleFlight(auth: BrowserAuth) {
+  const key = auth as object;
+  const active = refreshFlights.get(key);
+  if (active) return active;
+  const refresh = Promise.resolve().then(() => auth.refreshSession());
+  refreshFlights.set(key, refresh);
+  void refresh.finally(() => {
+    if (refreshFlights.get(key) === refresh) refreshFlights.delete(key);
+  }).catch(() => undefined);
+  return refresh;
+}
+
+function isDefinitiveRefreshFailure(error: unknown) {
+  const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+  const status = typeof error === "object" && error !== null && "status" in error ? Number(error.status) : 0;
+  return status === 400 || code === "refresh_token_not_found" || code === "refresh_token_already_used";
 }
 
 async function sendOnceAfterTransientFailure(

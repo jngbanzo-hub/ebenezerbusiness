@@ -11,7 +11,7 @@ import { formatWeight } from "@/lib/format-weight";
 import { manifestStatusLabel } from "@/lib/manifest-status";
 import { getAllowedDestinations } from "@/features/agent/agencies";
 import { getAgentProfile, signOutAgent } from "@/features/agent/auth";
-import { withinAuthTimeout } from "@/features/auth/auth-resilience";
+import { accessVerificationErrorMessage, withinAuthTimeout } from "@/features/auth/auth-resilience";
 import { AgentApiError, ParcelIdentitySelectionRequiredError, saveDestinationPayment, savePayment, searchAgentManifestControl, searchDestinationParcel, searchParcel, type AgentManifestSearchRow, type ParcelIdentityCandidate } from "@/features/agent/functions";
 import { EncaissementQrScanner } from "@/features/agent/encaissement-qr-scanner";
 import { resolveQrById } from "@/features/agent/qr-association-client";
@@ -55,6 +55,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
   const router = useRouter();
   const [profile, setProfile] = useState<AgentProfile | null>(null);
   const [authError, setAuthError] = useState("");
+  const [authRetryCount, setAuthRetryCount] = useState(0);
   const [sourceAgency, setSourceAgency] = useState<DestinationCode>("FIH");
   const [codeColis, setCodeColis] = useState(
     /^[A-Z0-9][A-Z0-9._/-]{1,63}$/i.test(initialTrackingCode.trim())
@@ -92,6 +93,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
     let active = true;
 
     async function protectRoute() {
+      setAuthError("");
       try {
         const supabase = getSupabaseBrowserClient();
         const {
@@ -109,9 +111,8 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
         setProfile(agentProfile);
         setSourceAgency(getAllowedDestinations(agentProfile.agence)[0]);
       } catch (error) {
-        void signOutAgent().catch(() => undefined);
         if (!active) return;
-        setAuthError(error instanceof Error ? error.message : "Accès refusé.");
+        setAuthError(accessVerificationErrorMessage());
       }
     }
 
@@ -130,7 +131,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
       active = false;
       subscription.unsubscribe();
     };
-  }, [router]);
+  }, [authRetryCount, router]);
 
   async function handleSignOut() {
     await signOutAgent();
@@ -435,9 +436,9 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
         <GlassPanel className="w-full max-w-md p-6 text-center" glow="growth">
           {authError ? (
             <>
-              <h1 className="text-xl font-semibold">Accès refusé</h1>
+              <h1 className="text-xl font-semibold">Vérification temporairement indisponible</h1>
               <p role="alert" className="mt-3 text-sm text-red-200">{authError}</p>
-              <div className="mt-6 flex justify-center gap-3"><Button variant="outline" onClick={() => window.location.reload()}>Réessayer</Button><Button onClick={() => router.replace("/auth/sign-in")}>Retour à la connexion</Button></div>
+              <div className="mt-6 flex justify-center"><Button variant="outline" onClick={() => setAuthRetryCount((value) => value + 1)}>Réessayer</Button></div>
             </>
           ) : (
             <p className="text-muted-foreground">Vérification de votre accès…</p>

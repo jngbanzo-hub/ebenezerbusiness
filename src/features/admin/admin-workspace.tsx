@@ -56,7 +56,7 @@ import {
   type AdminSite
 } from "@/features/admin/types";
 import { getAdminProfile, signOutAgent } from "@/features/agent/auth";
-import { withinAuthTimeout } from "@/features/auth/auth-resilience";
+import { accessVerificationErrorMessage, withinAuthTimeout } from "@/features/auth/auth-resilience";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import type { AdminProfile } from "@/features/agent/types";
 
@@ -94,6 +94,7 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
   const accessTokenRef = useRef("");
   const [profile, setProfile] = useState<AdminProfile | null>(null);
   const [authError, setAuthError] = useState("");
+  const [authRetryCount, setAuthRetryCount] = useState(0);
   const [accessForbidden, setAccessForbidden] = useState(false);
   const [periodPreset, setPeriodPreset] = useState<AdminPeriodPreset>("TODAY");
   const initialRange = useMemo(() => getAdminPeriodRange("TODAY"), []);
@@ -150,6 +151,7 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
     let active = true;
 
     async function protectRoute() {
+      setAuthError("");
       try {
         const supabase = getSupabaseBrowserClient();
         const {
@@ -167,9 +169,8 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
           setProfile(adminProfile);
         }
       } catch (error) {
-        void signOutAgent().catch(() => undefined);
         if (active) {
-          setAuthError(error instanceof Error ? error.message : "Accès refusé.");
+          setAuthError(accessVerificationErrorMessage());
         }
       }
     }
@@ -191,7 +192,7 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
       active = false;
       subscription.unsubscribe();
     };
-  }, [router]);
+  }, [authRetryCount, router]);
 
   useEffect(() => {
     if (module !== "payments" || !profile || !isRangeValid || !accessTokenRef.current) {
@@ -273,13 +274,11 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
         <GlassPanel className="w-full max-w-md p-6 text-center" glow="growth">
           {authError ? (
             <>
-              <h1 className="text-xl font-semibold">Accès refusé</h1>
+              <h1 className="text-xl font-semibold">Vérification temporairement indisponible</h1>
               <p role="alert" className="mt-3 text-sm text-red-200">
                 {authError}
               </p>
-              <div className="mt-6 flex justify-center gap-3"><Button variant="outline" onClick={() => window.location.reload()}>Réessayer</Button><Button variant="growth" onClick={() => router.replace("/auth/sign-in")}>
-                Retour à la connexion
-              </Button></div>
+              <div className="mt-6 flex justify-center"><Button variant="outline" onClick={() => setAuthRetryCount((value) => value + 1)}>Réessayer</Button></div>
             </>
           ) : (
             <p className="text-muted-foreground">Vérification de votre accès…</p>

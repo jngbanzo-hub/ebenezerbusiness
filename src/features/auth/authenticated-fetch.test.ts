@@ -3,12 +3,12 @@ import test from "node:test";
 // @ts-expect-error Node's strip-types test runner requires the explicit extension.
 import { authenticatedRead, AuthenticatedRequestError, readJsonOrThrow } from "./authenticated-fetch.ts";
 
-function auth(current?: string, refreshed?: string) {
+function auth(current?: string, refreshed?: string, refreshError: unknown = refreshed ? null : { status: 400, code: "refresh_token_not_found" }) {
   let refreshes = 0;
   return {
     value: {
       async getSession() { return { data: { session: current ? { access_token: current } : null } }; },
-      async refreshSession() { refreshes += 1; return { data: { session: refreshed ? { access_token: refreshed } : null }, error: refreshed ? null : new Error("expired") }; }
+      async refreshSession() { refreshes += 1; return { data: { session: refreshed ? { access_token: refreshed } : null }, error: refreshError }; }
     },
     refreshes: () => refreshes
   };
@@ -46,6 +46,50 @@ test("session définitivement expirée: aucun cycle de retry", async () => {
     (error) => error instanceof AuthenticatedRequestError && error.code === "SESSION_EXPIRED"
   );
   assert.equal(session.refreshes(), 1);
+});
+
+test("échec refresh temporaire: la session n’est pas déclarée expirée", async () => {
+  const session = auth("expired", undefined, { status: 503, code: "gateway_timeout" });
+  await assert.rejects(
+    () => authenticatedRead(session.value, "/read", {}, async () => new Response("{}", { status: 401 })),
+    (error) => error instanceof AuthenticatedRequestError && error.code === "AUTH_REFRESH_TEMPORARILY_UNAVAILABLE" && error.status === 503
+  );
+  assert.equal(session.refreshes(), 1);
+});
+
+test("JWT fraîchement renouvelé encore rejeté: erreur Gateway temporaire", async () => {
+  const session = auth("expired", "fresh");
+  await assert.rejects(
+    () => authenticatedRead(session.value, "/read", {}, async () => new Response("{}", { status: 401 })),
+    (error) => error instanceof AuthenticatedRequestError && error.code === "AUTH_GATEWAY_REJECTED_REFRESHED_TOKEN" && error.status === 503
+  );
+  assert.equal(session.refreshes(), 1);
+});
+
+test("401 concurrents: un seul refresh partagé", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let refreshes = 0;
+  const sharedAuth = {
+    async getSession() { return { data: { session: { access_token: "expired" } } }; },
+    async refreshSession() {
+      refreshes += 1;
+      await gate;
+      return { data: { session: { access_token: "fresh" } }, error: null };
+    }
+  };
+  const fetcher = async (_url: RequestInfo | URL, init?: RequestInit) =>
+    new Response("{}", { status: (init?.headers as Record<string, string>).Authorization === "Bearer fresh" ? 200 : 401 });
+  const reads = [
+    authenticatedRead(sharedAuth, "/one", {}, fetcher),
+    authenticatedRead(sharedAuth, "/two", {}, fetcher)
+  ];
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(refreshes, 1);
+  release();
+  const responses = await Promise.all(reads);
+  assert.deepEqual(responses.map((response) => response.status), [200, 200]);
+  assert.equal(refreshes, 1);
 });
 
 for (const status of [502, 503, 504]) {

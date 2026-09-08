@@ -10,9 +10,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HomeNavbar } from "@/features/home/home-navbar";
 import { SiteFooter } from "@/features/home/site-footer";
-import { getProfessionalProfile, signOutAgent } from "@/features/agent/auth";
+import { getProfessionalProfile } from "@/features/agent/auth";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
-import { isRetryableAuthError, loginErrorMessage, withinAuthTimeout } from "@/features/auth/auth-resilience";
+import { loginErrorMessage, runSerializedAuthOperation, withinAuthTimeout } from "@/features/auth/auth-resilience";
 
 const inputClassName =
   "mt-2 h-12 w-full rounded-md border border-white/15 bg-white/[0.05] px-4 text-white outline-none transition placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/25";
@@ -32,12 +32,10 @@ export function SignInForm() {
     try {
       const supabase = getSupabaseBrowserClient();
       const credentials = { email: email.trim(), password };
-      let response;
-      try { response = await withinAuthTimeout("sign_in", supabase.auth.signInWithPassword(credentials)); }
-      catch (cause) {
-        if (!isRetryableAuthError(cause)) throw cause;
-        response = await withinAuthTimeout("sign_in_retry", supabase.auth.signInWithPassword(credentials));
-      }
+      const response = await runSerializedAuthOperation(
+        "password_sign_in",
+        () => supabase.auth.signInWithPassword(credentials)
+      );
       const { data, error: signInError } = response;
 
       if (signInError) throw signInError;
@@ -55,7 +53,6 @@ export function SignInForm() {
       router.replace(profile.role === "ADMIN" ? "/admin" : "/agent");
       router.refresh();
     } catch (caughtError) {
-      void signOutAgent().catch(() => undefined);
       setError(loginErrorMessage(caughtError));
     } finally {
       setIsSubmitting(false);
