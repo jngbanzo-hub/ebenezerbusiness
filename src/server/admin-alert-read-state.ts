@@ -8,14 +8,17 @@ export type AdminAlertReadState = {
   readAt: string | null;
 };
 
-export async function syncAdminAlertReadStates(
+export async function readAdminAlertReadStates(
   adminUserId: string,
   activeAlertIds: readonly string[]
 ): Promise<Map<string, AdminAlertReadState>> {
-  const { data, error } = await client().rpc("sync_admin_alert_read_states_server", {
-    p_admin_user_id: adminUserId,
-    p_active_alert_ids: Array.from(new Set(activeAlertIds))
-  });
+  const ids = Array.from(new Set(activeAlertIds));
+  if (!ids.length) return new Map();
+  const { data, error } = await client()
+    .from("admin_alert_read_states")
+    .select("alert_id,occurrence,read_at,is_active")
+    .eq("admin_user_id", adminUserId)
+    .in("alert_id", ids);
 
   if (error || !Array.isArray(data)) {
     throw new Error("ADMIN_ALERT_READ_STATE_UNAVAILABLE");
@@ -26,8 +29,8 @@ export async function syncAdminAlertReadStates(
       const value = row as Record<string, unknown>;
       const state: AdminAlertReadState = {
         alertId: String(value.alert_id ?? ""),
-        occurrence: Number(value.occurrence ?? 1),
-        readAt: typeof value.read_at === "string" ? value.read_at : null
+        occurrence: Number(value.occurrence ?? 1) + (value.is_active === false ? 1 : 0),
+        readAt: value.is_active === false ? null : typeof value.read_at === "string" ? value.read_at : null
       };
       return [state.alertId, state];
     })
@@ -36,18 +39,26 @@ export async function syncAdminAlertReadStates(
 
 export async function markAdminAlertsRead(
   adminUserId: string,
-  alertIds: readonly string[] | null
+  alerts: readonly { alertId: string; occurrence: number }[]
 ): Promise<number> {
-  const { data, error } = await client().rpc("mark_admin_alerts_read_server", {
-    p_admin_user_id: adminUserId,
-    p_alert_ids: alertIds ? Array.from(new Set(alertIds)) : null
-  });
-
-  if (error || !Number.isInteger(Number(data))) {
+  const unique = Array.from(new Map(alerts.map((alert) => [alert.alertId, alert])).values());
+  if (!unique.length) return 0;
+  const readAt = new Date().toISOString();
+  const { error } = await client().from("admin_alert_read_states").upsert(
+    unique.map(({ alertId, occurrence }) => ({
+      admin_user_id: adminUserId,
+      alert_id: alertId,
+      occurrence,
+      read_at: readAt,
+      is_active: true,
+      last_seen_at: readAt
+    })),
+    { onConflict: "admin_user_id,alert_id" }
+  );
+  if (error) {
     throw new Error("ADMIN_ALERT_READ_STATE_UNAVAILABLE");
   }
-
-  return Number(data);
+  return unique.length;
 }
 
 function client() {

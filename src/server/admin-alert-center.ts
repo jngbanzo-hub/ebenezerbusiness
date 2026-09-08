@@ -13,7 +13,7 @@ import { determineParcelConsistency } from "@/server/admin-parcel-consistency";
 import { createServerCashDashboardSource } from "@/server/cash-dashboard-source";
 import { readQrStockSummary } from "@/server/qr-stock-summary";
 import { consistencyAlerts, deduplicateAlerts, paymentAlerts, qrStockAlert, sourceUnavailable, staleStorageAlert, type AdminAlert, type AdminAlertCategory } from "@/server/admin-alert-rules";
-import { syncAdminAlertReadStates } from "@/server/admin-alert-read-state";
+import { readAdminAlertReadStates } from "@/server/admin-alert-read-state";
 
 type AdminIdentity={userId:string;email:string;agency:"COO"|"FIH"|"LSHI"|"KLZ"|null};
 export type AdminAlertWithReadState=AdminAlert&{read:boolean;readAt:string|null;occurrence:number};
@@ -31,8 +31,8 @@ export async function readAdminAlertCenter(identity:AdminIdentity, now=new Date(
     isolated(requestId,"COHÉRENCE COLIS",generatedAt,()=>readConsistencyAlerts(requestId,generatedAt))
   ]);
   const activeAlerts=deduplicateAlerts(groups.flat());
-  const states=await syncAdminAlertReadStates(identity.userId,activeAlerts.map((alert)=>alert.id));
-  const alerts=activeAlerts.map((alert)=>{const state=states.get(alert.id);return {...alert,read:Boolean(state?.readAt),readAt:state?.readAt??null,occurrence:state?.occurrence??1};});
+  const states=await readAdminAlertReadStates(identity.userId,activeAlerts.map((alert)=>alert.id));
+  const alerts=activeAlerts.map((alert)=>{const state=states.get(alert.id);const readAt=state?.readAt&&state.readAt>=alert.occurredAt?state.readAt:null;return {...alert,read:Boolean(readAt),readAt,occurrence:state?.occurrence??1};});
   const unreadCount=alerts.filter((alert)=>!alert.read).length;
   return {generatedAt,count:unreadCount,activeCount:alerts.length,unreadCount,readCount:alerts.length-unreadCount,alerts,thresholds:{storageStaleDays:storageDays,cooPartialPaymentDays:partialDays}};
 }

@@ -20,5 +20,8 @@ test("le badge reste masqué à zéro et visible au-dessus", () => {
 test("le compteur se rafraîchit au retour, à la visibilité et périodiquement", () => {
   assert.match(bell, /window\.addEventListener\("focus", refresh\)/);
   assert.match(bell, /document\.addEventListener\("visibilitychange", refresh\)/);
-  assert.match(bell, /window\.setInterval\(refresh, 30_000\)/);
+  assert.match(bell, /ADMIN_BADGE_POLL_MS = 300_000/);
+  assert.match(bell, /window\.setInterval\(refresh, ADMIN_BADGE_POLL_MS\)/);
+  assert.match(bell, /if \(loading\) return/);
+  assert.match(bell, /badgeReads\.get\(url\)/);
 });

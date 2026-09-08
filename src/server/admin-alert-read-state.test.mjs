@@ -10,13 +10,15 @@ const ui = readFileSync("src/features/admin/admin-alert-center.tsx", "utf8");
 const bell = readFileSync("src/features/admin/admin-workspace.tsx", "utf8");
 const conflictFix = readFileSync("supabase/migrations/20260817173000_fix_admin_alert_read_state_conflict.sql", "utf8");
 
-test("la lecture est persistée par Admin et par identité stable", () => {
+test("la lecture est strictement read-only et conserve l'identité stable par Admin", () => {
   assert.match(migration, /primary key \(admin_user_id, alert_id\)/i);
   assert.match(migration, /read_at timestamptz/i);
   assert.match(migration, /is_active boolean/i);
   assert.match(migration, /when state\.is_active then state\.occurrence else state\.occurrence \+ 1/i);
   assert.match(migration, /when state\.is_active then state\.read_at else null/i);
-  assert.match(service, /sync_admin_alert_read_states_server/);
+  assert.match(service, /\.select\("alert_id,occurrence,read_at,is_active"\)/);
+  assert.match(service, /\.upsert\(/);
+  assert.doesNotMatch(service, /sync_admin_alert_read_states_server|mark_admin_alerts_read_server/);
   assert.match(center, /activeAlerts\.map\(\(alert\)=>alert\.id\)/);
 });
 

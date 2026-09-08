@@ -3,11 +3,14 @@ import { createClient } from "@supabase/supabase-js";
 
 export type AdminActivityReadState = { activityId: string; readAt: string | null };
 
-export async function syncAdminActivityReadStates(adminUserId: string, activeActivityIds: readonly string[]) {
-  const { data, error } = await client().rpc("sync_admin_activity_read_states_server", {
-    p_admin_user_id: adminUserId,
-    p_active_activity_ids: Array.from(new Set(activeActivityIds))
-  });
+export async function readAdminActivityReadStates(adminUserId: string, activeActivityIds: readonly string[]) {
+  const ids = Array.from(new Set(activeActivityIds));
+  if (!ids.length) return new Map<string, AdminActivityReadState>();
+  const { data, error } = await client()
+    .from("admin_activity_read_states")
+    .select("activity_id,read_at")
+    .eq("admin_user_id", adminUserId)
+    .in("activity_id", ids);
   if (error || !Array.isArray(data)) throw new Error("ADMIN_ACTIVITY_READ_STATE_UNAVAILABLE");
   return new Map<string, AdminActivityReadState>(data.map((row) => {
     const value = row as Record<string, unknown>;
@@ -17,12 +20,15 @@ export async function syncAdminActivityReadStates(adminUserId: string, activeAct
 }
 
 export async function markAdminActivitiesRead(adminUserId: string, activityIds: readonly string[] | null) {
-  const { data, error } = await client().rpc("mark_admin_activities_read_server", {
-    p_admin_user_id: adminUserId,
-    p_activity_ids: activityIds ? Array.from(new Set(activityIds)) : null
-  });
-  if (error || !Number.isInteger(Number(data))) throw new Error("ADMIN_ACTIVITY_READ_STATE_UNAVAILABLE");
-  return Number(data);
+  const ids = Array.from(new Set(activityIds ?? []));
+  if (!ids.length) return 0;
+  const readAt = new Date().toISOString();
+  const { error } = await client().from("admin_activity_read_states").upsert(
+    ids.map((activityId) => ({ admin_user_id: adminUserId, activity_id: activityId, read_at: readAt, is_active: true })),
+    { onConflict: "admin_user_id,activity_id" }
+  );
+  if (error) throw new Error("ADMIN_ACTIVITY_READ_STATE_UNAVAILABLE");
+  return ids.length;
 }
 
 function client() {
