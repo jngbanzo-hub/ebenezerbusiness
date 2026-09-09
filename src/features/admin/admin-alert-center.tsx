@@ -22,7 +22,7 @@ type Result = {
 
 const levels: Array<"TOUTES" | AdminAlertLevel> = ["TOUTES", "INFO", "ATTENTION", "IMPORTANT"];
 const agencies = ["TOUTES", "COO", "FIH", "LSHI", "KLZ"] as const;
-const categories: Array<"TOUTES" | AdminAlertCategory> = ["TOUTES", "QR", "STOCKAGE", "ENCAISSEMENTS", "CAISSE", "DÉPENSES", "COHÉRENCE COLIS"];
+const categories: Array<"TOUTES" | AdminAlertCategory> = ["TOUTES", "QR", "STOCKAGE", "ENCAISSEMENTS", "CAISSE", "DÉPENSES"];
 const readFilters = ["TOUTES", "NON LUES", "LUES"] as const;
 
 export function AdminAlertsPanel({ onCount }: { onCount?: (count: number) => void }) {
