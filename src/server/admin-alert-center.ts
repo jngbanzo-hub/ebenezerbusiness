@@ -12,7 +12,7 @@ import { readAdminPayments } from "@/server/admin-payments-sheets";
 import { determineParcelConsistency } from "@/server/admin-parcel-consistency";
 import { createServerCashDashboardSource } from "@/server/cash-dashboard-source";
 import { readQrStockSummary } from "@/server/qr-stock-summary";
-import { consistencyAlerts, deduplicateAlerts, notificationAlerts, paymentAlerts, qrStockAlert, sourceUnavailable, staleStorageAlert, type AdminAlert, type AdminAlertCategory } from "@/server/admin-alert-rules";
+import { consistencyAlerts, deduplicateAlerts, notificationAlerts, onlyUnreadAdminAlerts, paymentAlerts, qrStockAlert, sourceUnavailable, staleStorageAlert, type AdminAlert, type AdminAlertCategory } from "@/server/admin-alert-rules";
 import { readAdminAlertReadStates } from "@/server/admin-alert-read-state";
 
 type AdminIdentity={userId:string;email:string;agency:"COO"|"FIH"|"LSHI"|"KLZ"|null};
@@ -32,9 +32,9 @@ export async function readAdminAlertCenter(identity:AdminIdentity, now=new Date(
   ]);
   const activeAlerts=deduplicateAlerts(notificationAlerts(groups.flat()));
   const states=await readAdminAlertReadStates(identity.userId,activeAlerts.map((alert)=>alert.id));
-  const alerts=activeAlerts.map((alert)=>{const state=states.get(alert.id);const readAt=state?.readAt&&state.readAt>=alert.occurredAt?state.readAt:null;return {...alert,read:Boolean(readAt),readAt,occurrence:state?.occurrence??1};});
-  const unreadCount=alerts.filter((alert)=>!alert.read).length;
-  return {generatedAt,count:unreadCount,activeCount:alerts.length,unreadCount,readCount:alerts.length-unreadCount,alerts,thresholds:{storageStaleDays:storageDays,cooPartialPaymentDays:partialDays}};
+  const alerts=onlyUnreadAdminAlerts(activeAlerts.map((alert)=>{const state=states.get(alert.id);const readAt=state?.readAt&&state.readAt>=alert.occurredAt?state.readAt:null;return {...alert,read:Boolean(readAt),readAt,occurrence:state?.occurrence??1};}));
+  const unreadCount=alerts.length;
+  return {generatedAt,count:unreadCount,activeCount:unreadCount,unreadCount,readCount:0,alerts,thresholds:{storageStaleDays:storageDays,cooPartialPaymentDays:partialDays}};
 }
 
 async function isolated(requestId:string,category:AdminAlertCategory,now:string,read:()=>Promise<AdminAlert[]>){try{return await withTimeout(read(),12_000);}catch(error){logTrace(requestId,category,"alert-group",0,"error",error);return [sourceUnavailable(category,now)];}}

@@ -27,5 +27,6 @@ export function consistencyAlerts(code: string, result: {state:"COHERENT"|"MULTI
 
 export function sourceUnavailable(category: AdminAlertCategory, occurredAt: string): AdminAlert { return {id:`source-unavailable:${category}`,level:"ATTENTION",category,title:"SOURCE TEMPORAIREMENT INDISPONIBLE",agency:"TOUTES",trackingCode:null,occurredAt,description:`La lecture ${category} est temporairement indisponible. Les autres catégories restent affichées.`,sources:[category]}; }
 export function notificationAlerts(alerts: AdminAlert[]) { return alerts.filter((alert)=>alert.category!=="COHÉRENCE COLIS"); }
+export function onlyUnreadAdminAlerts<T extends { read: boolean }>(alerts: readonly T[]) { return alerts.filter((alert)=>!alert.read); }
 export function deduplicateAlerts(alerts: AdminAlert[]) { return Array.from(new Map(alerts.map((alert)=>[alert.id,alert])).values()).sort((a,b)=>priority(b.level)-priority(a.level)||b.occurredAt.localeCompare(a.occurredAt)); }
 function priority(level:AdminAlertLevel){return level==="IMPORTANT"?3:level==="ATTENTION"?2:1;}

@@ -24,17 +24,18 @@ test("la lecture est strictement read-only et conserve l'identité stable par Ad
 
 test("le compteur public de la route Admin correspond aux non lues", () => {
   assert.match(center, /count:unreadCount/);
-  assert.match(center, /activeCount:alerts\.length/);
-  assert.match(center, /readCount:alerts\.length-unreadCount/);
+  assert.match(center, /activeCount:unreadCount/);
+  assert.match(center, /readCount:0/);
   assert.match(ui, /onCount\?\.\(value\.unreadCount\)/);
   assert.match(bell, /ADMIN_NOTIFICATION_ENDPOINTS = \["\/api\/admin\/recent-activity", "\/api\/admin\/alerts"\]/);
 });
 
-test("l'interface conserve les alertes actives et propose Lues, Non lues et Tout marquer", () => {
-  assert.match(ui, /\["TOUTES", "NON LUES", "LUES"\]/);
+test("les alertes lues sont retirées après marquage sans supprimer leur source", () => {
+  assert.match(center, /onlyUnreadAdminAlerts/);
+  assert.match(center, /activeCount:unreadCount/);
   assert.match(ui, /Tout marquer comme lu/);
-  assert.match(ui, /item\.read \? "LUE" : "NON LUE"/);
-  assert.match(ui, /alerts\.map/);
+  assert.match(route, /markAdminAlertsRead/);
+  assert.doesNotMatch(service, /stockage_parcels|payments|cash_events|expenses|qr_labels/i);
 });
 
 test("les mutations restent Admin et service-role uniquement", () => {

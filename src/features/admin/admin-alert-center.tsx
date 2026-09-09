@@ -96,7 +96,7 @@ export function AdminAlertsPanel({ onCount }: { onCount?: (count: number) => voi
               </Button>
             </div>
             <p className="mt-3 text-xs text-muted-foreground">
-              Une alerte lue reste visible tant que sa situation métier est active. Seuil Stockage : {result.thresholds.storageStaleDays} jours · Paiement partiel COO : {result.thresholds.cooPartialPaymentDays} jours
+              Les notifications marquées comme lues sont retirées de cette liste. Les données métier sources restent conservées. Seuil Stockage : {result.thresholds.storageStaleDays} jours · Paiement partiel COO : {result.thresholds.cooPartialPaymentDays} jours
             </p>
             <div className="mt-5 grid gap-3 md:grid-cols-4">
               <Filter label="Lecture" value={readFilter} values={readFilters} set={setReadFilter} />

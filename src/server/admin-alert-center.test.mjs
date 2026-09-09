@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {readFileSync} from "node:fs";
-import {consistencyAlerts,deduplicateAlerts,notificationAlerts,qrStockAlert,sourceUnavailable} from "./admin-alert-rules.ts";
+import {consistencyAlerts,deduplicateAlerts,notificationAlerts,onlyUnreadAdminAlerts,qrStockAlert,sourceUnavailable} from "./admin-alert-rules.ts";
 import {determineParcelConsistency} from "./admin-parcel-consistency.ts";
 import {getQrStockAlert} from "../features/qr-label/qr-stock-alert.ts";
 
@@ -15,6 +15,7 @@ test("correspondances MANIFESTE multiples restent INFO",()=>{const state=determi
 test("cohérence colis seule ne produit aucune notification d'alerte",()=>{const coherence=consistencyAlerts("AT00126",{state:"INCONSISTENT",manifestMatchCount:1,manifestDetails:[],inconsistencies:["À vérifier"]},"now");assert.deepEqual(notificationAlerts(coherence),[]);});
 test("une anomalie réelle reste notifiée",()=>{const anomaly=sourceUnavailable("DÉPENSES","now");assert.deepEqual(notificationAlerts([anomaly]),[anomaly]);});
 test("cohérence colis et anomalie réelle ne conservent que l'anomalie",()=>{const coherence=consistencyAlerts("AT00126",{state:"INCONSISTENT",manifestMatchCount:1,manifestDetails:[],inconsistencies:["À vérifier"]},"now");const anomaly=sourceUnavailable("STOCKAGE","now");assert.deepEqual(notificationAlerts([...coherence,anomaly]),[anomaly]);});
+test("une alerte lue disparaît sans toucher à son alerte source",()=>{const source={...sourceUnavailable("STOCKAGE","now"),read:true};const unread={...sourceUnavailable("DÉPENSES","now"),read:false};assert.deepEqual(onlyUnreadAdminAlerts([source,unread]),[unread]);assert.equal(source.category,"STOCKAGE");});
 test("indisponibilité isolée et déduplication",()=>{const alert=sourceUnavailable("DÉPENSES","now");assert.equal(deduplicateAlerts([alert,alert]).length,1);assert.match(alert.description,/autres catégories restent affichées/);});
 test("service parallèle, lecture seule et aucune Caisse COO",()=>{assert.match(service,/Promise\.all/);assert.match(service,/readQrStockSummary|readAdminPayments|readAdminExpenses|readAdminAlertCenter|createServerCashDashboardSource/);assert.doesNotMatch(service,/insert\(|update\(|delete\(|upsert\(/);assert.doesNotMatch(service,/cash.*COO/i);});
 test("API Admin limitée à la lecture et au marquage lu, sans filtre Cohérence colis",()=>{assert.match(route,/authorizeAdminRequest/g);assert.match(route,/export async function GET/);assert.match(route,/export async function POST/);assert.match(route,/MARK_READ/);assert.match(route,/MARK_ALL_READ/);assert.doesNotMatch(route,/PUT|PATCH|DELETE/);for(const label of ["INFO","ATTENTION","IMPORTANT","COO","FIH","LSHI","KLZ","QR","STOCKAGE","ENCAISSEMENTS","CAISSE","DÉPENSES"])assert.match(ui,new RegExp(label));assert.doesNotMatch(ui,/"COHÉRENCE COLIS"/);});
