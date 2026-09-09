@@ -3,6 +3,8 @@ import type { ShipmentStatisticRow } from "@/features/admin/shipment-statistics"
 export type AdminShipmentParcelMatch = {
   id: string;
   agency: string;
+  rawCode: string;
+  canonicalCode: string;
   code: string;
   date: string;
   company: string;
@@ -14,14 +16,16 @@ export type AdminShipmentParcelMatch = {
 };
 
 export function findShipmentParcelMatches(rows: ShipmentStatisticRow[], searchedCode: string): AdminShipmentParcelMatch[] {
-  const target = normalizeCode(searchedCode);
-  const matches = rows.flatMap((row) => row.parcelCodes.flatMap((sourceCode) => {
-    const { agency, code } = shipmentParcelIdentity(row, sourceCode);
-    if (code !== target) return [];
+  const target = shipmentSearchIdentity(searchedCode);
+  const candidates = rows.flatMap((row) => row.parcelCodes.flatMap((sourceCode) => {
+    const identity = shipmentParcelIdentity(row, sourceCode);
+    if (identity.canonicalCode !== target.canonicalCode || (target.agency && identity.agency !== target.agency)) return [];
     return [{
-      id: `${row.id}:${agency}:${sourceCode}`,
-      agency,
-      code,
+      id: `${row.id}:${identity.agency}:${identity.rawCode}`,
+      agency: identity.agency,
+      rawCode: identity.rawCode,
+      canonicalCode: identity.canonicalCode,
+      code: identity.canonicalCode,
       date: row.date,
       company: row.company,
       destination: row.destination,
@@ -30,7 +34,9 @@ export function findShipmentParcelMatches(rows: ShipmentStatisticRow[], searched
       arrivalDate: row.arrivalDate,
       isLatestForAgency: false
     } satisfies AdminShipmentParcelMatch];
-  })).sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id));
+  }));
+  const matches = Array.from(new Map(candidates.map((match) => [match.id, match])).values())
+    .sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id));
 
   const latestAgencies = new Set<string>();
   return matches.map((match) => {
@@ -41,12 +47,28 @@ export function findShipmentParcelMatches(rows: ShipmentStatisticRow[], searched
 }
 
 export function shipmentParcelIdentity(row: ShipmentStatisticRow, sourceCode: string) {
-  const normalized = normalizeCode(sourceCode);
-  const klzTransit = row.company === "ETHIOPIAN" && row.destination === "LSHI" && normalized.endsWith("KLZ");
+  const rawCode = normalizeCode(sourceCode);
+  const projected = projectedShipmentIdentity(rawCode);
   return {
-    agency: klzTransit ? "KLZ" : row.destination,
-    code: klzTransit ? normalized.replace(/KLZ$/, "") : normalized
+    rawCode,
+    canonicalCode: projected?.canonicalCode ?? rawCode,
+    agency: projected?.agency ?? row.destination,
+    code: projected?.canonicalCode ?? rawCode
   };
+}
+
+function shipmentSearchIdentity(value: unknown) {
+  const rawCode = normalizeCode(value);
+  const projected = projectedShipmentIdentity(rawCode);
+  return { canonicalCode: projected?.canonicalCode ?? rawCode, agency: projected?.agency ?? null };
+}
+
+function projectedShipmentIdentity(rawCode: string) {
+  const match = rawCode.match(/^(.*)(FIH|LSHI|KLZ)$/);
+  if (!match) return null;
+  const canonicalCode = match[1];
+  if (!/^[A-Z]{1,10}\d{2,}[BCD]?$/.test(canonicalCode)) return null;
+  return { canonicalCode, agency: match[2] };
 }
 
 function shipmentGroupage(row: ShipmentStatisticRow, sourceCode: string) {
