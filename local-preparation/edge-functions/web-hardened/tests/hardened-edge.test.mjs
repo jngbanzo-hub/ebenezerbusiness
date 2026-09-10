@@ -13,6 +13,16 @@ const paymentSource = await readFile(
   new URL("paiements-agents-enregistrer-paiement/index.ts", root),
   "utf8"
 );
+const paymentContractSource = await readFile(
+  new URL("_shared/paymentContract.ts", root),
+  "utf8"
+);
+const paymentNotificationSource = await readFile(
+  new URL("_shared/paymentNotification.ts", root),
+  "utf8"
+);
+const paymentContractModuleUrl = dataModuleUrl(paymentContractSource, "payment-contract");
+const paymentNotificationModuleUrl = dataModuleUrl(paymentNotificationSource, "payment-notification");
 const siteClientSource = await readFile(
   new URL("../../../../src/features/agent/functions.ts", import.meta.url),
   "utf8"
@@ -159,6 +169,8 @@ async function loadHandler(source, label) {
     handler = candidate;
   };
   const testable = source
+    .replace("../_shared/paymentContract.ts", paymentContractModuleUrl)
+    .replace("../_shared/paymentNotification.ts", paymentNotificationModuleUrl)
     .replace(
       'import { createClient } from "https://esm.sh/@supabase/supabase-js@2";',
       "const createClient = (...args) => globalThis.__edgeRuntime.createClient(...args);"
@@ -175,6 +187,16 @@ async function loadHandler(source, label) {
   );
   assert.equal(typeof handler, "function");
   return handler;
+}
+
+function dataModuleUrl(source, label) {
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ES2022
+    }
+  }).outputText;
+  return `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}#${label}`;
 }
 
 const searchHandler = await loadHandler(searchSource, "search");
@@ -921,7 +943,8 @@ test("58 une autre erreur Caisse reste bloquante", async () => {
 
 test("59 les interfaces Agent affichent un succès non bloquant sans Request ID", () => {
   assert.match(agentWorkspaceSource, /Paiement enregistré avec succès\. La caisse de l’agence n’est pas encore ouverte/);
-  assert.match(agentExpenseFormSource, /Dépense enregistrée avec succès\. La caisse de l’agence n’est pas encore ouverte/);
+  assert.match(agentExpenseFormSource, /Dépense enregistrée avec succès/);
+  assert.match(agentExpenseFormSource, /La caisse de l’agence n’est pas encore ouverte ; aucun débit de caisse n’a été créé\./);
   assert.doesNotMatch(agentWorkspaceSource, /Request ID/i);
   assert.doesNotMatch(agentExpenseFormSource, /Request ID/i);
 });

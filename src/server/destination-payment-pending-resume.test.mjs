@@ -78,3 +78,28 @@ test("the resume path never generates or substitutes a request id", () => {
   assert.doesNotMatch(helper, /randomUUID|crypto\.randomUUID|uuidv4/);
   assert.match(helper, /p_request_id: input\.paymentRequestId/);
 });
+
+test("an uncertain Edge failure re-reads the same orchestration and attempts canonical recovery", () => {
+  const payload = source.indexOf("const payload = await response.json()");
+  const uncertain = source.indexOf("isUncertainPaidExitFailure(response.status, code)", payload);
+  const reread = source.indexOf("await readPaymentOrchestration(input.paymentRequestId)", uncertain);
+  const refusal = source.indexOf("const status = code ===", reread);
+  assert.ok(payload >= 0 && uncertain > payload && reread > uncertain && refusal > reread);
+  assert.match(source.slice(uncertain, refusal), /resumePendingPaidDestination/);
+});
+
+test("automatic recovery is restricted to uncertain 5xx failures", () => {
+  assert.match(source, /status >= 500/);
+  for (const code of ["AGENT_SERVICE_UNAVAILABLE", "PAYMENT_ORCHESTRATION_INCOMPLETE", "SERVICE_INDISPONIBLE"]) {
+    assert.match(source, new RegExp(code));
+  }
+});
+
+test("a pending request without a certified canonical payment keeps the original refusal", () => {
+  const uncertain = source.indexOf("isUncertainPaidExitFailure(response.status, code)");
+  const refusal = source.indexOf("const status = code ===", uncertain);
+  const recovery = source.slice(uncertain, refusal);
+  assert.match(recovery, /CANONICAL_PAYMENT_NOT_CERTIFIED/);
+  assert.match(recovery, /return null/);
+  assert.doesNotMatch(recovery, /checkpoint_paid_destination_payment|finalize_paid_destination_orchestration/);
+});
