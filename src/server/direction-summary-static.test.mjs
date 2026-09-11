@@ -42,6 +42,23 @@ test("les dépenses restent ventilées par devise", () => {
   assert.doesNotMatch(source, /exchangeRate|convertCurrency|tauxDeChange/i);
 });
 
+test("l'identité technique Direction respecte le contrat UUID v4 Dépenses", () => {
+  const actorId = source.match(/const SERVICE_ACTOR:[\s\S]*?userId:\s*"([^"]+)"/)?.[1];
+  assert.ok(actorId, "actor.id Direction absent");
+  assert.match(actorId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  assert.match(source, /email:\s*"whatsapp-direction-reader@internal\.eeb"/);
+  assert.match(source, /role:\s*"ADMIN"/);
+  assert.match(source, /readAdminExpenses\(SERVICE_ACTOR,/);
+});
+
+test("une réponse normale conserve Dépenses et BILAN disponibles", () => {
+  assert.match(source, /expenses \? Object\.freeze\(\{ status: "AVAILABLE" as const/);
+  assert.match(source, /profit \? Object\.freeze\(\{ status: "AVAILABLE" as const/);
+  assert.match(source, /expenses: expenses \? "AVAILABLE" : "UNAVAILABLE"/);
+  assert.match(source, /bilan: profit \? "AVAILABLE" : "UNAVAILABLE"/);
+  assert.match(source, /buildAdminBilan\(query, SERVICE_ACTOR\)/);
+});
+
 test("l'authentification utilise un secret serveur et une comparaison temporelle sûre", () => {
   assert.match(auth, /WHATSAPP_DIRECTION_READER_TOKEN/);
   assert.match(auth, /timingSafeEqual/);
