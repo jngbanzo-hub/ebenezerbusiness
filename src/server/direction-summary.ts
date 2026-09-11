@@ -14,7 +14,7 @@ const SOURCE_TIMEOUT_MS = 4_500;
 const CASH_AGENCIES = ["FIH", "LSHI", "KLZ"] as const;
 const SERVICE_ACTOR: Extract<AdminAuthorizationResult, { authorized: true }> = Object.freeze({
   authorized: true,
-  userId: "WHATSAPP_DIRECTION_READER",
+  userId: "7d8f3b22-2b50-4b00-ba53-8b268d17ef5e",
   email: "whatsapp-direction-reader@internal.eeb",
   role: "ADMIN",
   agency: null
