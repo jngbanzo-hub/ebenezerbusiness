@@ -24,3 +24,30 @@ test("un chevauchement de pages fait échouer la lecture", async () => {
     /PAGINATION_DUPLICATE_IDENTITY/
   );
 });
+
+test("la pagination forwarding conserve toutes les lignes sur plusieurs pages", async () => {
+  const source = Array.from({ length: 2505 }, (_, index) => ({ forwarding_id: `forwarding-${index + 1}` }));
+  const result = await readExhaustivePages(
+    async (from, to) => source.slice(from, to + 1),
+    { identity: (row) => String(row.forwarding_id ?? "") }
+  );
+  assert.equal(result.rows.length, 2505);
+  assert.equal(new Set(result.rows.map((row) => row.forwarding_id)).size, 2505);
+  assert.equal(result.metrics.pageCount, 3);
+});
+
+test("la pagination forwarding refuse une identité absente", async () => {
+  await assert.rejects(
+    readExhaustivePages(async () => [{ forwarding_id: null }], { identity: (row) => String(row.forwarding_id ?? "") }),
+    /PAGINATION_DUPLICATE_IDENTITY/
+  );
+});
+
+test("la pagination forwarding détecte un doublon réel entre pages", async () => {
+  await assert.rejects(
+    readExhaustivePages(async (from) => from === 0
+      ? Array.from({ length: 1000 }, (_, index) => ({ forwarding_id: `forwarding-${index}` }))
+      : [{ forwarding_id: "forwarding-999" }], { identity: (row) => String(row.forwarding_id ?? "") }),
+    /PAGINATION_DUPLICATE_IDENTITY/
+  );
+});
