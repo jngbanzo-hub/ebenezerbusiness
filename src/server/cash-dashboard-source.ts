@@ -1,6 +1,7 @@
 import "server-only";
 
 import { resolveCashOpeningBalance } from "@/features/daily-report/cash-period";
+import { readAllCashLedgerPages } from "@/server/cash-ledger-pagination";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
@@ -60,7 +61,7 @@ export class CashDashboardSource {
       this.select("cash_daily_history", "agency,business_date,opening_balance,payments_total,expenses_total,corrections_net,closing_balance,status,version,closed_at,reopened_at", { agency }),
       this.select("cash_anomalies", "agency,business_date,anomaly_type", { agency }),
       this.select("cash_events", "amount", { agency, event_type: "OPENING_BALANCE_RECORDED" })
-      ,this.select("cash_events", "event_type,direction,amount,business_date", { agency })
+      ,this.selectAll("cash_events", "event_type,direction,amount,business_date,event_id", { agency }, "event_id")
     ]);
     if (accounts.length !== 1) throw new CashDashboardSourceError("CASH_ACCOUNT_NOT_FOUND");
     const day = currentDay[0];
@@ -102,6 +103,16 @@ export class CashDashboardSource {
     const { data, error } = await query;
     if (error || !Array.isArray(data)) throw new CashDashboardSourceError("CASH_READ_FAILED");
     return data as unknown as Record<string, unknown>[];
+  }
+
+  private async selectAll(table: string, columns: string, filters: Record<string, string>, orderColumn: string) {
+    return readAllCashLedgerPages(async (from, to) => {
+      let query = this.client.schema("public").from(table).select(columns);
+      for (const [column, value] of Object.entries(filters)) query = query.eq(column, value);
+      const { data, error } = await query.order(orderColumn, { ascending: true }).range(from, to);
+      if (error || !Array.isArray(data)) throw new CashDashboardSourceError("CASH_READ_FAILED");
+      return data as unknown as Record<string, unknown>[];
+    });
   }
 }
 
