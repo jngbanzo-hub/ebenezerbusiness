@@ -17,7 +17,7 @@ export async function readOperationalAnomalies(now = new Date()) {
     safe("STOCKAGE", () => paged<ReconciliationStorage>("stockage_events", "event_id,request_id,agency,tracking_code,weight_kg_delta,occurred_at,source_type,source_request_id,metadata", "event_id", (query) => query.in("event_type", ["SORTIE_APRES_PAIEMENT_TOTAL_DESTINATION", "SORTIE_APRES_REMISE_ACHEMINEMENT"]).not("request_id", "is", null), (row) => ({ eventId: String(row.event_id), requestId: String(row.request_id).toLowerCase(), agency: agency(row.agency), trackingCode: nullable(row.tracking_code), weightKg: row.weight_kg_delta === null ? null : Math.abs(Number(row.weight_kg_delta)), occurredAt: String(row.occurred_at), ...storageIdentity(row) }))),
     safe("ORCHESTRATION", () => paged<ReconciliationOrchestration>("stockage_payment_orchestrations", "request_id,tracking_code,agency,state,payment_created,cash_event_id,stockage_event_id,last_error,attempt_count,created_at,updated_at,completed_at,parcel_id,forwarding_id", "request_id", (query) => query, (row) => ({ requestId: String(row.request_id).toLowerCase(), trackingCode: String(row.tracking_code), agency: agency(row.agency), state: String(row.state), paymentCreated: row.payment_created === true, cashEventId: nullable(row.cash_event_id), storageEventId: nullable(row.stockage_event_id), lastError: nullable(row.last_error), attemptCount: Number(row.attempt_count), createdAt: String(row.created_at), updatedAt: String(row.updated_at), completedAt: nullable(row.completed_at), parcelId: nullable(row.parcel_id), forwardingId: nullable(row.forwarding_id) }))),
     safe("CONTINUITE", () => paged<CashClosure>("cash_daily_closures", "closure_id,agency,business_date,opening_balance,closing_balance,status,version,closed_at", "closure_id", (query) => query, (row) => ({ closureId: String(row.closure_id), agency: agency(row.agency), businessDate: String(row.business_date), openingBalance: Number(row.opening_balance), closingBalance: Number(row.closing_balance), status: String(row.status), version: Number(row.version), occurredAt: String(row.closed_at) }))),
-    safe("FORWARDING", () => paged<ForwardingContext>("stockage_forwardings", "forwarding_id,origin_agency,destination_agency", "forwarding_id", (query) => query, (row) => ({ forwardingId: String(row.forwarding_id), originAgency: agency(row.origin_agency), destinationAgency: agency(row.destination_agency) })))
+    safe("FORWARDING", () => paged<ForwardingContext>("stockage_forwardings", "forwarding_id,origin_agency,destination_agency", "forwarding_id", (query) => query, (row) => ({ forwardingId: String(row.forwarding_id), originAgency: agency(row.origin_agency), destinationAgency: agency(row.destination_agency) }), forwardingPaginationIdentity))
   ]);
   const contextById = new Map(forwardings.rows.map((row) => [row.forwardingId, row]));
   const enrich = <T extends { forwardingId?: string | null }>(rows: T[]) => rows.map((row) => ({ ...row, ...(row.forwardingId ? contextById.get(row.forwardingId) : undefined) }));
@@ -61,13 +61,13 @@ async function readPayments() {
   return { rows };
 }
 
-async function paged<T>(table: string, columns: string, order: string, filter: (query: any) => any, decode: (row: Record<string, unknown>) => T) {
+async function paged<T>(table: string, columns: string, order: string, filter: (query: any) => any, decode: (row: Record<string, unknown>) => T, pageIdentity: (row: Record<string, unknown>) => string = identity) {
   const client = serviceClient();
   const result = await readExhaustivePages(async (from, to) => {
     const response = await filter(client.from(table).select(columns)).order(order, { ascending: true }).range(from, to);
     if (response.error || !Array.isArray(response.data)) throw new Error(`${table.toUpperCase()}_UNAVAILABLE`);
     return response.data as Record<string, unknown>[];
-  }, { identity: (row) => identity(row) });
+  }, { identity: pageIdentity });
   return { rows: result.rows.map(decode), pagination: result.metrics };
 }
 
@@ -77,6 +77,7 @@ async function safe<T>(source: string, read: () => Promise<{ rows: T[]; paginati
 }
 
 function identity(row: unknown) { const value = row as Record<string, unknown>; return String(value.event_id ?? value.request_id ?? value.closure_id ?? ""); }
+export function forwardingPaginationIdentity(row: Record<string, unknown>) { return String(row.forwarding_id ?? ""); }
 function agency(value: unknown) { if (!["COO", "FIH", "LSHI", "KLZ"].includes(String(value))) throw new Error("INVALID_AGENCY"); return value as AdminSite; }
 function nullable(value: unknown) { return typeof value === "string" && value.trim() ? value : null; }
 function record(value: unknown) { return value && typeof value === "object" ? value as Record<string, unknown> : {}; }

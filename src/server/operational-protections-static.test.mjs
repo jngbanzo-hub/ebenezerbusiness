@@ -29,3 +29,8 @@ test("le centre sépare dossiers réels, historique, nouveau et attente légitim
   assert.match(reconciliation, /ORCHESTRATION_EN_ATTENTE_LEGITIME/);
   assert.doesNotMatch(reconciliation, /sameIdentity[^\n]+trackingCode/);
 });
+test("la source Forwarding utilise exclusivement forwarding_id pour sa pagination", () => {
+  assert.match(service, /stockage_forwardings[\s\S]*forwardingPaginationIdentity/);
+  assert.match(service, /forwardingPaginationIdentity\(row[^)]*\)[^{]*\{ return String\(row\.forwarding_id \?\? ""\); \}/);
+  assert.doesNotMatch(service, /forwardingPaginationIdentity[^{]*\{[^}]*tracking_code/);
+});
