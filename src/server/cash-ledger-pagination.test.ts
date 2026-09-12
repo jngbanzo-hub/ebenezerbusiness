@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { readAllCashLedgerPages } from "./cash-ledger-pagination";
 
-for (const size of [999, 1000, 1001, 1082, 2505]) {
+for (const size of [0, 1, 999, 1000, 1001, 1082, 2505]) {
   test(`pagination exhaustive et sans doublon pour ${size} événements`, async () => {
     const source = Array.from({ length: size }, (_, index) => ({ id: index + 1, amount: 1 }));
     const calls: Array<[number, number]> = [];

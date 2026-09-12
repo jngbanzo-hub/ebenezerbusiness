@@ -7,6 +7,10 @@
     {
       "path": "/api/internal/cron/forwarding-manifest-worker",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/internal/cron/operational-anomalies",
+      "schedule": "15 5 * * *"
     }
   ],
   "headers": [

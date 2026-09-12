@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import { buildStockagesRpcDiagnostic, type StockagesRpcDiagnosticContext, type StockagesRpcFailure } from "@/server/stockages-rpc-diagnostics";
 import type { OperationPerformanceTrace } from "@/server/operation-performance";
 import { storageParcelDisplayCode } from "@/server/storage-parcel-identity";
+import { readExhaustivePages } from "@/server/exhaustive-pagination";
 
 
 export const STORAGE_AGENCIES = ["FIH", "LSHI", "KLZ"] as const;
@@ -23,6 +24,9 @@ export class StockagesV2Error extends Error {
 }
 
 type RpcResult = { eventId?: string; replayed?: boolean; version?: number; anomalyId?: string; status?: string };
+type StorageParcelReadRow = { parcel_id:string; forwarding_id:string|null; tracking_code:string; agency:string; canonical_weight_kg:number|string; delivery_status:string; created_at:string; updated_at?:string; stockage_forwardings:{origin_agency:string;destination_agency:string}|Array<{origin_agency:string;destination_agency:string}>|null };
+type ManualArrivalReadRow = { event_id:string; actor_name:string; occurred_at:string; metadata:{parcels?:Array<{trackingCode?:string}>}|null };
+type ArrivalTrackingReadRow = { event_id:string; tracking_code:string|null; actor_name:string; occurred_at:string };
 
 export function isStockagesV2Enabled() {
   return process.env.STOCKAGES_V2_ENABLED === "true";
@@ -51,8 +55,8 @@ export async function readAgentStorage(agency: StorageAgency, trace?: OperationP
     client.from("stockage_accounts").select("agency,status,current_parcel_count,current_weight_kg,version,opened_business_date,updated_at").eq("agency", agency).single(),
     client.from("stockage_events").select("event_id,event_type,business_date,occurred_at,parcel_count_delta,weight_kg_delta,tracking_code,arrival_reference,actor_name,account_version_after").eq("agency", agency).order("occurred_at", { ascending: false }).limit(40),
     client.from("stockage_agent_activity").select("agency,business_date,actor_id,actor_name,arrivals,deliveries,arrived_weight_kg,delivered_weight_kg").eq("agency", agency).order("business_date", { ascending: false }).limit(40),
-    client.from("stockage_parcels").select("parcel_id,forwarding_id,tracking_code,agency,canonical_weight_kg,delivery_status,created_at,stockage_forwardings(origin_agency,destination_agency)").eq("agency", agency).in("delivery_status", ["AVAILABLE", "PRESENT"]).order("created_at", { ascending: false }).order("tracking_code", { ascending: true }),
-    client.from("stockage_events").select("actor_name,occurred_at,metadata").eq("agency", agency).eq("event_type", "MANUAL_ARRIVAL_RECORDED").order("occurred_at", { ascending: false }).limit(1000)
+    readActiveParcels(agency),
+    readManualArrivalEvents(agency)
   ]);
   const [{ data: account, error: accountError }, { data: events, error: eventsError }, { data: activity, error: activityError }, { data: parcels, error: parcelsError }, { data: arrivalEvents, error: arrivalEventsError }] = trace
     ? await trace.measure("lecture_source", readSource)
@@ -96,8 +100,8 @@ export async function readAdminStorageParcels(agency: StorageAgency) {
   const client = serviceClient();
   const [{ data: account, error: accountError }, { data: parcels, error: parcelsError }, { data: arrivals, error: arrivalsError }] = await Promise.all([
     client.from("stockage_accounts").select("agency,status,current_parcel_count,current_weight_kg,version,opened_business_date,updated_at").eq("agency", agency).single(),
-    client.from("stockage_parcels").select("parcel_id,forwarding_id,tracking_code,agency,canonical_weight_kg,delivery_status,created_at,updated_at,stockage_forwardings(origin_agency,destination_agency)").eq("agency", agency).in("delivery_status", ["AVAILABLE", "PRESENT"]).order("created_at", { ascending: false }).order("tracking_code", { ascending: true }),
-    client.from("stockage_events").select("tracking_code,actor_name,occurred_at").eq("agency", agency).not("tracking_code", "is", null).gt("parcel_count_delta", 0).order("occurred_at", { ascending: false }).limit(1000)
+    readActiveParcels(agency, true),
+    readArrivalTrackingEvents(agency)
   ]);
   if (accountError || parcelsError || arrivalsError) throw new StockagesV2Error("STORAGE_ADMIN_READ_FAILED", 503);
   const arrivalByCode = new Map<string, { actorName: string; occurredAt: string }>();
@@ -128,9 +132,7 @@ export async function readAdminStorageParcels(agency: StorageAgency) {
 
 export async function readStorageReportEvents(from: string, to = from, agency?: string) {
   const client = serviceClient();
-  const pageSize = 1000;
-  const events: Array<Record<string, unknown>> = [];
-  for (let offset = 0; ; offset += pageSize) {
+  const events = (await readExhaustivePages<Record<string, unknown>>(async (offset, end) => {
     let query = client
       .from("stockage_events")
       .select("event_id,event_type,agency,business_date,occurred_at,parcel_count_delta,weight_kg_delta,tracking_code,actor_name,source_type,source_request_id,metadata")
@@ -138,14 +140,12 @@ export async function readStorageReportEvents(from: string, to = from, agency?: 
       .lte("business_date", to)
       .order("occurred_at", { ascending: true })
       .order("event_id", { ascending: true })
-      .range(offset, offset + pageSize - 1);
+      .range(offset, end);
     if (agency) query = query.eq("agency", agency);
     const { data, error } = await query;
     if (error) throw new StockagesV2Error("STORAGE_REPORT_READ_FAILED", 503);
-    const page = data ?? [];
-    events.push(...page);
-    if (page.length < pageSize) break;
-  }
+    return (data ?? []) as unknown as Record<string, unknown>[];
+  }, { identity: (row) => String(row.event_id) })).rows;
   const forwardingIds = Array.from(new Set(events.flatMap((row) => {
     if (row.source_type !== "INTER_AGENCY_FORWARDING") return [];
     const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata as Record<string, unknown> : {};
@@ -222,6 +222,40 @@ function serviceClient() {
     auth: { autoRefreshToken: false, persistSession: false },
     global: { fetch: noStoreFetch }
   }).schema("public");
+}
+
+async function readActiveParcels(agency: StorageAgency, includeUpdatedAt = false) {
+  const columns = `parcel_id,forwarding_id,tracking_code,agency,canonical_weight_kg,delivery_status,created_at,${includeUpdatedAt ? "updated_at," : ""}stockage_forwardings(origin_agency,destination_agency)`;
+  try {
+    const result = await readExhaustivePages<StorageParcelReadRow>(async (from, to) => {
+      const response = await serviceClient().from("stockage_parcels").select(columns).eq("agency", agency).in("delivery_status", ["AVAILABLE", "PRESENT"]).order("parcel_id", { ascending: true }).range(from, to);
+      if (response.error) throw response.error;
+      return (response.data ?? []) as unknown as StorageParcelReadRow[];
+    }, { identity: (row) => String(row.parcel_id) });
+    return { data: result.rows, error: null };
+  } catch (error) { return { data: null, error }; }
+}
+
+async function readManualArrivalEvents(agency: StorageAgency) {
+  try {
+    const result = await readExhaustivePages<ManualArrivalReadRow>(async (from, to) => {
+      const response = await serviceClient().from("stockage_events").select("event_id,actor_name,occurred_at,metadata").eq("agency", agency).eq("event_type", "MANUAL_ARRIVAL_RECORDED").order("event_id", { ascending: true }).range(from, to);
+      if (response.error) throw response.error;
+      return (response.data ?? []) as unknown as ManualArrivalReadRow[];
+    }, { identity: (row) => String(row.event_id) });
+    return { data: result.rows, error: null };
+  } catch (error) { return { data: null, error }; }
+}
+
+async function readArrivalTrackingEvents(agency: StorageAgency) {
+  try {
+    const result = await readExhaustivePages<ArrivalTrackingReadRow>(async (from, to) => {
+      const response = await serviceClient().from("stockage_events").select("event_id,tracking_code,actor_name,occurred_at").eq("agency", agency).not("tracking_code", "is", null).gt("parcel_count_delta", 0).order("event_id", { ascending: true }).range(from, to);
+      if (response.error) throw response.error;
+      return (response.data ?? []) as unknown as ArrivalTrackingReadRow[];
+    }, { identity: (row) => String(row.event_id) });
+    return { data: result.rows, error: null };
+  } catch (error) { return { data: null, error }; }
 }
 
 function noStoreFetch(input: RequestInfo | URL, init?: RequestInit) {

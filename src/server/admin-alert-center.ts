@@ -14,6 +14,7 @@ import { createServerCashDashboardSource } from "@/server/cash-dashboard-source"
 import { readQrStockSummary } from "@/server/qr-stock-summary";
 import { consistencyAlerts, deduplicateAlerts, notificationAlerts, onlyUnreadAdminAlerts, paymentAlerts, qrStockAlert, sourceUnavailable, staleStorageAlert, type AdminAlert, type AdminAlertCategory } from "@/server/admin-alert-rules";
 import { readAdminAlertReadStates } from "@/server/admin-alert-read-state";
+import { readExhaustivePages } from "@/server/exhaustive-pagination";
 
 type AdminIdentity={userId:string;email:string;agency:"COO"|"FIH"|"LSHI"|"KLZ"|null};
 export type AdminAlertWithReadState=AdminAlert&{read:boolean;readAt:string|null;occurrence:number};
@@ -38,7 +39,7 @@ export async function readAdminAlertCenter(identity:AdminIdentity, now=new Date(
 }
 
 async function isolated(requestId:string,category:AdminAlertCategory,now:string,read:()=>Promise<AdminAlert[]>){try{return await withTimeout(read(),12_000);}catch(error){logTrace(requestId,category,"alert-group",0,"error",error);return [sourceUnavailable(category,now)];}}
-async function readStorageAlerts(now:Date,days:number){const {data,error}=await client().from("stockage_parcels").select("tracking_code,agency,updated_at").in("delivery_status",["AVAILABLE","PRESENT"]);if(error)throw new Error("STORAGE_UNAVAILABLE");return (data??[]).map((row)=>staleStorageAlert({trackingCode:String(row.tracking_code),agency:agency(row.agency),updatedAt:String(row.updated_at)},now,days)).filter((value):value is AdminAlert=>Boolean(value));}
+async function readStorageAlerts(now:Date,days:number){const source=client();const rows=(await readExhaustivePages(async(from,to)=>{const result=await source.from("stockage_parcels").select("parcel_id,tracking_code,agency,updated_at").in("delivery_status",["AVAILABLE","PRESENT"]).order("parcel_id").range(from,to);if(result.error)throw new Error("STORAGE_UNAVAILABLE");return result.data??[];},{identity:(row)=>row.parcel_id})).rows;return rows.map((row)=>staleStorageAlert({trackingCode:String(row.tracking_code),agency:agency(row.agency),updatedAt:String(row.updated_at)},now,days)).filter((value):value is AdminAlert=>Boolean(value));}
 async function readPaymentAlerts(payments:AdminPayment[],now:Date,days:number){return payments.flatMap((item)=>paymentAlerts({id:item.id,trackingCode:item.codeColis,agency:item.agenceEncaissement,expected:item.montantAttendu,paid:item.montantPaye,status:item.statutPaiement,occurredAt:item.dateTime},now,days));}
 async function readCashAlerts(now:Date){const dashboard=await createServerCashDashboardSource().readAdmin(getPortoNovoBusinessDate(now));return dashboard.agencies.flatMap((item)=>item.anomalies.map((anomaly)=>({id:`cash:${item.agency}:${anomaly.businessDate}:${anomaly.type}`,level:"ATTENTION" as const,category:"CAISSE" as const,title:"ANOMALIE CAISSE À VÉRIFIER",agency:item.agency,trackingCode:null,occurredAt:`${anomaly.businessDate}T00:00:00.000Z`,description:anomaly.type,sources:["cash_anomalies"]})));}
 async function readConsistencyAlerts(requestId:string,now:string){

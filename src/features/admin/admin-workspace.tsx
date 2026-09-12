@@ -569,6 +569,7 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
 
 const ADMIN_MODULES = [
   { title: "Rapport synthèse du jour", description: "Consultez la synthèse quotidienne Encaissements, Dépenses, Caisse et Stockages.", href: "/admin/rapport-journalier", icon: ClipboardList },
+  { title: "Centre d’anomalies", description: "Surveillez en lecture seule les écarts Caisse, paiements, Stockage et orchestrations.", href: "/admin/anomalies", icon: CircleAlert },
   { title: "Recherche globale colis", description: "Recherchez un code complet dans le MANIFESTE, Stockage V2, Encaissements et QR.", href: "/admin/recherche-globale-colis", icon: PackageSearch },
   { title: "Encaissements", description: "Consultez les paiements, filtres, totaux et statistiques par agent.", href: "/admin/encaissements", icon: CreditCard },
   { title: "Dépenses", description: "Accédez au module Dépenses sans le mélanger aux opérations de Caisse.", href: "/admin/depenses", icon: ClipboardList },
