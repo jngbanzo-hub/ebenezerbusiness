@@ -18,7 +18,12 @@ const rows: Record<string, Record<string, unknown>[]> = {
 function fakeClient() {
   return { schema: () => ({ from: (table: string) => ({ select: () => {
     let selected = [...(rows[table] ?? [])];
-    const query = { eq(column: string, value: string) { selected = selected.filter((row) => row[column] === value); return query; }, then(resolve: (value: unknown) => unknown) { return Promise.resolve({ data: selected, error: null }).then(resolve); } };
+    const query = {
+      eq(column: string, value: string) { selected = selected.filter((row) => row[column] === value); return query; },
+      order(column: string) { selected.sort((a, b) => String(a[column]).localeCompare(String(b[column]))); return query; },
+      range(from: number, to: number) { return Promise.resolve({ data: selected.slice(from, to + 1), error: null }); },
+      then(resolve: (value: unknown) => unknown) { return Promise.resolve({ data: selected, error: null }).then(resolve); }
+    };
     return query;
   } }) }) };
 }
