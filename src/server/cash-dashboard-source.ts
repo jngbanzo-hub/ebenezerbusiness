@@ -28,7 +28,7 @@ export class CashDashboardSource {
     const agencies = await Promise.all(CASH_AGENCIES.map((agency) => this.readAgency(agency, businessDate)));
     const [cooRows, auditRows] = await Promise.all([
       this.select("cash_coo_revenue_outside_cash", "business_date,actor_user_id,actor_name_snapshot,payment_count,amount_collected", { business_date: businessDate }),
-      this.select("cash_admin_audit", "audit_id,agency,action,reason,admin_name_snapshot,occurred_at")
+      this.selectAll("cash_admin_audit", "audit_id,agency,action,reason,admin_name_snapshot,occurred_at", {}, "audit_id")
     ]);
     const byAgent = cooRows.map((row) => ({
       actorUserId: text(row.actor_user_id), actorName: text(row.actor_name_snapshot),
@@ -58,7 +58,7 @@ export class CashDashboardSource {
       this.select("cash_current_day", "agency,business_date,payments_total,expenses_total,corrections_net", { agency, business_date: businessDate }),
       this.select("cash_agency_totals", "agency,business_date,payment_count,payments_total,expenses_total", { agency, business_date: businessDate }),
       this.select("cash_agent_payment_details", "agency,business_date,actor_user_id,actor_name_snapshot,payment_count,amount_collected", { agency, business_date: businessDate }),
-      this.select("cash_daily_history", "agency,business_date,opening_balance,payments_total,expenses_total,corrections_net,closing_balance,status,version,closed_at,reopened_at", { agency }),
+      this.selectAll("cash_daily_closures", "closure_id,agency,business_date,opening_balance,payments_total,expenses_total,corrections_net,closing_balance,status,version,closed_at,reopened_at", { agency }, "closure_id"),
       this.select("cash_anomalies", "agency,business_date,anomaly_type", { agency }),
       this.select("cash_events", "amount", { agency, event_type: "OPENING_BALANCE_RECORDED" })
       ,this.selectAll("cash_events", "event_type,direction,amount,business_date,event_id", { agency }, "event_id")
@@ -112,7 +112,7 @@ export class CashDashboardSource {
       const { data, error } = await query.order(orderColumn, { ascending: true }).range(from, to);
       if (error || !Array.isArray(data)) throw new CashDashboardSourceError("CASH_READ_FAILED");
       return data as unknown as Record<string, unknown>[];
-    });
+    }, (row) => text(row[orderColumn]));
   }
 }
 
@@ -135,22 +135,17 @@ export async function readCashReportMetadata(from: string, to: string) {
     global: { fetch: noStoreFetch }
   });
   const [events, audit] = await Promise.all([
-    client.schema("public").from("cash_events")
-      .select("event_id,agency,direction,amount,reason,actor_name_snapshot,occurred_at,business_date")
-      .eq("event_type", "ADMIN_ADJUSTMENT_RECORDED").gte("business_date", from).lte("business_date", to),
-    client.schema("public").from("cash_admin_audit")
-      .select("audit_id,agency,action,new_value,admin_name_snapshot,occurred_at,metadata")
-      .eq("action", "DAILY_REPORT_NOTE")
+    readAllCashLedgerPages(async (start, end) => { const result = await client.schema("public").from("cash_events").select("event_id,agency,direction,amount,reason,actor_name_snapshot,occurred_at,business_date").eq("event_type", "ADMIN_ADJUSTMENT_RECORDED").gte("business_date", from).lte("business_date", to).order("event_id").range(start, end); if (result.error) throw new CashDashboardSourceError("CASH_READ_FAILED"); return result.data ?? []; }, (row) => row.event_id),
+    readAllCashLedgerPages(async (start, end) => { const result = await client.schema("public").from("cash_admin_audit").select("audit_id,agency,action,new_value,admin_name_snapshot,occurred_at,metadata").eq("action", "DAILY_REPORT_NOTE").order("audit_id").range(start, end); if (result.error) throw new CashDashboardSourceError("CASH_READ_FAILED"); return result.data ?? []; }, (row) => row.audit_id)
   ]);
-  if (events.error || audit.error) throw new CashDashboardSourceError("CASH_READ_FAILED");
   return Object.freeze({
-    adjustments: Object.freeze((events.data ?? []).map((row) => Object.freeze({
+    adjustments: Object.freeze(events.map((row) => Object.freeze({
       eventId: text(row.event_id), agency: cashAgency(row.agency),
       direction: row.direction === "DEBIT" ? "DEBIT" as const : "CREDIT" as const,
       amount: money(row.amount), reason: text(row.reason), admin: text(row.actor_name_snapshot),
       occurredAt: text(row.occurred_at)
     }))),
-    notes: Object.freeze((audit.data ?? []).map((row) => {
+    notes: Object.freeze(audit.map((row) => {
       const value = row.new_value && typeof row.new_value === "object" ? row.new_value as Record<string, unknown> : {};
       const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata as Record<string, unknown> : {};
       return Object.freeze({ auditId: text(row.audit_id), agency: cashAgency(row.agency), content: text(value.content), admin: text(row.admin_name_snapshot), occurredAt: text(row.occurred_at), visibleToAgents: metadata.visibleToAgents === true, reportFrom: text(metadata.from), reportTo: text(metadata.to) });

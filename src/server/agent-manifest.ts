@@ -100,21 +100,20 @@ function toManifestItem(row: ManifestShipperRow) {
 async function readStorageComparison(agency: StorageAgency, codes: string[]) {
   const unique = Array.from(new Set(codes));
   if (!unique.length) return new Map<string, { weightKg: number; status: string }>();
-  const { data, error } = await serviceClient()
-    .from("stockage_parcels")
-    .select("tracking_code,canonical_weight_kg,delivery_status")
-    .eq("agency", agency)
-    .is("forwarding_id", null)
-    .eq("delivery_status", "AVAILABLE")
-    .in("tracking_code", unique);
-  if (error) throw new StockagesV2Error("STORAGE_READ_FAILED", 503);
+  const data = (await Promise.all(chunk(unique, 250).map(async (trackingCodes) => {
+    const result = await serviceClient().from("stockage_parcels").select("tracking_code,canonical_weight_kg,delivery_status").eq("agency", agency).is("forwarding_id", null).eq("delivery_status", "AVAILABLE").in("tracking_code", trackingCodes);
+    if (result.error) throw new StockagesV2Error("STORAGE_READ_FAILED", 503);
+    return result.data ?? [];
+  }))).flat();
   return new Map(
-    (data ?? []).map((row) => [
+    data.map((row) => [
       String(row.tracking_code),
       { weightKg: Number(row.canonical_weight_kg), status: String(row.delivery_status) }
     ])
   );
 }
+
+function chunk<T>(rows: T[], size: number) { return Array.from({ length: Math.ceil(rows.length / size) }, (_, index) => rows.slice(index * size, (index + 1) * size)); }
 
 function serviceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
