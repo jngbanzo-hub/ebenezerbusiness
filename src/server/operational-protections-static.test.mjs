@@ -22,3 +22,10 @@ test("le centre Admin annonce explicitement la lecture seule", () => {
   assert.match(ui, /strictement en lecture seule/);
   assert.doesNotMatch(ui, /authenticatedRead[^\n]+method:\s*["']POST/);
 });
+test("le centre sépare dossiers réels, historique, nouveau et attente légitime", () => {
+  for (const label of ["Dossiers réels concernés", "Historique", "Nouvelles après protections", "Situations légitimes"]) assert.match(ui, new RegExp(label));
+  assert.match(reconciliation, /forwardingId/);
+  assert.match(reconciliation, /parcelId/);
+  assert.match(reconciliation, /ORCHESTRATION_EN_ATTENTE_LEGITIME/);
+  assert.doesNotMatch(reconciliation, /sameIdentity[^\n]+trackingCode/);
+});
