@@ -76,6 +76,8 @@ function refusal(code: string, status: number, context: RefusalContext) {
   const diagnostic = logOperationRefusal({ operation: "PAYMENT", applicationCode: code, httpStatus: status, ...context });
   const message = code === "PARCEL_NOT_IN_AGENCY_STORAGE" || code === "PARCEL_NOT_IN_STOCK"
     ? "Ce colis n’est pas présent dans le Stockage de votre agence."
+    : code === "PAYMENT_LOCK_BUSY"
+      ? "Le service de paiement est temporairement occupé. Réessayez avec la même demande."
     : code === "SESSION_EXPIRED" || code === "SESSION_EXPIREE" || code === "SESSION_EXPIRED_REFRESHED"
       ? "Votre session a expiré. Veuillez vous reconnecter."
       : "Paiement refusé.";

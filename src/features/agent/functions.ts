@@ -35,6 +35,7 @@ const ERROR_MESSAGES = {
   PAIEMENT_PARTIEL_INTERDIT:
     "Le montant doit correspondre exactement au solde restant pour cette agence.",
   PAIEMENT_REFUSE: "Le paiement a été refusé. Vérifiez les informations et réessayez.",
+  PAYMENT_LOCK_BUSY: "Le service de paiement est temporairement occupé. Réessayez avec la même demande.",
   IDEMPOTENCY_CONFLICT:
     "Ce paymentRequestId correspond déjà à un autre paiement.",
   SERVICE_INDISPONIBLE: "Le service Agent est indisponible. Veuillez réessayer."
