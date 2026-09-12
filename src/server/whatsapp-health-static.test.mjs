@@ -9,6 +9,9 @@ const system = readFileSync(new URL("../features/admin/admin-system-status.tsx",
 
 test("la santé distante est validée strictement et échoue fermée", () => {
   assert.match(reader, /\.strict\(\)/);
+  assert.match(reader, /cloudRun: z\.enum\(\["ACTIVE", "OPERATIONAL", "PROBLEM", "UNKNOWN"\]\)/);
+  assert.match(reader, /lastRun: z\.enum\(\["SUCCESS", "FAILURE", "EN COURS", "UNKNOWN"\]\)/);
+  assert.match(reader, /unavailableDependencies: z\.array/);
   assert.match(reader, /controller\.abort\(\)/);
   assert.match(reader, /4_000/);
   assert.match(reader, /status: "UNAVAILABLE", health: null/);
@@ -27,4 +30,13 @@ test("la carte est séparée, sans polling ni action", () => {
   assert.match(component, /\/api\/admin\/whatsapp-health/);
   assert.match(component, /INDISPONIBLE/);
   assert.doesNotMatch(component, /setInterval|onClick|<button|<Button/);
+});
+
+test("la carte traduit les états légitimes et simplifie uniquement les libellés", () => {
+  assert.match(component, /cloudRun: DependencyStatus/);
+  assert.match(component, /lastRun: "SUCCESS" \| "FAILURE" \| "EN COURS" \| "UNKNOWN"/);
+  assert.match(component, /value === "OPERATIONAL" \? "OPÉRATIONNEL"/);
+  assert.match(component, /Numéros invalides \(24h\)/);
+  assert.match(component, /Livraisons non confirmées/);
+  assert.doesNotMatch(component, /INVALID_RECIPIENT 24h|DELIVERY_UNCERTAIN récent/);
 });
