@@ -10,7 +10,9 @@ const SOURCE_COLIS_ID =
   "13idZ5lGAZs8OQiaQe3nQinkRF0NRmxsg2BxcrNAE8LI";
 const API_KEY_PROPERTY = "PAIEMENTS_AGENTS_API_KEY";
 const CONTRACT_VERSION = "2";
-const LOCK_TIMEOUT_MS = 20000;
+// Budget Edge Production: 12 000 ms; p95 observé: 7 663 ms.
+// 1 000 ms laisse 3 337 ms au-dessus du p95 pour finir et répondre.
+const LOCK_TIMEOUT_MS = 1000;
 const PAYMENT_REQUEST_ID_COLUMN = 16;
 const PAYMENT_REQUEST_ID_HEADER = "Payment Request ID";
 
@@ -131,7 +133,8 @@ function doPost(e) {
       codeErreurPublic_(error),
       messageErreurPublic_(error),
       requestId,
-      action
+      action,
+      error && error.technicalTelemetry
     );
   }
 }
@@ -479,10 +482,16 @@ function enregistrerPaiementUnifie_(paiement) {
     verrouObtenu = verrou.tryLock(LOCK_TIMEOUT_MS);
     mesurerEtape_("lock_wait");
     if (!verrouObtenu) {
-      throw erreurPublique_(
-        "VERROU_INDISPONIBLE",
-        "Le service est temporairement occupé."
+      var erreurVerrou = erreurPublique_(
+        "PAYMENT_LOCK_BUSY",
+        "Le service de paiement est temporairement occupé. Réessayez avec la même demande."
       );
+      erreurVerrou.retryable = true;
+      erreurVerrou.technicalTelemetry = construireTelemetrieTechnique_(
+        performanceStartedAt,
+        performanceSteps
+      );
+      throw erreurVerrou;
     }
 
     var classeur = SpreadsheetApp.getActiveSpreadsheet();
@@ -495,7 +504,11 @@ function enregistrerPaiementUnifie_(paiement) {
     mesurerEtape_("payment_request_lookup");
     if (paiementExistant) {
       if (paiement.operationType === "INTER_AGENCY_FORWARDING") {
-        return reconstruireRejeuAcheminement_(paiement, paiementExistant);
+        return ajouterTelemetrieTechnique_(
+          reconstruireRejeuAcheminement_(paiement, paiementExistant),
+          performanceStartedAt,
+          performanceSteps
+        );
       }
       throw erreurPublique_(
         "PAIEMENT_DEJA_ENREGISTRE",
@@ -601,7 +614,11 @@ function enregistrerPaiementUnifie_(paiement) {
     mesurerEtape_("business_validation_and_write_preparation");
 
     if (paiement.simulation) {
-      return resultat;
+      return ajouterTelemetrieTechnique_(
+        resultat,
+        performanceStartedAt,
+        performanceSteps
+      );
     }
 
     var feuillePaiement = classeur.getSheetByName(
@@ -642,7 +659,11 @@ function enregistrerPaiementUnifie_(paiement) {
     SpreadsheetApp.flush();
     mesurerEtape_("spreadsheet_flush");
 
-    return resultat;
+    return ajouterTelemetrieTechnique_(
+      resultat,
+      performanceStartedAt,
+      performanceSteps
+    );
   } catch (error) {
     if (error && error.publicCode) {
       throw error;
@@ -1010,6 +1031,7 @@ function reponseSucces_(data, requestId, action) {
     payload.simulation = data.simulation;
     payload.paiement = construirePaiementCompatibilite_(data);
     payload.paymentRequestId = data.paymentRequestId;
+    payload.technicalTelemetry = data.technicalTelemetry;
   }
 
   var output = sortieJson_(payload);
@@ -1019,7 +1041,7 @@ function reponseSucces_(data, requestId, action) {
   return output;
 }
 
-function reponseErreur_(code, message, requestId, action) {
+function reponseErreur_(code, message, requestId, action, technicalTelemetry) {
   var codeCompatibilite = codeCompatibiliteEdge_(code);
   var payload = {
     ok: false,
@@ -1034,6 +1056,13 @@ function reponseErreur_(code, message, requestId, action) {
     message: message,
     erreur: message
   };
+
+  if (technicalTelemetry) {
+    payload.technicalTelemetry = technicalTelemetry;
+  }
+  if (code === "PAYMENT_LOCK_BUSY") {
+    payload.retryable = true;
+  }
 
   if (
     action === "rechercherColis" &&
@@ -1086,6 +1115,23 @@ function journaliserPerformancePaiement_(payload) {
   if (typeof console !== "undefined" && console && typeof console.info === "function") {
     console.info(JSON.stringify(payload));
   }
+}
+
+function ajouterTelemetrieTechnique_(resultat, startedAt, steps) {
+  resultat.technicalTelemetry = construireTelemetrieTechnique_(
+    startedAt,
+    steps
+  );
+  return resultat;
+}
+
+function construireTelemetrieTechnique_(startedAt, steps) {
+  var totalMs = Date.now() - startedAt;
+  return {
+    lockWaitMs: Number(steps.lock_wait || 0),
+    canonicalPaymentMs: totalMs,
+    totalMs: totalMs
+  };
 }
 
 function erreurPublique_(code, message) {

@@ -17,6 +17,7 @@ type ErrorCode =
   | "MONTANT_INVALIDE"
   | "MODE_PAIEMENT_INVALIDE"
   | "PAYMENT_REQUEST_ID_INVALIDE"
+  | "PAYMENT_LOCK_BUSY"
   | "PAIEMENT_DEJA_ENREGISTRE"
   | "DEPASSEMENT_SOLDE"
   | "COLIS_DEJA_SOLDE"
@@ -132,6 +133,11 @@ const PUBLIC_UPSTREAM_ERRORS: Readonly<
     status: 400,
     defaultMessage:
       "L’identifiant de la demande de paiement est invalide.",
+  },
+  PAYMENT_LOCK_BUSY: {
+    status: 503,
+    defaultMessage:
+      "Le service de paiement est temporairement occupé. Réessayez avec la même demande.",
   },
   DEPASSEMENT_SOLDE: {
     status: 400,
@@ -266,6 +272,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     if (!paymentInput) {
       return errorResponse("MONTANT_INVALIDE", 400);
     }
+    performanceTrace.setFlowType(paymentInput.operationContext.type);
 
     const destinationCode = paymentInput.operationContext.sourceDestinationCode;
     const isInterAgencyForwarding = paymentInput.operationContext.type === "INTER_AGENCY_FORWARDING";
@@ -312,7 +319,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
       client: serviceClient,
     };
     if (cashCreditsEnabled && cashAgency && !cashClient) {
-      return errorResponse("SERVICE_INDISPONIBLE", 503);
+      return performanceTrace.finish(errorResponse("SERVICE_INDISPONIBLE", 503), "ERROR_SERVICE_INDISPONIBLE");
     }
 
     const usePaidExitOrchestration = Boolean(
@@ -340,7 +347,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
         p_tracking_code: paymentInput.codeColis,
       });
       performanceTrace.add("begin_orchestration", beginStartedAt);
-      if (begun.error) return orchestrationError(begun.error.message);
+      if (begun.error) return performanceTrace.finish(orchestrationError(begun.error.message), "ERROR_ORCHESTRATION_BEGIN");
       const checkpoint = isRecord(begun.data) ? begun.data : null;
       const storedPayment = sanitizeStoredPayment(checkpoint?.paymentResponse);
       if (checkpoint?.state === "COMPLETED" && storedPayment) {
@@ -350,7 +357,8 @@ Deno.serve(async (request: Request): Promise<Response> => {
         const finalizeStartedAt = performance.now();
         const resumed = await finalizePaidExit(cashClient, paymentInput, commandFingerprint, isForwardingDestinationPayment);
         performanceTrace.add("finalize_orchestration", finalizeStartedAt);
-        if (resumed.kind === "ERROR") return orchestrationError(resumed.code);
+        performanceTrace.add("finalization", finalizeStartedAt);
+        if (resumed.kind === "ERROR") return performanceTrace.finish(orchestrationError(resumed.code), "ERROR_ORCHESTRATION_RESUME");
         return paymentSuccessResponse({ ...storedPayment, cashRecorded: true, cashStatus: "RECORDED" }, paymentInput.paymentRequestId, true, notificationContext, performanceTrace, "SUCCESS_RESUMED");
       }
     }
@@ -364,13 +372,13 @@ Deno.serve(async (request: Request): Promise<Response> => {
       );
       performanceTrace.add("idempotency_replay", replayStartedAt);
       if (replay.kind === "CONFLICT") {
-        return errorResponse("IDEMPOTENCY_CONFLICT", 409);
+        return performanceTrace.finish(errorResponse("IDEMPOTENCY_CONFLICT", 409), "ERROR_IDEMPOTENCY_CONFLICT");
       }
       if (replay.kind === "REPLAY") {
         return paymentSuccessResponse(replay.payment, paymentInput.paymentRequestId, true, notificationContext, performanceTrace, "SUCCESS_REPLAY");
       }
       if (replay.kind === "ERROR") {
-        return errorResponse("SERVICE_INDISPONIBLE", 503);
+        return performanceTrace.finish(errorResponse("SERVICE_INDISPONIBLE", 503), "ERROR_SERVICE_INDISPONIBLE");
       }
     }
 
@@ -378,7 +386,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
       Deno.env.get("PAIEMENTS_AGENTS_APPS_SCRIPT_URL")?.trim();
     const apiKey = Deno.env.get("PAIEMENTS_AGENTS_API_KEY")?.trim();
     if (!appsScriptUrl || !apiKey || !isHttpsUrl(appsScriptUrl)) {
-      return errorResponse("SERVICE_INDISPONIBLE", 503);
+      return performanceTrace.finish(errorResponse("SERVICE_INDISPONIBLE", 503), "ERROR_SERVICE_INDISPONIBLE");
     }
 
     const controller = new AbortController();
@@ -439,13 +447,17 @@ Deno.serve(async (request: Request): Promise<Response> => {
       const upstreamPayload = parseUpstreamJson(upstreamText);
       performanceTrace.add("apps_script_json_parse", upstreamParseStartedAt);
       performanceTrace.add("apps_script_payment", appsScriptStartedAt);
+      performanceTrace.readAppsScriptTelemetry(upstreamPayload);
       const upstreamValidationStartedAt = performance.now();
       if (!upstreamResponse.ok || upstreamPayload === null) {
         const code = classifyUpstreamError(
           upstreamResponse.status,
           upstreamPayload,
         );
-        return upstreamErrorResponse(code, statusForError(code));
+        return performanceTrace.finish(
+          upstreamErrorResponse(code, statusForError(code)),
+          `ERROR_${code}`,
+        );
       }
       if (
         isRecord(upstreamPayload) &&
@@ -453,17 +465,23 @@ Deno.serve(async (request: Request): Promise<Response> => {
       ) {
         const publicError = readPublicUpstreamError(upstreamPayload);
         if (publicError !== null) {
-          return upstreamErrorResponse(
-            publicError.code,
-            publicError.status,
-            publicError.message,
+          return performanceTrace.finish(
+            upstreamErrorResponse(
+              publicError.code,
+              publicError.status,
+              publicError.message,
+            ),
+            `ERROR_${publicError.code}`,
           );
         }
 
-        return errorResponse(
-          "PAIEMENT_REFUSE",
-          statusForError("PAIEMENT_REFUSE"),
-          "Le paiement a été refusé.",
+        return performanceTrace.finish(
+          errorResponse(
+            "PAIEMENT_REFUSE",
+            statusForError("PAIEMENT_REFUSE"),
+            "Le paiement a été refusé.",
+          ),
+          "ERROR_PAIEMENT_REFUSE",
         );
       }
 
@@ -473,7 +491,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
         destinationCode,
       );
       if (!publicPayment) {
-        return errorResponse("SERVICE_INDISPONIBLE", 503);
+        return performanceTrace.finish(errorResponse("SERVICE_INDISPONIBLE", 503), "ERROR_INVALID_UPSTREAM_RESPONSE");
       }
       performanceTrace.add("apps_script_response_validation", upstreamValidationStartedAt);
 
@@ -485,11 +503,12 @@ Deno.serve(async (request: Request): Promise<Response> => {
           p_request_id: paymentInput.paymentRequestId,
         });
         performanceTrace.add("checkpoint", checkpointStartedAt);
-        if (checkpoint.error) return orchestrationError(checkpoint.error.message);
+        if (checkpoint.error) return performanceTrace.finish(orchestrationError(checkpoint.error.message), "ERROR_CHECKPOINT");
         const finalizeStartedAt = performance.now();
         const finalized = await finalizePaidExit(cashClient, paymentInput, commandFingerprint, isForwardingDestinationPayment);
         performanceTrace.add("finalize_orchestration", finalizeStartedAt);
-        if (finalized.kind === "ERROR") return orchestrationError(finalized.code);
+        performanceTrace.add("finalization", finalizeStartedAt);
+        if (finalized.kind === "ERROR") return performanceTrace.finish(orchestrationError(finalized.code), "ERROR_FINALIZATION");
         return paymentSuccessResponse({ ...publicPayment, cashRecorded: true, cashStatus: "RECORDED" }, paymentInput.paymentRequestId, finalized.replayed, notificationContext, performanceTrace, "SUCCESS");
       }
 
@@ -515,6 +534,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
           p_payment_request_id: paymentInput.paymentRequestId,
         });
         performanceTrace.add("cash", cashStartedAt);
+        performanceTrace.add("cash_event", cashStartedAt);
         if (credit.error) {
           if (String(credit.error.message).includes("CASH_ACCOUNT_NOT_ACTIVE")) {
             return paymentSuccessResponse({
@@ -523,13 +543,12 @@ Deno.serve(async (request: Request): Promise<Response> => {
               cashStatus: "ACCOUNT_NOT_ACTIVE",
             }, paymentInput.paymentRequestId, false, notificationContext, performanceTrace, "SUCCESS_CASH_ACCOUNT_INACTIVE");
           }
-          return errorResponse(
-            String(credit.error.message).includes("IDEMPOTENCY_CONFLICT")
-              ? "IDEMPOTENCY_CONFLICT"
-              : "SERVICE_INDISPONIBLE",
-            String(credit.error.message).includes("IDEMPOTENCY_CONFLICT")
-              ? 409
-              : 503,
+          const code = String(credit.error.message).includes("IDEMPOTENCY_CONFLICT")
+            ? "IDEMPOTENCY_CONFLICT"
+            : "SERVICE_INDISPONIBLE";
+          return performanceTrace.finish(
+            errorResponse(code, code === "IDEMPOTENCY_CONFLICT" ? 409 : 503),
+            `ERROR_${code}`,
           );
         }
         const replayed = isRecord(credit.data) && credit.data.replayed === true;
@@ -542,8 +561,15 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
       // COO reste volontairement hors caisse canonique.
       return paymentSuccessResponse(publicPayment, paymentInput.paymentRequestId, false, notificationContext, performanceTrace, "SUCCESS_COO_HORS_CAISSE");
-    } catch {
-      return errorResponse("SERVICE_INDISPONIBLE", 503);
+    } catch (cause) {
+      const timeoutReached = cause instanceof DOMException
+        ? cause.name === "AbortError"
+        : cause instanceof Error && cause.name === "AbortError";
+      performanceTrace.setTimeout(timeoutReached);
+      return performanceTrace.finish(
+        errorResponse("SERVICE_INDISPONIBLE", 503),
+        timeoutReached ? "ERROR_TIMEOUT" : "ERROR_SERVICE_INDISPONIBLE",
+      );
     } finally {
       clearTimeout(timeout);
     }
@@ -558,6 +584,8 @@ class PaymentPerformanceTrace {
   private readonly durations: Record<string, number> = {};
   private agency = "UNKNOWN";
   private requestId = "UNKNOWN";
+  private flowType = "UNKNOWN";
+  private timeout = false;
   private completed = false;
 
   add(step: string, startedAt: number): void {
@@ -573,21 +601,77 @@ class PaymentPerformanceTrace {
     this.agency = agency;
   }
 
+  setFlowType(flowType: string): void {
+    this.flowType = flowType;
+  }
+
+  setTimeout(timeout: boolean): void {
+    this.timeout = timeout;
+  }
+
+  readAppsScriptTelemetry(payload: unknown): void {
+    if (!isRecord(payload) || !isRecord(payload.technicalTelemetry)) return;
+    const lockWaitMs = readTelemetryDuration(payload.technicalTelemetry.lockWaitMs);
+    const canonicalPaymentMs = readTelemetryDuration(
+      payload.technicalTelemetry.canonicalPaymentMs,
+    );
+    if (lockWaitMs !== null) this.durations.apps_script_lock_wait = lockWaitMs;
+    if (canonicalPaymentMs !== null) {
+      this.durations.canonical_payment = canonicalPaymentMs;
+    }
+  }
+
   finish(response: Response, result: string): Response {
     if (!this.completed) {
       this.completed = true;
-      console.info(JSON.stringify({
+      const event = {
         event: "payment_operation_performance",
         requestId: this.requestId,
         agency: this.agency,
+        flowType: this.flowType,
         result,
         status: response.status,
+        timeout: this.timeout,
         totalMs: roundDuration(performance.now() - this.startedAt),
         durationsMs: this.durations,
-      }));
+      };
+      console.info(JSON.stringify(event));
+      this.persist(event);
     }
     return response;
   }
+
+  private persist(event: {
+    agency: string;
+    durationsMs: Record<string, number>;
+    flowType: string;
+    requestId: string;
+    result: string;
+    status: number;
+    timeout: boolean;
+    totalMs: number;
+  }): void {
+    if (!isUuidV4(event.requestId) || !["COO", "FIH", "LSHI", "KLZ"].includes(event.agency)) {
+      return;
+    }
+    const operation = persistPaymentPerformance(event);
+    const edgeRuntime = (globalThis as unknown as {
+      EdgeRuntime?: { waitUntil(promise: Promise<unknown>): void };
+    }).EdgeRuntime;
+    if (edgeRuntime) edgeRuntime.waitUntil(operation);
+    else void operation;
+  }
+}
+
+function readTelemetryDuration(value: unknown): number | null {
+  const duration = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(duration) && duration >= 0 && duration <= 120_000
+    ? roundDuration(duration)
+    : null;
+}
+
+function isUuidV4(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function parseUpstreamJson(text: string): unknown | null {
@@ -621,6 +705,56 @@ async function finalizePaidExit(
     return { kind: "ERROR", code: isRecord(result.data) && typeof result.data.code === "string" ? result.data.code : "PAYMENT_ORCHESTRATION_INCOMPLETE" };
   }
   return { kind: "SUCCESS", replayed: result.data.replayed === true };
+}
+
+async function persistPaymentPerformance(event: {
+  agency: string;
+  durationsMs: Record<string, number>;
+  flowType: string;
+  requestId: string;
+  result: string;
+  status: number;
+  timeout: boolean;
+  totalMs: number;
+}): Promise<void> {
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim();
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim();
+    if (!supabaseUrl || !serviceRoleKey) return;
+    const client = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { data: orchestration } = await client
+      .from("stockage_payment_orchestrations")
+      .select("attempt_count")
+      .eq("request_id", event.requestId)
+      .maybeSingle();
+    const attemptCount = isRecord(orchestration)
+      ? Math.max(1, Number(orchestration.attempt_count) || 1)
+      : 1;
+    const { error } = await client.from("payment_performance_events").insert({
+      agency: event.agency,
+      apps_script_lock_wait_ms: event.durationsMs.apps_script_lock_wait ?? null,
+      apps_script_ms: event.durationsMs.apps_script_payment ?? null,
+      attempt_count: attemptCount,
+      canonical_payment_ms: event.durationsMs.canonical_payment ?? null,
+      cash_event_ms: event.durationsMs.cash_event ?? null,
+      checkpoint_ms: event.durationsMs.checkpoint ?? null,
+      durations_ms: event.durationsMs,
+      finalization_ms: event.durationsMs.finalization ?? null,
+      flow_type: event.flowType,
+      http_status: event.status,
+      request_id: event.requestId,
+      result: event.result,
+      retry: attemptCount > 1,
+      storage_exit_ms: event.durationsMs.storage_exit ?? null,
+      timeout: event.timeout,
+      total_ms: event.totalMs,
+    });
+    if (error) console.error(JSON.stringify({ event: "payment_performance_persist_failed", code: error.code ?? "UNKNOWN" }));
+  } catch {
+    console.error(JSON.stringify({ event: "payment_performance_persist_failed", code: "UNEXPECTED" }));
+  }
 }
 
 function orchestrationError(value: string): Response {
@@ -1114,6 +1248,20 @@ function upstreamErrorResponse(
         message: "Ce paiement a déjà été enregistré.",
       },
       409,
+    );
+  }
+
+  if (code === "PAYMENT_LOCK_BUSY") {
+    return jsonResponse(
+      {
+        success: false,
+        code,
+        error: code,
+        message:
+          message ?? PUBLIC_UPSTREAM_ERRORS.PAYMENT_LOCK_BUSY?.defaultMessage,
+        retryable: true,
+      },
+      503,
     );
   }
 

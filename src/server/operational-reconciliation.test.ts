@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { cashContinuity, orchestrationStage, reconcileOperations } from "./operational-reconciliation";
+import { cashContinuity, evaluatePaymentTelemetry, orchestrationStage, reconcileOperations } from "./operational-reconciliation";
 
 const now = new Date("2026-09-12T12:00:00Z");
 const orchestration = { requestId: "r1", trackingCode: "AT00126", agency: "LSHI" as const, state: "PENDING", paymentCreated: true, cashEventId: null, storageEventId: null, lastError: null, attemptCount: 1, createdAt: "2026-09-12T10:00:00Z", updatedAt: "2026-09-12T10:00:00Z", completedAt: null };
@@ -108,4 +108,48 @@ test("le backlog certifié passe de 42 alertes brutes à 39 alertes sur 13 dossi
   assert.equal(result.metrics.legitimatePending, 1);
   assert.equal(result.information[0].trackingCode, "AT43326");
   assert.equal(result.anomalies.some((row) => row.trackingCode === "AT02326"), false);
+});
+
+test("un paiement sans orchestration n'est critique qu'après 60 secondes", () => {
+  const recent = { requestId: "recent", trackingCode: "SE00126", agency: "LSHI" as const, amountUsd: 10, occurredAt: "2026-09-12T11:59:20Z" };
+  const old = { ...recent, requestId: "old", occurredAt: "2026-09-12T11:58:59Z" };
+  const result = reconcileOperations({ payments: [recent, old], cash: [], storage: [], orchestrations: [], closures: [], now, requireOrchestrationForPayments: true });
+  assert.equal(result.anomalies.filter((row) => row.type === "PAIEMENT_CANONIQUE_SANS_ORCHESTRATION").length, 1);
+  assert.equal(result.anomalies[0].paymentRequestId, "old");
+});
+
+test("les divergences montant et poids sont signalées sans écriture", () => {
+  const payment = { requestId: "r1", trackingCode: "SE00226", agency: "LSHI" as const, amountUsd: 30, weightKg: 4, occurredAt: "2026-09-12T10:00:00Z" };
+  const result = reconcileOperations({
+    payments: [payment],
+    cash: [{ ...payment, eventId: "cash", amountUsd: 29 }],
+    storage: [{ requestId: "r1", eventId: "stock", agency: "LSHI", trackingCode: payment.trackingCode, weightKg: 5, occurredAt: payment.occurredAt }],
+    orchestrations: [{ ...orchestration, state: "COMPLETED", cashEventId: "cash", storageEventId: "stock", completedAt: payment.occurredAt }],
+    closures: [],
+    now
+  });
+  assert.ok(result.anomalies.some((row) => row.type === "MONTANT_PAIEMENT_DIFFERENT_DU_CASH"));
+  assert.ok(result.anomalies.some((row) => row.type === "POIDS_COLIS_DIFFERENT_DE_LA_SORTIE"));
+});
+
+test("une dépense sans débit Caisse est signalée après la grâce", () => {
+  const result = reconcileOperations({ payments: [], cash: [], storage: [], orchestrations: [], closures: [], expenses: [{ requestId: "expense-1", agency: "LSHI", amountUsd: 12, occurredAt: "2026-09-12T10:00:00Z" }], expenseCash: [], now });
+  assert.equal(result.anomalies[0].type, "DEPENSE_SANS_DEBIT_CAISSE");
+});
+
+test("les seuils télémétrie p95, timeout et retry sont déterministes", () => {
+  const events = Array.from({ length: 100 }, (_, index) => ({
+    eventId: `event-${index}`,
+    agency: "LSHI" as const,
+    totalMs: index < 94 ? 8_000 : 11_500,
+    httpStatus: index === 99 ? 503 : 200,
+    timeout: index === 99,
+    retry: index === 98,
+    attemptCount: index === 98 ? 2 : 1,
+    occurredAt: "2026-09-12T11:55:00Z"
+  }));
+  const result = evaluatePaymentTelemetry({ events, now });
+  assert.equal(result.metrics.p95, 11_500);
+  assert.ok(result.anomalies.some((row) => row.type === "P95_PAIEMENT_ELEVE" && row.severity === "CRITICAL"));
+  assert.ok(result.anomalies.some((row) => row.type === "TAUX_RETRY"));
 });

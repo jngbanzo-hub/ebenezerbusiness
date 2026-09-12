@@ -80,6 +80,51 @@ export async function readAdminPayments(trace?: OperationPerformanceTrace): Prom
   return payments;
 }
 
+export async function readAdminPaymentWindow(
+  site: AdminSite,
+  startRow: number,
+  limit = 300
+): Promise<{ payments: AdminPayment[]; nextRow: number; scannedRows: number; limitReached: boolean }> {
+  const safeStart = Math.max(2, Math.floor(startRow));
+  const safeLimit = Math.min(500, Math.max(1, Math.floor(limit)));
+  const config = getAdminGoogleSheetsConfig();
+  const accessToken = await getGoogleAccessToken(config);
+  const endRow = safeStart + safeLimit - 1;
+  const spreadsheetId = encodeURIComponent(config.spreadsheetId);
+  const range = encodeURIComponent(`${site}!A${safeStart}:P${endRow}`);
+  const response = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER`,
+    { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" }
+  );
+  const payload = (await response.json()) as GoogleValueRange & { error?: { message?: string } };
+  if (!response.ok) throw new Error(payload.error?.message ?? "Lecture Google Sheets bornée impossible.");
+  const rows = payload.values ?? [];
+  const payments = rows.flatMap((row, index) => {
+    const payment = parseAdminPaymentRow(row, site, safeStart + index);
+    return payment ? [payment] : [];
+  });
+  return {
+    payments,
+    nextRow: safeStart + rows.length,
+    scannedRows: rows.length,
+    limitReached: rows.length === safeLimit
+  };
+}
+
+export async function readAdminPaymentNextRow(site: AdminSite): Promise<number> {
+  const config = getAdminGoogleSheetsConfig();
+  const accessToken = await getGoogleAccessToken(config);
+  const spreadsheetId = encodeURIComponent(config.spreadsheetId);
+  const range = encodeURIComponent(`${site}!P2:P`);
+  const response = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE`,
+    { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" }
+  );
+  const payload = (await response.json()) as GoogleValueRange & { error?: { message?: string } };
+  if (!response.ok) throw new Error(payload.error?.message ?? "Amorçage Google Sheets impossible.");
+  return 2 + (payload.values?.length ?? 0);
+}
+
 function getAdminGoogleSheetsConfig(): AdminGoogleSheetsConfig {
   const parsed = adminSheetsEnvSchema.safeParse({
     GOOGLE_SERVICE_ACCOUNT_JSON: emptyToUndefined(
