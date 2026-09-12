@@ -6,7 +6,8 @@ import { GlassPanel } from "@/components/design-system";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
 
-type Health = Readonly<{ overallStatus: "SAIN" | "ATTENTION" | "INCIDENT"; dialog360: "OPERATIONAL" | "PROBLEM"; scheduler: "ACTIVE" | "PROBLEM"; cloudRun: "ACTIVE" | "PROBLEM"; lastRun: "SUCCESS" | "FAILURE"; invalidRecipient24h: number; deliveryUncertainRecent: number; duplicates: number; checkedAt: string }>;
+type DependencyStatus = "OPERATIONAL" | "ACTIVE" | "PROBLEM" | "UNKNOWN";
+type Health = Readonly<{ overallStatus: "SAIN" | "ATTENTION" | "INCIDENT"; dialog360: DependencyStatus; scheduler: DependencyStatus; cloudRun: DependencyStatus; lastRun: "SUCCESS" | "FAILURE" | "EN COURS" | "UNKNOWN"; invalidRecipient24h: number; deliveryUncertainRecent: number; duplicates: number; checkedAt: string; unavailableDependencies?: readonly ("dialog360" | "scheduler" | "cloudRun" | "runs" | "metrics")[] }>;
 type Payload = Readonly<{ status: "AVAILABLE" | "UNAVAILABLE"; health: Health | null }>;
 
 export function AdminWhatsappHealth({ accessToken }: { accessToken: string }) {
@@ -30,8 +31,8 @@ export function AdminWhatsappHealth({ accessToken }: { accessToken: string }) {
       <Status label="Scheduler" value={health?.scheduler ?? "INDISPONIBLE"}/>
       <Status label="Cloud Run" value={health?.cloudRun ?? "INDISPONIBLE"}/>
       <Status label="Dernier passage" value={health?.lastRun ?? "INDISPONIBLE"}/>
-      <Status label="INVALID_RECIPIENT 24h" value={health ? String(health.invalidRecipient24h) : "INDISPONIBLE"}/>
-      <Status label="DELIVERY_UNCERTAIN récent" value={health ? String(health.deliveryUncertainRecent) : "INDISPONIBLE"}/>
+      <Status label="Numéros invalides (24h)" value={health ? String(health.invalidRecipient24h) : "INDISPONIBLE"}/>
+      <Status label="Livraisons non confirmées" value={health ? String(health.deliveryUncertainRecent) : "INDISPONIBLE"}/>
       <Status label="Doublons" value={health ? String(health.duplicates) : "INDISPONIBLE"}/>
       <Status label="Dernière vérification" value={health ? formatDate(health.checkedAt) : "INDISPONIBLE"}/>
     </dl>
