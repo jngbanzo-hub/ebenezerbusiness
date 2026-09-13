@@ -75,3 +75,10 @@ test("les trois cadences LSHI sont configurées", () => {
 test("les contrôles couvrent paiements, caisse, stockage, dépenses et forwarding", () => {
   for (const marker of ["PAIEMENT_CANONIQUE_SANS_ORCHESTRATION", "PAIEMENT_SANS_CASH_EVENT", "PAIEMENT_SANS_SORTIE_STOCKAGE", "MONTANT_PAIEMENT_DIFFERENT_DU_CASH", "POIDS_COLIS_DIFFERENT_DE_LA_SORTIE", "DEPENSE_SANS_DEBIT_CAISSE", "forwardingId"]) assert.match(read("src/server/operational-reconciliation.ts") + reconciliation, new RegExp(marker));
 });
+
+test("Dépenses et débits Caisse utilisent la même fenêtre temporelle bornée", () => {
+  assert.match(reconciliation, /lshiExpenseReconciliationWindow\(input\.kind, input\.businessDate, input\.now\)/);
+  assert.match(reconciliation, /dateDebut: expenseWindow\.sheetDateStart, dateFin: expenseWindow\.sheetDateEnd/);
+  assert.match(reconciliation, /isTimestampInLshiExpenseWindow\(row\.dateHeure, expenseWindow\)/);
+  assert.match(reconciliation, /\.gte\("occurred_at", expenseWindow\.startInclusive\)\.lt\("occurred_at", expenseWindow\.endExclusive\)/);
+});

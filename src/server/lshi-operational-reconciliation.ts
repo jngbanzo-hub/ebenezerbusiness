@@ -5,6 +5,10 @@ import { createClient } from "@supabase/supabase-js";
 import { readAdminPaymentNextRow, readAdminPaymentWindow } from "@/server/admin-payments-sheets";
 import { readAdminExpenses } from "@/server/agent-expenses-apps-script";
 import {
+  isTimestampInLshiExpenseWindow,
+  lshiExpenseReconciliationWindow
+} from "@/server/lshi-expense-reconciliation-window";
+import {
   evaluatePaymentTelemetry,
   reconcileOperations,
   type CashClosure,
@@ -95,6 +99,7 @@ async function inspect(client: ReturnType<typeof serviceClient>, input: { busine
   const since = input.kind === "INCREMENTAL"
     ? new Date(input.now.getTime() - INCREMENTAL_LOOKBACK_MS).toISOString()
     : `${input.businessDate}T00:00:00.000Z`;
+  const expenseWindow = lshiExpenseReconciliationWindow(input.kind, input.businessDate, input.now);
   const sheetStart = Math.max(2, input.cursorStart - (input.kind === "INCREMENTAL" ? SHEET_TAIL_OVERLAP : SHEET_WINDOW_LIMIT));
 
   const [sheet, cash, storage, orchestrations, closures, expenseCash, expenses, telemetry, dailyStorage, storageAccount, previousDaily] = await Promise.all([
@@ -106,10 +111,10 @@ async function inspect(client: ReturnType<typeof serviceClient>, input: { busine
     safe("STORAGE", () => dbRows(client.from("stockage_events").select("event_id,request_id,agency,tracking_code,weight_kg_delta,occurred_at,metadata,source_type,source_request_id").eq("agency", "LSHI").in("event_type", ["SORTIE_APRES_PAIEMENT_TOTAL_DESTINATION", "SORTIE_APRES_REMISE_ACHEMINEMENT"]).gte("occurred_at", since).order("occurred_at", { ascending: true }).limit(DATABASE_ROW_LIMIT), decodeStorage)),
     safe("ORCHESTRATIONS", () => dbRows(client.from("stockage_payment_orchestrations").select("request_id,tracking_code,agency,state,payment_created,cash_event_id,stockage_event_id,last_error,attempt_count,created_at,updated_at,completed_at,parcel_id,forwarding_id").eq("agency", "LSHI").or(`updated_at.gte.${since},state.neq.COMPLETED`).order("updated_at", { ascending: true }).limit(DATABASE_ROW_LIMIT), decodeOrchestration)),
     safe("CLOSURES", () => dbRows(client.from("cash_daily_closures").select("closure_id,agency,business_date,opening_balance,closing_balance,payments_total,expenses_total,status,version,closed_at").eq("agency", "LSHI").gte("business_date", addDays(input.businessDate, -1)).lte("business_date", input.businessDate).order("business_date", { ascending: true }).limit(10), decodeClosure)),
-    safe("EXPENSE_CASH", () => dbRows(client.from("cash_events").select("event_id,source_request_id,agency,amount,occurred_at,metadata").eq("agency", "LSHI").eq("source_type", "EXPENSE_ENGINE").gte("occurred_at", since).order("occurred_at", { ascending: true }).limit(DATABASE_ROW_LIMIT), decodeCash)),
+    safe("EXPENSE_CASH", () => dbRows(client.from("cash_events").select("event_id,source_request_id,agency,amount,occurred_at,metadata").eq("agency", "LSHI").eq("source_type", "EXPENSE_ENGINE").gte("occurred_at", expenseWindow.startInclusive).lt("occurred_at", expenseWindow.endExclusive).order("occurred_at", { ascending: true }).limit(DATABASE_ROW_LIMIT), decodeCash)),
     safe("EXPENSES", async () => {
-      const response = await readAdminExpenses(LSHI_RECONCILIATION_ACTOR, { agence: "LSHI", dateDebut: since.slice(0, 10), dateFin: businessDateInPortoNovo(input.now), page: 1, pageSize: 100 });
-      return { rows: response.depenses.flatMap((row): ReconciliationExpense[] => row.devise === "USD" && row.statut === "ACTIVE" ? [{ requestId: row.expenseRequestId, agency: "LSHI", amountUsd: row.montant, occurredAt: row.dateHeure }] : []), paginationIncomplete: response.pagination.totalPages > 1 };
+      const response = await readAdminExpenses(LSHI_RECONCILIATION_ACTOR, { agence: "LSHI", dateDebut: expenseWindow.sheetDateStart, dateFin: expenseWindow.sheetDateEnd, page: 1, pageSize: 100 });
+      return { rows: response.depenses.flatMap((row): ReconciliationExpense[] => row.devise === "USD" && row.statut === "ACTIVE" && isTimestampInLshiExpenseWindow(row.dateHeure, expenseWindow) ? [{ requestId: row.expenseRequestId, agency: "LSHI", amountUsd: row.montant, occurredAt: row.dateHeure }] : []), paginationIncomplete: response.pagination.totalPages > 1 };
     }),
     safe("TELEMETRY", () => dbRows(client.from("payment_performance_events").select("event_id,agency,total_ms,http_status,timeout,retry,attempt_count,created_at").eq("agency", "LSHI").gte("created_at", new Date(input.now.getTime() - 60 * 60 * 1000).toISOString()).order("created_at", { ascending: true }).limit(1000), decodeTelemetry)),
     input.kind === "INCREMENTAL" ? Promise.resolve({ available: true as const, rows: [] as Array<{ countDelta: number; weightDelta: number }> }) : safe("DAILY_STORAGE_EVENTS", () => dbRows(client.from("stockage_events").select("parcel_count_delta,weight_kg_delta,business_date").eq("agency", "LSHI").eq("business_date", input.businessDate).order("event_id", { ascending: true }).limit(DATABASE_ROW_LIMIT), (row) => ({ countDelta: Number(row.parcel_count_delta), weightDelta: Number(row.weight_kg_delta) }))),
