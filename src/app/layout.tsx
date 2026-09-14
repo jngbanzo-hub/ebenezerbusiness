@@ -4,6 +4,7 @@ import "@/app/globals.css";
 
 import { PwaRegister } from "@/components/pwa-register";
 import { companyInfo } from "@/config/company";
+import { PublicAnalytics } from "@/features/analytics/public-analytics";
 import { SiteTicker } from "@/features/home/site-ticker";
 import { defaultSeoDescription } from "@/lib/seo";
 
@@ -65,6 +66,7 @@ export default function RootLayout({
   return (
     <html lang="fr" className="dark">
       <body className="pb-12 sm:pb-14">
+        <PublicAnalytics />
         <PwaRegister />
         {children}
         <SiteTicker />

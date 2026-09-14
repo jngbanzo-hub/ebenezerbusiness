@@ -3,12 +3,21 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion } from "framer-motion";
 import { AlertCircle, ArrowRight, CheckCircle2, MapPin, PackageCheck, Search, ShieldCheck } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 
 import { GlassPanel } from "@/components/design-system";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  trackQrResolution,
+  trackTrackingPageView,
+  trackTrackingSearch
+} from "@/features/analytics/public-analytics-events";
+import {
+  qrResolutionOutcome,
+  trackingSearchOutcome
+} from "@/features/analytics/public-analytics-policy";
 import {
   statusConfig,
   trackingDetailItems,
@@ -45,6 +54,7 @@ type TrackingFeedback = {
 export function ParcelTracking() {
   const [result, setResult] = useState<TrackingResult | null>(null);
   const [trackingFeedback, setTrackingFeedback] = useState<TrackingFeedback>(null);
+  const pageViewTrackedRef = useRef(false);
   const {
     register,
     handleSubmit,
@@ -57,6 +67,12 @@ export function ParcelTracking() {
     }
   });
   const formErrorMessage = errors.trackingSite?.message ?? errors.trackingCode?.message;
+
+  useEffect(() => {
+    if (pageViewTrackedRef.current) return;
+    pageViewTrackedRef.current = true;
+    trackTrackingPageView();
+  }, []);
 
   async function onSubmit(values: TrackingFormValues) {
     setTrackingFeedback(null);
@@ -72,6 +88,7 @@ export function ParcelTracking() {
         }
       });
       const payload = (await response.json()) as TrackingApiResponse;
+      trackTrackingSearch(trackingSearchOutcome(response.status, payload.found));
 
       if (!payload.found) {
         setResult(null);
@@ -96,6 +113,7 @@ export function ParcelTracking() {
 
       setResult(payload.result);
     } catch {
+      trackTrackingSearch("unavailable");
       setResult(null);
       setTrackingFeedback({
         tone: "error",
@@ -106,6 +124,8 @@ export function ParcelTracking() {
   }
 
   function onQrResolved(resolution: PublicQrApiResponse) {
+    trackQrResolution("integrated", qrResolutionOutcome(resolution.state));
+
     if (resolution.state === "ASSIGNED") {
       setTrackingFeedback(null);
       setResult(resolution.result);
