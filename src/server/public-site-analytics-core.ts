@@ -86,6 +86,7 @@ async function buildPayload(
 ): Promise<PublicSiteAnalyticsPayload> {
   const config = readConfig(environment);
   const selectedRange = periodRange(period, currentTime);
+  const selectedDayLimit = dayBucketLimit(period);
   const ranges = {
     today: periodRange("today", currentTime),
     sevenDays: periodRange("7d", currentTime),
@@ -107,9 +108,24 @@ async function buildPayload(
       qrOutcomeRows,
       qrSourceRows
     ] = await Promise.all([
-      queryAggregate(config, fetcher, { dataset: "visits", ...ranges.today }),
-      queryAggregate(config, fetcher, { dataset: "visits", ...ranges.sevenDays }),
-      queryAggregate(config, fetcher, { dataset: "visits", ...ranges.thirtyDays }),
+      queryAggregate(config, fetcher, {
+        dataset: "visits",
+        ...ranges.today,
+        by: ["day"],
+        limit: dayBucketLimit("today")
+      }),
+      queryAggregate(config, fetcher, {
+        dataset: "visits",
+        ...ranges.sevenDays,
+        by: ["day"],
+        limit: dayBucketLimit("7d")
+      }),
+      queryAggregate(config, fetcher, {
+        dataset: "visits",
+        ...ranges.thirtyDays,
+        by: ["day"],
+        limit: dayBucketLimit("30d")
+      }),
       queryAggregate(config, fetcher, {
         dataset: "visits",
         ...selectedRange,
@@ -131,12 +147,16 @@ async function buildPayload(
       queryAggregate(config, fetcher, {
         dataset: "visits",
         ...selectedRange,
-        filter: "requestPath eq '/suivi-de-colis'"
+        by: ["day"],
+        filter: "requestPath eq '/suivi-de-colis'",
+        limit: selectedDayLimit
       }),
       queryAggregate(config, fetcher, {
         dataset: "events",
         ...selectedRange,
-        filter: "eventName eq 'tracking_search' and eventData/source eq 'manual'"
+        by: ["day"],
+        filter: "eventName eq 'tracking_search' and eventData/source eq 'manual'",
+        limit: selectedDayLimit
       }),
       queryAggregate(config, fetcher, {
         dataset: "events",
@@ -148,7 +168,9 @@ async function buildPayload(
       queryAggregate(config, fetcher, {
         dataset: "events",
         ...selectedRange,
-        filter: "eventName eq 'qr_scanner_open'"
+        by: ["day"],
+        filter: "eventName eq 'qr_scanner_open'",
+        limit: selectedDayLimit
       }),
       queryAggregate(config, fetcher, {
         dataset: "events",
@@ -289,6 +311,11 @@ function periodRange(period: PublicSiteAnalyticsPeriod, now: Date) {
       BUSINESS_TIMEZONE_OFFSET_MS
   );
   return Object.freeze({ since: since.toISOString(), until: now.toISOString() });
+}
+
+function dayBucketLimit(period: PublicSiteAnalyticsPeriod) {
+  // The Lagos business-day range can cross one additional UTC calendar day.
+  return period === "today" ? 2 : period === "7d" ? 8 : 31;
 }
 
 function numericValue(value: unknown) {

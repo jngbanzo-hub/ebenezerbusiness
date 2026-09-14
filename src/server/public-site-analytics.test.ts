@@ -47,15 +47,13 @@ test("agrège visiteurs, pays, suivi, QR et appareils sans double compter l'év�
     (url) => url.searchParams.get("filter") === "requestPath eq '/suivi-de-colis'"
   );
   assert.ok(trackingPageQuery, "la route /suivi-de-colis doit être la seule source de son KPI");
-  assert.equal(trackingPageQuery.pathname.endsWith("/visits/count"), true);
+  assert.equal(trackingPageQuery.pathname.endsWith("/visits/aggregate"), true);
+  assert.deepEqual(trackingPageQuery.searchParams.getAll("by"), ["day"]);
   assert.equal(
     urls.filter((url) => url.pathname.endsWith("/aggregate")).every((url) => url.searchParams.has("by")),
     true
   );
-  assert.equal(
-    urls.filter((url) => url.pathname.endsWith("/count")).every((url) => !url.searchParams.has("by")),
-    true
-  );
+  assert.equal(urls.some((url) => url.pathname.endsWith("/count")), false);
   assert.equal(
     urls.some((url) => url.searchParams.get("filter")?.includes("tracking_page_view")),
     false
@@ -143,19 +141,26 @@ function mockRows(url: URL) {
       { deviceType: "Desktop", visitors: 4 }
     ];
   }
-  if (dataset === "visits" && (by.includes("day") || by.includes("hour"))) {
+  if (dataset === "visits" && filter.includes("/suivi-de-colis")) {
     return [
       { timestamp: "2026-09-13T00:00:00.000Z", pageviews: 4, visitors: 3 },
-      { timestamp: "2026-09-14T00:00:00.000Z", pageviews: 7, visitors: 5 }
+      { timestamp: "2026-09-14T00:00:00.000Z", pageviews: 5, visitors: 4 }
     ];
   }
-  if (dataset === "visits" && filter.includes("/suivi-de-colis")) {
-    return { pageviews: 9, visitors: 7 };
-  }
-  if (dataset === "visits") {
-    if (since.startsWith("2026-09-13")) return { visitors: 3, pageviews: 5 };
-    if (since.startsWith("2026-09-07")) return { visitors: 12, pageviews: 20 };
-    return { visitors: 30, pageviews: 55 };
+  if (dataset === "visits" && (by.includes("day") || by.includes("hour"))) {
+    if (since.startsWith("2026-09-13")) {
+      return [{ timestamp: "2026-09-14T00:00:00.000Z", pageviews: 5, visitors: 3 }];
+    }
+    if (since.startsWith("2026-09-07")) {
+      return [
+        { timestamp: "2026-09-13T00:00:00.000Z", pageviews: 4, visitors: 5 },
+        { timestamp: "2026-09-14T00:00:00.000Z", pageviews: 7, visitors: 7 }
+      ];
+    }
+    return [
+      { timestamp: "2026-08-16T00:00:00.000Z", pageviews: 20, visitors: 18 },
+      { timestamp: "2026-09-14T00:00:00.000Z", pageviews: 18, visitors: 12 }
+    ];
   }
   if (filter.includes("tracking_search") && by.includes("eventData/outcome")) {
     return [
