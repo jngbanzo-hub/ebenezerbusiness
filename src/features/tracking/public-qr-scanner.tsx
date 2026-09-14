@@ -4,6 +4,7 @@ import { Camera, Loader2, ScanLine, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { trackQrScannerOpen } from "@/features/analytics/public-analytics-events";
 import type { TrackingResult } from "@/features/tracking/tracking-data";
 
 type BarcodeResult = { rawValue: string };
@@ -157,6 +158,7 @@ export function PublicQrScanner({
   const handledRef = useRef(false);
   const sessionRef = useRef(0);
   const startLockRef = useRef(false);
+  const scannerOpenTrackedRef = useRef(false);
 
   const stopCamera = useCallback(() => {
     if (animationFrameRef.current !== null) {
@@ -178,6 +180,7 @@ export function PublicQrScanner({
     setIsStarting(false);
     setIsResolving(false);
     setError("");
+    scannerOpenTrackedRef.current = false;
   }, [stopCamera]);
 
   const resolveQr = useCallback(
@@ -191,9 +194,11 @@ export function PublicQrScanner({
         const payload = (await response.json()) as PublicQrApiResponse;
         onResolved(payload);
         setIsOpen(false);
+        scannerOpenTrackedRef.current = false;
       } catch {
         onResolved({ state: "UNAVAILABLE" });
         setIsOpen(false);
+        scannerOpenTrackedRef.current = false;
       } finally {
         setIsResolving(false);
       }
@@ -239,6 +244,10 @@ export function PublicQrScanner({
 
   const startScanner = useCallback(async () => {
     if (startLockRef.current || isResolving) return;
+    if (!scannerOpenTrackedRef.current) {
+      scannerOpenTrackedRef.current = true;
+      trackQrScannerOpen();
+    }
     startLockRef.current = true;
     const session = sessionRef.current + 1;
     sessionRef.current = session;

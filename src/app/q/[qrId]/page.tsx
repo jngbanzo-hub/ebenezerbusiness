@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, QrCode, ShieldX } from "lucide-react";
 
 import { Container, GlassPanel } from "@/components/design-system";
 import { Badge } from "@/components/ui/badge";
+import { ExternalQrAnalytics } from "@/features/analytics/external-qr-analytics";
 import { HomeNavbar } from "@/features/home/home-navbar";
 import { SiteFooter } from "@/features/home/site-footer";
 import { TrackingResultCard } from "@/features/tracking/parcel-tracking";
@@ -20,6 +21,7 @@ export default async function PublicQrPage({ params }: { params: { qrId: string 
 
   return (
     <main className="min-h-screen overflow-hidden bg-ebe-night text-white">
+      <ExternalQrAnalytics state={resolution.state} />
       <HomeNavbar />
       <section className="relative border-b border-white/10 pb-14 pt-28 sm:pb-16 sm:pt-32">
         <div
