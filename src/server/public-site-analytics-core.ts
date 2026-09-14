@@ -13,7 +13,7 @@ const REQUEST_TIMEOUT_MS = 8_000;
 const BUSINESS_TIMEZONE_OFFSET_MS = 60 * 60 * 1000;
 
 const aggregateRowSchema = z.record(z.unknown());
-const aggregateResponseSchema = z.object({
+const analyticsResponseSchema = z.object({
   data: z.union([aggregateRowSchema, z.array(aggregateRowSchema)])
 });
 
@@ -252,12 +252,11 @@ async function queryAggregate(
   fetcher: FetchLike,
   query: Query
 ): Promise<z.infer<typeof aggregateRowSchema>[]> {
-  const url = new URL(`${VERCEL_ANALYTICS_API}/${query.dataset}/aggregate`);
+  const endpoint = query.by?.length ? "aggregate" : "count";
+  const url = new URL(`${VERCEL_ANALYTICS_API}/${query.dataset}/${endpoint}`);
   url.searchParams.set("projectId", config.projectId);
   if (query.by?.length) {
     for (const dimension of query.by) url.searchParams.append("by", dimension);
-  } else {
-    url.searchParams.set("by", "[]");
   }
   url.searchParams.set("since", query.since);
   url.searchParams.set("until", query.until);
@@ -277,7 +276,7 @@ async function queryAggregate(
   });
 
   if (!response.ok) throw new PublicSiteAnalyticsUnavailableError();
-  const parsed = aggregateResponseSchema.safeParse(await response.json());
+  const parsed = analyticsResponseSchema.safeParse(await response.json());
   if (!parsed.success) throw new PublicSiteAnalyticsUnavailableError();
   return Array.isArray(parsed.data.data) ? parsed.data.data : [parsed.data.data];
 }

@@ -47,6 +47,15 @@ test("agrège visiteurs, pays, suivi, QR et appareils sans double compter l'év�
     (url) => url.searchParams.get("filter") === "requestPath eq '/suivi-de-colis'"
   );
   assert.ok(trackingPageQuery, "la route /suivi-de-colis doit être la seule source de son KPI");
+  assert.equal(trackingPageQuery.pathname.endsWith("/visits/count"), true);
+  assert.equal(
+    urls.filter((url) => url.pathname.endsWith("/aggregate")).every((url) => url.searchParams.has("by")),
+    true
+  );
+  assert.equal(
+    urls.filter((url) => url.pathname.endsWith("/count")).every((url) => !url.searchParams.has("by")),
+    true
+  );
   assert.equal(
     urls.some((url) => url.searchParams.get("filter")?.includes("tracking_page_view")),
     false
@@ -115,7 +124,7 @@ test("échoue fermé si le token manque ou si Vercel refuse une requête", async
 function mockRows(url: URL) {
   const dataset = url.pathname.includes("/events/") ? "events" : "visits";
   const rawBy = url.searchParams.getAll("by");
-  const by = rawBy.length === 1 && rawBy[0] === "[]" ? [] : rawBy;
+  const by = rawBy;
   const filter = url.searchParams.get("filter") ?? "";
   const since = url.searchParams.get("since") ?? "";
 
@@ -141,12 +150,12 @@ function mockRows(url: URL) {
     ];
   }
   if (dataset === "visits" && filter.includes("/suivi-de-colis")) {
-    return [{ pageviews: 9, visitors: 7 }];
+    return { pageviews: 9, visitors: 7 };
   }
   if (dataset === "visits") {
-    if (since.startsWith("2026-09-13")) return [{ visitors: 3, pageviews: 5 }];
-    if (since.startsWith("2026-09-07")) return [{ visitors: 12, pageviews: 20 }];
-    return [{ visitors: 30, pageviews: 55 }];
+    if (since.startsWith("2026-09-13")) return { visitors: 3, pageviews: 5 };
+    if (since.startsWith("2026-09-07")) return { visitors: 12, pageviews: 20 };
+    return { visitors: 30, pageviews: 55 };
   }
   if (filter.includes("tracking_search") && by.includes("eventData/outcome")) {
     return [
@@ -155,8 +164,8 @@ function mockRows(url: URL) {
       { eventData: "unavailable", count: 1 }
     ];
   }
-  if (filter.includes("tracking_search")) return [{ count: 8, visitors: 6 }];
-  if (filter.includes("qr_scanner_open")) return [{ count: 6, visitors: 4 }];
+  if (filter.includes("tracking_search")) return { count: 8, visitors: 6 };
+  if (filter.includes("qr_scanner_open")) return { count: 6, visitors: 4 };
   if (by.includes("eventData/outcome")) {
     return [
       { eventData: "success", count: 4 },
