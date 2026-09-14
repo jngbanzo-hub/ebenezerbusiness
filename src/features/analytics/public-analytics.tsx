@@ -14,7 +14,10 @@ export function PublicAnalytics() {
   const pathname = usePathname();
 
   useEffect(() => {
-    if (pathname === "/suivi-de-colis") trackTrackingPageView();
+    if (pathname !== "/suivi-de-colis") return;
+
+    const timeoutId = window.setTimeout(trackTrackingPageView, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [pathname]);
 
   if (!isPublicAnalyticsPath(pathname)) return null;
