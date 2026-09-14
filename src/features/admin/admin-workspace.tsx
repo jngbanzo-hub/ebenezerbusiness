@@ -46,6 +46,7 @@ import { CashPeriodConsultation } from "@/features/cash/cash-period-consultation
 import { CashAdminControls } from "@/features/admin/cash-admin-controls";
 import { AdminExpensesModule } from "@/features/admin/admin-expenses-module";
 import { AdminSystemStatus } from "@/features/admin/admin-system-status";
+import { AdminPublicSiteAnalytics } from "@/features/admin/admin-public-site-analytics";
 import { NotificationBell } from "@/features/notifications/notification-center";
 import {
   ADMIN_DESTINATIONS,
@@ -313,7 +314,13 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
           </div>
         </header>
 
-        {module === "home" ? <><AdminModuleGrid /><AdminSystemStatus accessToken={accessTokenRef.current} /></> : null}
+        {module === "home" ? (
+          <>
+            <AdminModuleGrid />
+            <AdminPublicSiteAnalytics accessToken={accessTokenRef.current} />
+            <AdminSystemStatus accessToken={accessTokenRef.current} />
+          </>
+        ) : null}
         {module === "cash" ? <><AdminCashDashboardView accessToken={accessTokenRef.current} /><CashPeriodConsultation /><CashAdminControls accessToken={accessTokenRef.current} /></> : null}
         {module === "shippers" ? <ShipperStatisticsSection accessToken={accessTokenRef.current} /> : null}
         {module === "expenses" ? <AdminExpensesModule accessToken={accessTokenRef.current} /> : null}
