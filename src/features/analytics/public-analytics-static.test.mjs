@@ -27,7 +27,7 @@ test("seuls les quatre événements publics et leurs propriétés fermées sont 
 });
 
 test("la recherche et le scanner émettent sans changer leurs appels métier", () => {
-  assert.match(tracking, /trackTrackingPageView\(\)/);
+  assert.match(analytics, /pathname === "\/suivi-de-colis".*trackTrackingPageView\(\)/s);
   assert.match(tracking, /trackTrackingSearch\(trackingSearchOutcome\(response\.status, payload\.found\)\)/);
   assert.match(tracking, /trackQrResolution\("integrated", qrResolutionOutcome\(resolution\.state\)\)/);
   assert.match(scanner, /trackQrScannerOpen\(\)/);
