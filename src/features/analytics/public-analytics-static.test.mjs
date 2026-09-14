@@ -26,6 +26,12 @@ test("seuls les quatre événements publics et leurs propriétés fermées sont 
   assert.doesNotMatch(events, /(?:trackingCode|tracking_code|qrId|phone|email|weight|beneficiary|sender)\s*:/i);
 });
 
+test("les événements attendent le collecteur sans jamais quitter une route publique", () => {
+  assert.match(events, /ANALYTICS_INIT_MAX_RETRIES = 20/);
+  assert.match(events, /typeof \(window as AnalyticsWindow\)\.va !== "function"/);
+  assert.match(events, /if \(!canTrackPublicEvent\(\)\) return/);
+});
+
 test("la recherche et le scanner émettent sans changer leurs appels métier", () => {
   assert.match(analytics, /pathname !== "\/suivi-de-colis".*window\.setTimeout\(trackTrackingPageView, 0\)/s);
   assert.match(tracking, /trackTrackingSearch\(trackingSearchOutcome\(response\.status, payload\.found\)\)/);
