@@ -80,14 +80,21 @@ const fieldClassName =
   "mt-2 h-11 w-full rounded-md border border-white/15 bg-white/[0.05] px-3 text-white outline-none transition placeholder:text-muted-foreground focus:border-accent focus:ring-2 focus:ring-accent/25";
 const ADMIN_NOTIFICATION_ENDPOINTS = ["/api/admin/recent-activity", "/api/admin/alerts"] as const;
 
-export type AdminWorkspaceModule = "home" | "payments" | "cash" | "expenses" | "shippers";
+export type AdminWorkspaceModule =
+  | "home"
+  | "payments"
+  | "cash"
+  | "expenses"
+  | "shippers"
+  | "public-site-analytics";
 
 const MODULE_TITLES: Record<AdminWorkspaceModule, string> = {
   home: "Tableau de bord Admin",
   payments: "Encaissements",
   cash: "Caisse",
   expenses: "Dépenses",
-  shippers: "Statistiques par expéditeur"
+  shippers: "Statistiques par expéditeur",
+  "public-site-analytics": "Statistiques du site public"
 };
 
 export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceModule }) {
@@ -317,9 +324,11 @@ export function AdminWorkspace({ module = "home" }: { module?: AdminWorkspaceMod
         {module === "home" ? (
           <>
             <AdminModuleGrid />
-            <AdminPublicSiteAnalytics accessToken={accessTokenRef.current} />
             <AdminSystemStatus accessToken={accessTokenRef.current} />
           </>
+        ) : null}
+        {module === "public-site-analytics" ? (
+          <AdminPublicSiteAnalytics accessToken={accessTokenRef.current} />
         ) : null}
         {module === "cash" ? <><AdminCashDashboardView accessToken={accessTokenRef.current} /><CashPeriodConsultation /><CashAdminControls accessToken={accessTokenRef.current} /></> : null}
         {module === "shippers" ? <ShipperStatisticsSection accessToken={accessTokenRef.current} /> : null}
@@ -589,6 +598,7 @@ const ADMIN_MODULES = [
   ,{ title: "SUIVI DES EXPÉDITIONS", description: "Consultez et mettez à jour le statut des groupages.", href: "/admin/suivi-expeditions", icon: Send }
   ,{ title: "Gestion des associations QR", description: "Recherchez, auditez, corrigez ou révoquez exceptionnellement un QR.", href: "/admin/qr-associations", icon: QrCode }
   ,{ title: "Bilan", description: "Consultez les cohortes, périodes, charges, trésorerie et résultats certifiables en lecture seule.", href: "/admin/bilan", icon: BarChart3 }
+  ,{ title: "Statistiques du site public", description: "Consultez les visites publiques, pays, suivi de colis, QR et appareils.", href: "/admin/statistiques-site-public", icon: BarChart3 }
 ] as const;
 
 function AdminModuleGrid() {
