@@ -9,18 +9,41 @@ import {
   type TrackingSearchOutcome
 } from "@/features/analytics/public-analytics-policy";
 
+const ANALYTICS_INIT_RETRY_MS = 50;
+const ANALYTICS_INIT_MAX_RETRIES = 20;
+
+type AnalyticsWindow = Window & {
+  va?: (...params: unknown[]) => void;
+};
+
 function canTrackPublicEvent() {
   return typeof window !== "undefined" && isPublicAnalyticsPath(window.location.pathname);
 }
 
-function sendPublicEvent(name: string, properties?: Record<string, string>) {
+function dispatchPublicEvent(
+  name: string,
+  properties: Record<string, string> | undefined,
+  retriesLeft: number
+) {
   if (!canTrackPublicEvent()) return;
+
+  if (typeof (window as AnalyticsWindow).va !== "function" && retriesLeft > 0) {
+    window.setTimeout(
+      () => dispatchPublicEvent(name, properties, retriesLeft - 1),
+      ANALYTICS_INIT_RETRY_MS
+    );
+    return;
+  }
 
   try {
     track(name, properties);
   } catch {
     // Analytics must never alter or interrupt the public business flow.
   }
+}
+
+function sendPublicEvent(name: string, properties?: Record<string, string>) {
+  dispatchPublicEvent(name, properties, ANALYTICS_INIT_MAX_RETRIES);
 }
 
 export function trackTrackingPageView() {
