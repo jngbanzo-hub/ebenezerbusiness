@@ -8,6 +8,7 @@ const serverCore = readFileSync("src/server/public-site-analytics-core.ts", "utf
 const server = `${serverEntry}\n${serverCore}`;
 const ui = readFileSync("src/features/admin/admin-public-site-analytics.tsx", "utf8");
 const workspace = readFileSync("src/features/admin/admin-workspace.tsx", "utf8");
+const page = readFileSync("src/app/admin/statistiques-site-public/page.tsx", "utf8");
 
 test("la route est GET uniquement et protégée par l'autorisation Admin", () => {
   assert.match(route, /authorizeAdminRequest\(request\)/);
@@ -55,4 +56,14 @@ test("le lecteur est fail-closed, caché cinq minutes et strictement sans écrit
 test("le KPI suivi utilise la route et jamais tracking_page_view", () => {
   assert.match(server, /requestPath eq '\/suivi-de-colis'/);
   assert.doesNotMatch(server, /tracking_page_view/);
+});
+
+test("le dashboard Analytics vit dans un module Admin dédié sans lecture depuis l'accueil", () => {
+  assert.match(workspace, /href: "\/admin\/statistiques-site-public"/);
+  assert.match(workspace, /Consultez les visites publiques, pays, suivi de colis, QR et appareils\./);
+  assert.match(workspace, /module === "public-site-analytics"[\s\S]*?<AdminPublicSiteAnalytics accessToken=\{accessTokenRef\.current\}/);
+  const homeBlock = workspace.match(/\{module === "home" \? \([\s\S]*?\) : null\}/)?.[0] ?? "";
+  assert.doesNotMatch(homeBlock, /AdminPublicSiteAnalytics/);
+  assert.match(page, /<AdminWorkspace module="public-site-analytics" \/>/);
+  assert.match(page, /noIndex: true/);
 });
