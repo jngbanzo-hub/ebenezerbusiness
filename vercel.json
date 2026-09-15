@@ -23,6 +23,18 @@
     {
       "path": "/api/internal/cron/lshi-daily-continuity-retry",
       "schedule": "15 5 * * *"
+    },
+    {
+      "path": "/api/internal/cron/klz-operational-reconciliation",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/internal/cron/klz-daily-continuity",
+      "schedule": "30 23 * * *"
+    },
+    {
+      "path": "/api/internal/cron/klz-daily-continuity-retry",
+      "schedule": "15 5 * * *"
     }
   ],
   "headers": [
