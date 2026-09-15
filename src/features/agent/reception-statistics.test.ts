@@ -22,6 +22,29 @@ test("sépare Ethiopian LSHI et KLZ par suffixe sans perdre le total", () => {
   assert.deepEqual(lshi.parcels.map((parcel) => parcel.copyCode), ["JL00126", "JL00326"]);
 });
 
+test("sépare DHL LSHI et KLZ par suffixe avec le total certifié KLZ", () => {
+  const source = parseShipmentStatistics([
+    ["Date"],
+    ["31/08/2026", "DHL", "LSHI", 1, 34, "AT00126KLZ\nAT00226KLZ\nAT00326KLZ\nAT00426KLZ\nAT00526KLZ\nAT00626KLZ\nAT00726KLZ\nAT00826KLZ", 0, 0, "4 kg\n4 kg\n4 kg\n4 kg\n4 kg\n4 kg\n5 kg\n5 kg", "8 COLIS", "Arrivé à KLZ"],
+    ["31/08/2026", "DHL", "LSHI", 1, 29, "AT00926KLZ\nAT01026KLZ\nAT01126KLZ\nAT01226KLZ\nAT01326KLZ\nAT20126", 0, 0, "5 kg\n5 kg\n5 kg\n5 kg\n6 kg\n3 kg", "6 COLIS", "Arrivé à KLZ"],
+    ["31/08/2026", "DHL", "LSHI", 1, 6, "AT01426KLZ\nAT20226", 0, 0, "2 kg\n4 kg", "2 COLIS", "Arrivé à KLZ"],
+  ]).shipments;
+
+  const klz = projectReceptionStatistics(source, "KLZ", { company: "DHL" });
+  const lshi = projectReceptionStatistics(source, "LSHI", { company: "DHL" });
+
+  assert.equal(klz.rows.length, 3);
+  assert.equal(klz.totals.parcels, 14);
+  assert.equal(klz.totals.weightKg, 62);
+  assert.deepEqual(klz.parcels.map((parcel) => parcel.copyCode), [
+    "AT00126", "AT00226", "AT00326", "AT00426", "AT00526", "AT00626", "AT00726",
+    "AT00826", "AT00926", "AT01026", "AT01126", "AT01226", "AT01326", "AT01426",
+  ]);
+  assert.deepEqual(lshi.parcels.map((parcel) => parcel.code), ["AT20126", "AT20226"]);
+  assert.equal(lshi.totals.parcels, 2);
+  assert.equal(lshi.totals.weightKg, 7);
+});
+
 test("refuse une copie partielle si un poids est absent ou un code est dupliqué", () => {
   assert.throws(() => formatParcelsForArrival([
     { code: "JL00126", copyCode: "JL00126", weightKg: 2 },

@@ -1,6 +1,7 @@
 import {
   filterShipmentStatistics,
   type ShipmentStatisticRow,
+  usesLshiKlzBreakdown,
 } from "@/features/admin/shipment-statistics";
 
 export type ReceptionAgency = "FIH" | "LSHI" | "KLZ";
@@ -66,7 +67,7 @@ export function projectReceptionStatistics(
           continue;
         }
         const weightKg = weights.get(code);
-        const copyCode = agency === "KLZ" && specialEthiopianShipment(shipment)
+        const copyCode = agency === "KLZ" && usesLshiKlzBreakdown(shipment)
           ? stripKlzSuffix(code)
           : code;
         if (!copyCode) copyValidationErrors.add(`Code colis invalide : ${code || "vide"}.`);
@@ -105,12 +106,12 @@ export function projectReceptionStatistics(
 }
 
 function projectShipment(row: ShipmentStatisticRow, agency: ReceptionAgency) {
-  const specialEthiopian = specialEthiopianShipment(row);
+  const lshiKlzBreakdown = usesLshiKlzBreakdown(row);
   const directDestination = row.destination === agency;
-  if (!directDestination && !(specialEthiopian && agency === "KLZ")) return null;
+  if (!directDestination && !(lshiKlzBreakdown && agency === "KLZ")) return null;
 
   const codes = row.parcelCodes.filter(isReceptionParcelCode);
-  if (!specialEthiopian) {
+  if (!lshiKlzBreakdown) {
     return {
       codes,
       parcels: codes.length || row.parcelCount || 0,
@@ -135,10 +136,6 @@ function projectShipment(row: ShipmentStatisticRow, agency: ReceptionAgency) {
 
 function isReceptionParcelCode(code: string) {
   return /^[A-Z]{1,10}\d{2,}[A-Z]*$/.test(code) && !/^GROU?PAGE/.test(code) && !/^SAC\d/.test(code);
-}
-
-function specialEthiopianShipment(row: ShipmentStatisticRow) {
-  return row.company === "ETHIOPIAN" && row.destination === "LSHI";
 }
 
 export function isKlzSuffix(code: string) {
