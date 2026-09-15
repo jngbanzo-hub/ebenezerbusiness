@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { AdminSite } from "@/features/admin/types";
 import { readAdminPayments } from "@/server/admin-payments-sheets";
 import { readExhaustivePages, type PaginationMetrics } from "@/server/exhaustive-pagination";
+import { readLatestKlzReconciliationReport } from "@/server/klz-operational-reconciliation";
 import { readLatestLshiReconciliationReport } from "@/server/lshi-operational-reconciliation";
 import { reconcileOperations, type CashClosure, type ReconciliationCash, type ReconciliationOrchestration, type ReconciliationPayment, type ReconciliationStorage } from "@/server/operational-reconciliation";
 
@@ -13,20 +14,22 @@ type ForwardingContext = { forwardingId: string; originAgency: AdminSite; destin
 
 export async function readOperationalAnomalies(now = new Date()) {
   const startedAt = performance.now();
-  const [payments, cash, storage, orchestrations, closures, forwardings, lshiMonitoring] = await Promise.all([
+  const [payments, cash, storage, orchestrations, closures, forwardings, lshiMonitoring, klzMonitoring] = await Promise.all([
     safe("ENCAISSEMENTS", readPayments), safe("CAISSE", () => paged<ReconciliationCash>("cash_events", "event_id,source_request_id,agency,amount,occurred_at,metadata", "event_id", (query) => query.eq("source_type", "PAYMENT_ENGINE"), (row) => ({ eventId: String(row.event_id), requestId: String(row.source_request_id).toLowerCase(), agency: agency(row.agency), amountUsd: Number(row.amount), occurredAt: String(row.occurred_at), ...metadataIdentity(row.metadata) }))),
     safe("STOCKAGE", () => paged<ReconciliationStorage>("stockage_events", "event_id,request_id,agency,tracking_code,weight_kg_delta,occurred_at,source_type,source_request_id,metadata", "event_id", (query) => query.in("event_type", ["SORTIE_APRES_PAIEMENT_TOTAL_DESTINATION", "SORTIE_APRES_REMISE_ACHEMINEMENT"]).not("request_id", "is", null), (row) => ({ eventId: String(row.event_id), requestId: String(row.request_id).toLowerCase(), agency: agency(row.agency), trackingCode: nullable(row.tracking_code), weightKg: row.weight_kg_delta === null ? null : Math.abs(Number(row.weight_kg_delta)), occurredAt: String(row.occurred_at), ...storageIdentity(row) }))),
     safe("ORCHESTRATION", () => paged<ReconciliationOrchestration>("stockage_payment_orchestrations", "request_id,tracking_code,agency,state,payment_created,cash_event_id,stockage_event_id,last_error,attempt_count,created_at,updated_at,completed_at,parcel_id,forwarding_id", "request_id", (query) => query, (row) => ({ requestId: String(row.request_id).toLowerCase(), trackingCode: String(row.tracking_code), agency: agency(row.agency), state: String(row.state), paymentCreated: row.payment_created === true, cashEventId: nullable(row.cash_event_id), storageEventId: nullable(row.stockage_event_id), lastError: nullable(row.last_error), attemptCount: Number(row.attempt_count), createdAt: String(row.created_at), updatedAt: String(row.updated_at), completedAt: nullable(row.completed_at), parcelId: nullable(row.parcel_id), forwardingId: nullable(row.forwarding_id) }))),
     safe("CONTINUITE", () => paged<CashClosure>("cash_daily_closures", "closure_id,agency,business_date,opening_balance,closing_balance,status,version,closed_at", "closure_id", (query) => query, (row) => ({ closureId: String(row.closure_id), agency: agency(row.agency), businessDate: String(row.business_date), openingBalance: Number(row.opening_balance), closingBalance: Number(row.closing_balance), status: String(row.status), version: Number(row.version), occurredAt: String(row.closed_at) }))),
     safe("FORWARDING", () => paged<ForwardingContext>("stockage_forwardings", "forwarding_id,origin_agency,destination_agency", "forwarding_id", (query) => query, (row) => ({ forwardingId: String(row.forwarding_id), originAgency: agency(row.origin_agency), destinationAgency: agency(row.destination_agency) }), forwardingPaginationIdentity)),
-    safe("LSHI_RECONCILIATION", async () => ({ rows: [await readLatestLshiReconciliationReport()] }))
+    safe("LSHI_RECONCILIATION", async () => ({ rows: [await readLatestLshiReconciliationReport()] })),
+    safe("KLZ_RECONCILIATION", async () => ({ rows: [await readLatestKlzReconciliationReport()] }))
   ]);
   const contextById = new Map(forwardings.rows.map((row) => [row.forwardingId, row]));
   const enrich = <T extends { forwardingId?: string | null }>(rows: T[]) => rows.map((row) => ({ ...row, ...(row.forwardingId ? contextById.get(row.forwardingId) : undefined) }));
   const result = reconcileOperations({ payments: payments.rows, cash: enrich(cash.rows), storage: enrich(storage.rows), orchestrations: enrich(orchestrations.rows), closures: closures.rows, now, availability: { payments: payments.available, cash: cash.available, storage: storage.available, orchestrations: orchestrations.available, closures: closures.available } });
   const latestLshi = lshiMonitoring.available ? lshiMonitoring.rows[0] : null;
-  const unavailable = [payments, cash, storage, orchestrations, closures, forwardings, lshiMonitoring].filter((source) => !source.available).length;
-  const sourceNames = [["ENCAISSEMENTS", payments], ["CAISSE", cash], ["STOCKAGE", storage], ["ORCHESTRATION", orchestrations], ["CONTINUITE", closures], ["FORWARDING", forwardings], ["LSHI_RECONCILIATION", lshiMonitoring]] as const;
+  const latestKlz = klzMonitoring.available ? klzMonitoring.rows[0] : null;
+  const unavailable = [payments, cash, storage, orchestrations, closures, forwardings, lshiMonitoring, klzMonitoring].filter((source) => !source.available).length;
+  const sourceNames = [["ENCAISSEMENTS", payments], ["CAISSE", cash], ["STOCKAGE", storage], ["ORCHESTRATION", orchestrations], ["CONTINUITE", closures], ["FORWARDING", forwardings], ["LSHI_RECONCILIATION", lshiMonitoring], ["KLZ_RECONCILIATION", klzMonitoring]] as const;
   const sourceAnomalies = sourceNames.flatMap(([source, value]) => value.available ? [] : [{
     id: `pagination:${source}`, category: "PAGINATION" as const, agency: null, trackingCode: null, paymentRequestId: null,
     type: "SOURCE_INDISPONIBLE_OU_LECTURE_INCOMPLETE", occurredAt: now.toISOString(), ageMinutes: 0, interruptedStep: "LECTURE",
@@ -36,8 +39,8 @@ export async function readOperationalAnomalies(now = new Date()) {
     dossierKey: `SOURCE:${source}`, temporalClass: "NOUVELLE_APRES_PROTECTIONS" as const
   }]);
   const paginations = [cash, storage, orchestrations, closures, forwardings].flatMap((source) => source.available && source.pagination ? [source.pagination] : []);
-  const anomalies = uniqueAnomalies([...sourceAnomalies, ...(latestLshi?.anomalies ?? []), ...result.anomalies]);
-  const information = uniqueAnomalies([...(latestLshi?.information ?? []), ...result.information]);
+  const anomalies = uniqueAnomalies([...sourceAnomalies, ...(latestLshi?.anomalies ?? []), ...(latestKlz?.anomalies ?? []), ...result.anomalies]);
+  const information = uniqueAnomalies([...(latestLshi?.information ?? []), ...(latestKlz?.information ?? []), ...result.information]);
   return {
     generatedAt: now.toISOString(),
     anomalies,
@@ -60,7 +63,8 @@ export async function readOperationalAnomalies(now = new Date()) {
       ORCHESTRATION: orchestrations.available ? "AVAILABLE" : "UNAVAILABLE",
       CONTINUITE: closures.available ? "AVAILABLE" : "UNAVAILABLE",
       FORWARDING: forwardings.available ? "AVAILABLE" : "UNAVAILABLE",
-      LSHI_RECONCILIATION: lshiMonitoring.available ? "AVAILABLE" : "UNAVAILABLE"
+      LSHI_RECONCILIATION: lshiMonitoring.available ? "AVAILABLE" : "UNAVAILABLE",
+      KLZ_RECONCILIATION: klzMonitoring.available ? "AVAILABLE" : "UNAVAILABLE"
     }
   };
 }

@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { readExhaustivePages } from "./exhaustive-pagination";
 
-for (const size of [0, 1, 999, 1000, 1001, 1082, 2505]) {
+for (const size of [0, 1, 999, 1000, 1001, 1082, 1500, 2505]) {
   test(`lecture exhaustive stable de ${size} lignes`, async () => {
     const source = Array.from({ length: size }, (_, index) => ({ id: String(index + 1) }));
     const result = await readExhaustivePages(
