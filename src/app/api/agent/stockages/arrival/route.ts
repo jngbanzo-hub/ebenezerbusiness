@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { ARRIVAL_CAPACITY_MESSAGE } from "@/features/stockages/arrival-capacity";
 import { authorizeAgentRequest } from "@/server/agent-authorization";
 import { isStockagesV2Enabled, recordArrival, requireStorageAgency, StockagesV2Error, validateArrivalParcels } from "@/server/stockages-v2";
 import { recordInternalNotification } from "@/server/internal-notifications";
@@ -27,4 +28,4 @@ export async function POST(request: Request) {
     return NextResponse.json({ state: "SUCCESS", ...result }, { status: result.replayed ? 200 : 201 });
   } catch (cause) { return cause instanceof StockagesV2Error ? reply(cause.code, cause.status, cause.diagnosticId) : reply("STORAGE_SERVICE_UNAVAILABLE", 503); }
 }
-function reply(code: string, status: number, diagnosticId?: string) { return NextResponse.json({ state: "ERROR", code, message: code === "STORAGE_ACCOUNT_NOT_ACTIVE" ? "Stockage non ouvert — solde initial requis" : "Commande Stockages refusée.", ...(diagnosticId ? { diagnosticId } : {}) }, { status }); }
+function reply(code: string, status: number, diagnosticId?: string) { return NextResponse.json({ state: "ERROR", code, message: code === "ARRIVAL_CAPACITY_EXCEEDED" ? ARRIVAL_CAPACITY_MESSAGE : code === "STORAGE_ACCOUNT_NOT_ACTIVE" ? "Stockage non ouvert — solde initial requis" : "Commande Stockages refusée.", ...(diagnosticId ? { diagnosticId } : {}) }, { status }); }

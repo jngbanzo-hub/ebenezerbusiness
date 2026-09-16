@@ -1,8 +1,11 @@
+import { ARRIVAL_CAPACITY_MESSAGE, MAX_ARRIVAL_PARCELS } from "./arrival-capacity";
+
 export type ParsedArrival = Readonly<{ trackingCode: string; weightKg: number }>;
 
 export function parseArrivalDetails(value: string): readonly ParsedArrival[] {
   const lines = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   if (!lines.length) return Object.freeze([]);
+  if (lines.length > MAX_ARRIVAL_PARCELS) throw new Error(ARRIVAL_CAPACITY_MESSAGE);
   const parcels = lines.map((line) => {
     const match = line.match(/^([A-Z0-9][A-Z0-9._/-]{1,63})\s*:\s*(\d+(?:[.,]\d+)?)\s*KGS?$/i);
     if (!match) throw new Error(`Ligne invalide : ${line}`);
