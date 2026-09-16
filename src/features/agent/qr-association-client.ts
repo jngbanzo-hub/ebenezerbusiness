@@ -52,9 +52,22 @@ export type QrBatchPrevalidationLine = {
 export type QrBatchAssignmentLineResult = {
   lineNumber: number;
   requestId: string;
+  displayNumber: number;
+  agency: QrAgency;
+  trackingCode: string;
+  expectedVersion: number;
+  qrId?: string;
+  application: "APPLIED" | "NOT_APPLIED" | "UNKNOWN";
+  retrySafe: boolean;
   state: "ASSOCIATED" | "ALREADY_ASSOCIATED" | "ERROR";
   code?: string;
   replayed?: boolean;
+};
+
+export type QrBatchResult = {
+  batchId: string;
+  status: "COMPLETED" | "REJECTED" | "IN_PROGRESS" | "NOT_OBSERVED";
+  lines: QrBatchAssignmentLineResult[];
 };
 
 export type ManifestQrCandidate = {
@@ -123,10 +136,20 @@ export async function submitQrAssociation(
 export async function submitQrBatchAssociation(
   auth: BrowserAuth,
   lines: Array<QrAssignmentPayload & { lineNumber: number }>,
+  batchId: string,
   fetcher: Fetcher = fetch
-): Promise<QrBatchAssignmentLineResult[]> {
+): Promise<QrBatchResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 45_000);
+  let sent = false;
+  // A POST can have committed even when its response was lost. No automatic resend.
+  const sendOnce: Fetcher = (input, init) => {
+    if (sent) return Promise.reject(new AuthenticatedRequestError(
+      "État du lot à vérifier avant toute nouvelle tentative.", 503, "BATCH_RESULT_UNKNOWN"
+    ));
+    sent = true;
+    return fetcher(input, init);
+  };
   try {
     const response = await authenticatedRead(
       auth,
@@ -134,12 +157,12 @@ export async function submitQrBatchAssociation(
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lines }),
+        body: JSON.stringify({ batchId, lines }),
         signal: controller.signal
       },
-      fetcher
+      sendOnce
     );
-    return (await readResponse<{ lines: QrBatchAssignmentLineResult[] }>(response)).lines;
+    return await readResponse<QrBatchResult>(response);
   } catch (cause) {
     if (controller.signal.aborted) {
       throw new AuthenticatedRequestError(
@@ -152,6 +175,16 @@ export async function submitQrBatchAssociation(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function readQrBatchStatus(auth: BrowserAuth, batchId: string, fetcher: Fetcher = fetch): Promise<QrBatchResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const response = await authenticatedRead(auth, `/api/agent/qr/batch-status?batchId=${encodeURIComponent(batchId)}`,
+      { method: "GET", signal: controller.signal }, fetcher);
+    return await readResponse<QrBatchResult>(response);
+  } finally { clearTimeout(timer); }
 }
 
 export async function prevalidateQrBatch(
@@ -231,7 +264,7 @@ export function messageForQrError(code: string) {
     QR_VERSION_CONFLICT: "L’état du QR a changé. Relancez la prévalidation.",
     QR_IDEMPOTENCY_CONFLICT: "Cette demande est en conflit avec une opération précédente.",
     QR_PARCEL_ALREADY_ASSIGNED: "Ce colis est déjà associé à un autre QR.",
-    INVALID_QR_BATCH: "Le lot QR dépasse le nombre maximal autorisé.",
+    INVALID_QR_BATCH: "Lot invalide : 1 à 250 associations maximum, avec toutes les informations requises.",
     IDENTITY_SERVICE_UNAVAILABLE: "La source métier est temporairement indisponible.",
     QR_SERVICE_UNAVAILABLE: "Le service QR est temporairement indisponible."
   };

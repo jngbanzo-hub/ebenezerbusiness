@@ -1,26 +1,17 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import { qrBatchConfirmationSchema as schema } from "@/server/qr-batch-confirmation-schema";
 
 import { authorizeAgentRequest } from "@/server/agent-authorization";
-import { assignQrBatchInternally } from "@/server/qr-batch-assignment-service";
+import { assignQrBatchInternally, bounded } from "@/server/qr-batch-assignment-service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-const lineSchema = z.object({
-  lineNumber: z.number().int().positive().safe(),
-  displayNumber: z.number().int().positive().safe(),
-  agency: z.enum(["FIH", "LSHI", "KLZ"]),
-  trackingCode: z.string().trim().toUpperCase().regex(/^[A-Z0-9][A-Z0-9._/-]{1,63}$/),
-  expectedVersion: z.number().int().positive().safe(),
-  requestId: z.string().uuid()
-}).strict();
-const schema = z.object({ lines: z.array(lineSchema).min(1).max(100) }).strict();
+export const maxDuration = 45;
 
 export async function POST(request: Request) {
   try {
     const authStartedAt = Date.now();
-    const auth = await authorizeAgentRequest(request);
+    const auth = await bounded(() => authorizeAgentRequest(request), 5_000);
     console.info("[qr-batch-assignment]", JSON.stringify({
       step: "AUTHORIZATION",
       durationMs: Date.now() - authStartedAt,
@@ -30,15 +21,15 @@ export async function POST(request: Request) {
     if (auth.identity.site !== "COO") return fail("QR_AGENCY_ACCESS_DENIED", 403);
     const parsed = schema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return fail("INVALID_QR_BATCH", 400);
-    const lines = await assignQrBatchInternally(auth.identity.userId, parsed.data.lines);
-    return NextResponse.json({ lines }, {
+    const result = await assignQrBatchInternally(auth.identity.userId, parsed.data.lines, parsed.data.batchId);
+    return NextResponse.json(result, {
       headers: { "Cache-Control": "private, no-store, max-age=0" }
     });
   } catch (cause) {
     console.error("[qr-batch-assignment]", JSON.stringify({
       step: "BATCH_FAILURE",
       success: false,
-      code: cause instanceof Error ? cause.message : "UNKNOWN_ERROR"
+      code: "QR_BATCH_UNAVAILABLE"
     }));
     return fail("QR_SERVICE_UNAVAILABLE", 503);
   }
