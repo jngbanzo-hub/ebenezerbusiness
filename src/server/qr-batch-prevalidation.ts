@@ -63,7 +63,7 @@ export async function prevalidateQrBatch(
   lines: QrBatchInputLine[],
   _bearerToken: string,
   dependencies: QrBatchPrevalidationDependencies = defaultDependencies
-) {
+): Promise<QrBatchPrevalidationResult[]> {
   const normalized = lines.map((line) => ({
     ...line,
     displayNumber: line.displayNumber.trim(),
@@ -186,16 +186,18 @@ const defaultDependencies: QrBatchPrevalidationDependencies = {
   readManifestIdentities: readCanonicalManifestIdentities
 };
 
-export async function readCanonicalManifestIdentities() {
+export async function readCanonicalManifestIdentities(rejectAmbiguous = false) {
   const rows = await readCanonicalPaymentManifestRows();
-  return new Set(rows.flatMap((row) => {
+  const keys = rows.flatMap((row) => {
     const agency = String(row.sourceSite).trim().toUpperCase();
     const trackingCode = String(row.codeColisRaw ?? "").trim().toUpperCase();
     return isQrAgency(agency) && trackingCode ? [`${agency}|${trackingCode}`] : [];
-  }));
+  });
+  const ambiguous = rejectAmbiguous ? duplicateKeys(keys) : new Set<string>();
+  return new Set(keys.filter((key) => !ambiguous.has(key)));
 }
 
-async function readQrRegistrySnapshot(displayNumbers: number[]) {
+export async function readQrRegistrySnapshot(displayNumbers: number[]) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   if (!url || !key) throw new Error("QR_SERVICE_UNAVAILABLE");

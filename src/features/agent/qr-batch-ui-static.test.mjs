@@ -23,7 +23,8 @@ test("prévisualise chaque ligne et exige une confirmation explicite", () => {
   assert.match(batch, /Confirmer les associations valides/);
   assert.ok(batch.indexOf("Je confirme explicitement") < batch.indexOf("Correspondances QR → colis"));
   assert.match(batch, /\{readyCount \? <section/);
-  assert.match(batch, /disabled=\{busy \|\| !confirmed\}/);
+  assert.match(batch, /disabled=\{busy \|\| !confirmed \|\| readyCount !== lines.length\}/);
+  assert.match(batch, /if \(inFlight.current\) return/);
   assert.match(batch, /Prévalidation en cours…/);
 });
 
@@ -35,15 +36,16 @@ test("met en évidence un QR déjà utilisé avec sa destination et son code act
 });
 
 test("groupe la confirmation finale avec un requestId stable par ligne", () => {
-  assert.match(batch, /line\.requestId \?\? createQrAssignmentRequestId\(\)/);
+  assert.match(batch, /line\.requestId \?\? requestIds.current.get\(key\) \?\? createQrAssignmentRequestId\(\)/);
   assert.match(batch, /submitQrBatchAssociation/);
   assert.match(batch, /Association en cours…/);
   assert.match(batch, /ASSOCIATIONS RÉUSSIES/);
   for (const label of ["ASSOCIÉS", "DÉJÀ ASSOCIÉS", "EN ERREUR", "NON TRAITÉS"]) assert.match(batch, new RegExp(label));
   assert.match(batch, /aria-live="polite"/);
   assert.match(batchAssignRoute, /auth\.identity\.site !== "COO"/);
-  assert.match(batchAssignService, /assignQrLabelInternally/);
-  assert.match(batchAssignService, /mapWithConcurrency\(commands, 4/);
+  assert.match(batchAssignService, /rpc\("assign_qr_batch_server"/);
+  assert.doesNotMatch(batchAssignService, /mapWithConcurrency|assignQrLabelInternally/);
+  assert.match(batchAssignService, /read_qr_assignment_batch_server/);
   assert.match(batchAssignService, /readCanonicalManifestIdentities/);
   assert.match(assignRoute, /certifyQrParcelIdentity/);
   assert.match(assignRoute, /assignQrLabelInternally/);
