@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, Boxes, ClipboardCheck, LogOut, PackagePlus, PackageX, RefreshCcw, ShieldCheck, Truck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { signOutAgent } from "@/features/agent/auth";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { formatStockageAnomalies, formatStockageWeight } from "@/features/stockages/presentation";
 import { summarizeArrivalDetails } from "@/features/stockages/arrival-details";
+import { MAX_ARRIVAL_PARCELS } from "@/features/stockages/arrival-capacity";
 import { buildAuditPresentation } from "@/features/stockages/audit-presentation";
 import { getVerifiedAgentWriteToken } from "@/features/stockages/verified-agent-token";
 import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
@@ -195,18 +196,25 @@ export function AdminStockagesV2Page() {
 
 function AgentCommandForm({ title, endpoint, disabled, fields, onDone }: { title: string; endpoint: string; disabled: boolean; fields: "arrival" | "delivery"; onDone: () => Promise<void> }) {
   const [result, setResult] = useState("");
+  const arrivalInFlight = useRef(false);
+  const [arrivalSubmitting, setArrivalSubmitting] = useState(false);
   const [arrivalDetails, setArrivalDetails] = useState("");
   const arrivalSummary = useMemo(() => summarizeArrivalDetails(arrivalDetails), [arrivalDetails]);
   async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); const form = event.currentTarget; const values = new FormData(form);
+    event.preventDefault();
+    if (fields === "arrival" && (disabled || arrivalInFlight.current)) return;
+    const form = event.currentTarget; const values = new FormData(form);
     if (!window.confirm(`Confirmer : ${title} ?`)) return;
     if (fields === "arrival" && (arrivalSummary.error || !arrivalSummary.parcels.length)) { setResult(arrivalSummary.error || "Ajoutez au moins un colis."); return; }
     const payload = fields === "arrival" ? { parcels: arrivalSummary.parcels, reference: values.get("reference"), observation: values.get("observation"), requestId: crypto.randomUUID() } : { trackingCode: values.get("trackingCode"), physicalDeliveryConfirmed: true, requestId: crypto.randomUUID() };
+    if (fields === "arrival") { arrivalInFlight.current = true; setArrivalSubmitting(true); }
     try { const response = await request<{ replayed?: boolean }>(endpoint, payload); setResult(response.replayed ? "Commande déjà enregistrée : rejeu idempotent." : "Commande enregistrée avec succès."); form.reset(); setArrivalDetails(""); await onDone(); } catch (error) { setResult(error instanceof Error ? error.message : "Commande refusée."); }
+    finally { if (fields === "arrival") { arrivalInFlight.current = false; setArrivalSubmitting(false); } }
   }
   return <Panel title={title}><form className="space-y-3" onSubmit={submit}>
+    {fields === "arrival" && <p className="text-sm text-slate-300">Maximum {MAX_ARRIVAL_PARCELS} codes par arrivage. Un code et son poids par ligne.</p>}
     {fields === "arrival" ? <><label className="block text-sm">Détails de Codes<textarea name="parcels" required rows={8} value={arrivalDetails} onChange={(event)=>setArrivalDetails(event.target.value)} placeholder={"JL73926:8KGs\nJL96426:5KG"} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><div className="grid gap-3 sm:grid-cols-2"><label className="text-sm">Nombre de Codes Reçus<input readOnly value={arrivalSummary.count} className="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 p-2 text-slate-300" /></label><label className="text-sm">Poids Total Entrés<input readOnly value={formatStockageWeight(arrivalSummary.totalWeightKg)} className="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 p-2 text-slate-300" /></label></div>{arrivalSummary.error&&<p className="text-sm text-red-200">{arrivalSummary.error}</p>}<Input name="reference" label="Référence d’arrivage" /><Input name="observation" label="Observation" /></> : <><Input name="trackingCode" label="Code colis" required /><p className="text-xs text-slate-400">La présence physique et le poids sont contrôlés côté serveur dans le Stockage de l’agence.</p></>}
-    <Button disabled={disabled} className="w-full bg-lime-400 text-slate-950 hover:bg-lime-300 focus-visible:ring-lime-300 disabled:bg-slate-800 disabled:text-slate-400">{disabled ? "Solde initial requis" : title}</Button>{result && <p className="text-sm text-slate-300">{result}</p>}
+    <Button disabled={disabled || (fields === "arrival" && (arrivalSubmitting || Boolean(arrivalSummary.error)))} className="w-full bg-lime-400 text-slate-950 hover:bg-lime-300 focus-visible:ring-lime-300 disabled:bg-slate-800 disabled:text-slate-400">{disabled ? "Solde initial requis" : arrivalSubmitting ? "Enregistrement…" : title}</Button>{result && <p className="text-sm text-slate-300">{result}</p>}
   </form></Panel>;
 }
 

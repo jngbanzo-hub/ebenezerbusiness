@@ -1,4 +1,5 @@
 import "server-only";
+import { MAX_ARRIVAL_PARCELS } from "@/features/stockages/arrival-capacity";
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -170,7 +171,8 @@ export async function readStorageReportEvents(from: string, to = from, agency?: 
 export type ArrivalParcel = Readonly<{ trackingCode: string; weightKg: number }>;
 
 export function validateArrivalParcels(value: unknown): readonly ArrivalParcel[] {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 500) throw new StockagesV2Error("INVALID_ARRIVAL_PARCELS");
+  if (!Array.isArray(value) || value.length === 0) throw new StockagesV2Error("INVALID_ARRIVAL_PARCELS");
+  if (value.length > MAX_ARRIVAL_PARCELS) throw new StockagesV2Error("ARRIVAL_CAPACITY_EXCEEDED");
   const parcels = value.map((row) => {
     if (!row || typeof row !== "object") throw new StockagesV2Error("INVALID_ARRIVAL_PARCELS");
     const item = row as Record<string, unknown>;
