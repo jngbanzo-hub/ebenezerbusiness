@@ -25,7 +25,7 @@ const { resolveLshiPendingCanonical, replacePendingPayments } = await import(pen
 const { reconcileOperations, arbitrateOperationalClassifications } = await import(reconciliationUrl);
 // Execute the existing non-regression assertions unchanged against the real module.
 await import(moduleUrl("src/server/operational-reconciliation.test.ts", { "./operational-reconciliation": reconciliationUrl }));
-const { readPendingEffects } = await import(moduleUrl("src/server/lshi-operational-reconciliation.ts", {
+const scannerImports = {
   "server-only": stub(""), "@supabase/supabase-js": import.meta.resolve("@supabase/supabase-js"),
   "@/server/admin-payments-sheets": sheetsUrl,
   "@/server/agent-expenses-apps-script": stub("export function readAdminExpenses(){throw Error('EXPENSE_READ_NOT_EXPECTED')}"),
@@ -33,7 +33,8 @@ const { readPendingEffects } = await import(moduleUrl("src/server/lshi-operation
   "@/server/operational-reconciliation": reconciliationUrl,
   "@/server/lshi-pending-canonical": pendingUrl,
   "@/server/exhaustive-pagination": moduleUrl("src/server/exhaustive-pagination.ts")
-}, "\nexport { readPendingEffects };"));
+};
+const { readPendingEffects } = await import(moduleUrl("src/server/lshi-operational-reconciliation.ts", scannerImports, "\nexport { readPendingEffects };"));
 
 const now = new Date("2026-09-17T14:00:00Z");
 const requestId = "30990f80-ee1c-44ec-884e-678e02bf094c";
@@ -198,6 +199,159 @@ test("aucune nouvelle primitive d'écriture; les agrégats quotidiens gardent le
   const newReader = reader.slice(reader.indexOf("export async function readCanonicalPaymentsByRequestIds"), reader.indexOf("export async function readAdminPayments("));
   assert.doesNotMatch(newReader + resolver, /\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/);
   assert.match(scanner, /const expectedCredits = money\(sheet.rows.reduce/);
-  assert.match(scanner, /readPendingEffects\(client, canonical.pending, "cash"\)/);
+  assert.match(scanner, /readPendingEffects\(client, canonical.effectOrchestrations, "cash"\)/);
+  assert.match(scanner, /readPendingEffects\(client, canonical.effectOrchestrations, "storage"\)/);
   assert.match(scanner, /canonicalPaymentStatus: canonical.statuses/);
+});
+
+const completed = { ...pending, state: "COMPLETED", paymentCreated: true, cashEventId: "cash", storageEventId: "exit", updatedAt: "2026-09-17T15:11:37Z", completedAt: "2026-09-17T15:11:37Z" };
+const repairedCash = { requestId, agency: "LSHI", amountUsd: 40, eventId: "cash", occurredAt: "2026-09-17T15:11:37Z" };
+const repairedExit = { requestId, agency: "LSHI", trackingCode: "AT101926", weightKg: 4, eventId: "exit", occurredAt: "2026-09-17T15:11:37Z" };
+
+test("AT101926 COMPLETED: paiement ancien + effets récents + sheetRows=0 => zéro anomalie", async () => {
+  const original = JSON.stringify([completed, repairedCash, repairedExit]);
+  let calls = 0;
+  const resolved = await resolveLshiPendingCanonical([completed], async (ids) => { calls++; assert.deepEqual(ids, [requestId]); return readFound(); }, [repairedCash, repairedExit]);
+  assert.equal(calls, 1);
+  assert.equal(resolved.pending.length, 0);
+  assert.deepEqual(resolved.effectOrchestrations, [completed]);
+  assert.equal(resolved.statuses.get(requestId), "PRESENT");
+  const result = reconcile(resolved, { cash: [repairedCash], storage: [repairedExit], orchestrations: [completed] });
+  assert.deepEqual(result.anomalies, []);
+  assert.deepEqual(result.information, []);
+  assert.equal(JSON.stringify([completed, repairedCash, repairedExit]), original);
+});
+
+test("chacun des effets suffit à résoudre le paiement ancien et demander les deux effets hors fenêtre", async () => {
+  for (const effect of [repairedCash, repairedExit]) {
+    const resolved = await resolveLshiPendingCanonical([completed], readFound, [effect]);
+    assert.equal(resolved.statuses.get(requestId), "PRESENT");
+    assert.deepEqual(resolved.effectOrchestrations, [completed]);
+  }
+});
+
+test("événements sans orchestration: présence, absence et panne sont distinctes", async () => {
+  for (const [response, expected] of [
+    [{ status: "FOUND", payment }, []],
+    [{ status: "ABSENT" }, ["CASH_EVENT_SANS_PAIEMENT_CANONIQUE", "SORTIE_SANS_PAIEMENT_CANONIQUE"]],
+    [{ status: "UNKNOWN" }, ["PAIEMENT_CANONIQUE_NON_CERTIFIE"]]
+  ]) {
+    const resolved = await resolveLshiPendingCanonical([], async () => new Map([[requestId, response]]), [repairedCash, repairedExit]);
+    const result = reconcile(resolved, { orchestrations: [], cash: [repairedCash], storage: [repairedExit] });
+    assert.deepEqual(types(result).sort(), expected.sort());
+    assert.equal(result.information.length, 0);
+  }
+});
+
+test("COMPLETED + source indisponible: À VÉRIFIER, ni orphelin ni zéro trompeur", async () => {
+  const resolved = await resolveLshiPendingCanonical([completed], async () => { throw Error("unavailable"); }, [repairedCash, repairedExit]);
+  const result = reconcile(resolved, { orchestrations: [completed], cash: [repairedCash], storage: [repairedExit] });
+  assert.deepEqual(types(result), ["PAIEMENT_CANONIQUE_NON_CERTIFIE"]);
+  assert.equal(result.anomalies[0].status, "A_VERIFIER");
+  assert.equal(result.anomalies[0].severity, "ATTENTION");
+});
+
+test("source certifie absent mais checkpoint COMPLETED positif: contradiction NON CERTIFIÉE", async () => {
+  const resolved = await resolveLshiPendingCanonical([completed], async () => new Map([[requestId, { status: "ABSENT" }]]), [repairedCash, repairedExit]);
+  assert.deepEqual(types(reconcile(resolved, { orchestrations: [completed], cash: [repairedCash], storage: [repairedExit] })), ["PAIEMENT_CANONIQUE_NON_CERTIFIE"]);
+});
+
+test("un même tracking code avec un autre requestId ne certifie jamais le paiement", async () => {
+  const resolved = await resolveLshiPendingCanonical([completed], async () => new Map([[requestId, { status: "FOUND", payment: { ...payment, paymentRequestId: "other-request" } }]]), [repairedCash, repairedExit]);
+  assert.equal(resolved.statuses.get(requestId), "UNKNOWN");
+});
+
+test("forwarding COMPLETED: requestId legacy relié seulement par identité forte", async () => {
+  const row = { ...completed, forwardingId: "forwarding-test" };
+  const exit = { ...repairedExit, requestId: "legacy-exit", forwardingId: row.forwardingId };
+  const resolved = await resolveLshiPendingCanonical([row], async (ids) => { assert.deepEqual(ids, [requestId]); return readFound(); }, [exit]);
+  assert.deepEqual(types(reconcile(resolved, { orchestrations: [row], cash: [repairedCash], storage: [exit] })), []);
+  const unavailable = await resolveLshiPendingCanonical([row], async () => { throw Error(); }, [exit]);
+  assert.deepEqual(types(reconcile(unavailable, { orchestrations: [row], cash: [], storage: [exit] })), ["PAIEMENT_CANONIQUE_NON_CERTIFIE"]);
+});
+
+test("arbitrage Centre: les deux anciennes alertes orphelines sont remplacées sans masquer une vraie anomalie", async () => {
+  const stale = reconcileOperations({ payments: [], cash: [repairedCash], storage: [repairedExit], orchestrations: [completed], closures: [], now });
+  assert.equal(stale.anomalies.length, 2);
+  const resolved = await resolveLshiPendingCanonical([completed], readFound, [repairedCash, repairedExit]);
+  const current = reconcile(resolved, { orchestrations: [completed], cash: [repairedCash], storage: [repairedExit] });
+  assert.equal(arbitrateOperationalClassifications(stale.anomalies, [], current, new Set([requestId])).anomalies.length, 0);
+  const unavailable = reconcile(await resolveLshiPendingCanonical([completed], async () => { throw Error(); }, [repairedCash]), { orchestrations: [completed], cash: [repairedCash], storage: [repairedExit] });
+  assert.deepEqual(types(arbitrateOperationalClassifications(stale.anomalies, [], unavailable, new Set([requestId]))), ["PAIEMENT_CANONIQUE_NON_CERTIFIE"]);
+  assert.equal(arbitrateOperationalClassifications(stale.anomalies, [], stale, new Set([requestId])).anomalies.length, 2);
+});
+
+test("AT101926 réparé et AT43326 simultanés: zéro anomalie, une seule INFO historique", async () => {
+  const negative = { ...pending, requestId: "c9a90809-11ec-417e-a18b-42e49cd5d48c", trackingCode: "AT43326", createdAt: "2026-09-10T12:38:37Z", updatedAt: "2026-09-10T12:39:00Z" };
+  const resolved = await resolveLshiPendingCanonical([completed, negative], async () => new Map([[requestId, { status: "FOUND", payment }], [negative.requestId, { status: "ABSENT" }]]), [repairedCash, repairedExit]);
+  const result = reconcile(resolved, { orchestrations: [completed, negative], cash: [repairedCash], storage: [repairedExit] });
+  assert.equal(result.anomalies.length, 0);
+  assert.equal(result.information.length, 1);
+  assert.equal(result.information[0].trackingCode, "AT43326");
+  assert.equal(result.information[0].severity, "INFO");
+  assert.equal(result.information[0].temporalClass, "HISTORIQUE");
+});
+
+test("références COMPLETED: identifiants ledger non UUID acceptés; séparateurs PostgREST refusés", async () => {
+  const filters = [];
+  const query = { select(){return this;}, eq(){return this;}, in(){return this;}, or(value){filters.push(value);return this;}, order(){return this;}, range(){return Promise.resolve({data:[],error:null});} };
+  const row = { ...completed, cashEventId: `cash-payment-${"a".repeat(64)}`, storageEventId: `stockage-paid-exit-${"b".repeat(64)}` };
+  for (const kind of ["cash", "storage"]) await readPendingEffects({from(){return query;}}, [row], kind);
+  assert.ok(filters[0].includes(row.cashEventId));
+  assert.ok(filters[1].includes(row.storageEventId));
+  await assert.rejects(readPendingEffects({from(){return query;}}, [{ ...row, cashEventId: "bad),agency.eq.FIH" }], "cash"), /PENDING_EFFECT_IDENTITY_INVALID/);
+});
+
+test("scanner INCREMENTAL réel: sheetRows=0, COMPLETED, effets récents/anciens, aucune anomalie et aucune écriture", async () => {
+  const negativeId = "c9a90809-11ec-417e-a18b-42e49cd5d48c";
+  const { inspect } = await import(moduleUrl("src/server/lshi-operational-reconciliation.ts", {
+    ...scannerImports,
+    "@/server/admin-payments-sheets": stub(`
+      export async function readAdminPaymentNextRow(){return 202;}
+      export async function readAdminPaymentWindow(){return {payments:[${JSON.stringify(payment)}],nextRow:202,limitReached:false};}
+      export async function readCanonicalPaymentsByRequestIds(ids){
+        if(ids.length!==2 || !ids.includes('${requestId}') || !ids.includes('${negativeId}')) throw Error('EXPECTED_BOTH_REQUEST_IDS');
+        return new Map([['${requestId}',{status:'FOUND',payment:${JSON.stringify(payment)}}],['${negativeId}',{status:'ABSENT'}]]);
+      }
+    `),
+    "@/server/agent-expenses-apps-script": stub("export async function readAdminExpenses(){return {depenses:[],pagination:{totalPages:1}};}")
+  }, "\nexport { inspect };"));
+  const cashId = `cash-payment-${"a".repeat(64)}`, exitId = `stockage-paid-exit-${"b".repeat(64)}`;
+  for (const oldEffect of [null, "cash_events", "stockage_events"]) {
+    const data = {
+      cash_events: [{ event_id: cashId, source_request_id: requestId, source_type: "PAYMENT_ENGINE", agency: "LSHI", amount: 40, occurred_at: oldEffect === "cash_events" ? payment.dateTime : completed.updatedAt, metadata: {} }],
+      stockage_events: [{ event_id: exitId, request_id: requestId, source_type: "PAYMENT_ENGINE", source_request_id: requestId, agency: "LSHI", tracking_code: "AT101926", weight_kg_delta: -4, event_type: "SORTIE_APRES_PAIEMENT_TOTAL_DESTINATION", occurred_at: oldEffect === "stockage_events" ? payment.dateTime : completed.updatedAt, metadata: {} }],
+      stockage_payment_orchestrations: [
+        { request_id: requestId, tracking_code: "AT101926", agency: "LSHI", state: "COMPLETED", payment_created: true, cash_event_id: cashId, stockage_event_id: exitId, created_at: pending.createdAt, updated_at: completed.updatedAt, completed_at: completed.completedAt, parcel_id: null, forwarding_id: null, attempt_count: 1 },
+        { request_id: negativeId, tracking_code: "AT43326", agency: "LSHI", state: "PENDING", payment_created: false, cash_event_id: null, stockage_event_id: null, created_at: "2026-09-10T12:38:37Z", updated_at: "2026-09-10T12:39:00Z", parcel_id: null, forwarding_id: null, attempt_count: 2 }
+      ]
+    };
+    const original = JSON.stringify(data);
+    const readTrace = [];
+    const client = { from(table) {
+      let rows = [...(data[table] ?? [])];
+      const query = {
+        select(){return this;}, eq(key,value){rows=rows.filter((row)=>row[key]===value);return this;},
+        in(key,values){rows=rows.filter((row)=>values.includes(row[key]));return this;},
+        gte(key,value){rows=rows.filter((row)=>row[key]>=value);return this;},
+        lt(key,value){rows=rows.filter((row)=>row[key]<value);return this;},
+        lte(key,value){rows=rows.filter((row)=>row[key]<=value);return this;},
+        or(value){readTrace.push([table,value]);return this;}, order(){return this;}, limit(n){rows=rows.slice(0,n);return this;},
+        range(from,to){return Promise.resolve({data:rows.slice(from,to+1),error:null});},
+        then(resolve,reject){return Promise.resolve({data:rows,error:null}).then(resolve,reject);}
+      };
+      return query;
+    } };
+    const result = await inspect(client, { businessDate: "2026-09-16", cursorStart: 202, kind: "INCREMENTAL", now: new Date("2026-09-17T15:20:00Z") });
+    assert.equal(result.metrics.sheetRows, 0);
+    assert.equal(result.sources.pendingCanonical, "AVAILABLE");
+    assert.equal(result.sources.pendingCash, "AVAILABLE");
+    assert.equal(result.sources.pendingStorage, "AVAILABLE");
+    assert.deepEqual(result.anomalies, []);
+    assert.equal(result.information.length, 1);
+    assert.equal(result.information[0].trackingCode, "AT43326");
+    assert.ok(readTrace.some(([table,filter]) => table === "cash_events" && filter.includes(cashId)));
+    assert.ok(readTrace.some(([table,filter]) => table === "stockage_events" && filter.includes(exitId)));
+    assert.equal(JSON.stringify(data), original);
+  }
 });

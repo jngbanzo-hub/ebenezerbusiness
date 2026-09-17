@@ -124,10 +124,10 @@ async function inspect(client: ReturnType<typeof serviceClient>, input: { busine
     input.kind === "INCREMENTAL" ? Promise.resolve({ available: true as const, rows: [] as Array<{ metrics: Record<string, unknown> }> }) : safe("PREVIOUS_DAILY", () => dbRows(client.from("lshi_reconciliation_runs").select("metrics").eq("status", "COMPLETED").in("run_kind", ["DAILY", "DAILY_RETRY"]).lt("business_date", input.businessDate).order("business_date", { ascending: false }).limit(1), (row) => ({ metrics: record(row.metrics) })))
   ]);
 
-  const canonical = await resolveLshiPendingCanonical(orchestrations.rows, readCanonicalPaymentsByRequestIds);
+  const canonical = await resolveLshiPendingCanonical(orchestrations.rows, readCanonicalPaymentsByRequestIds, [...cash.rows, ...storage.rows]);
   const [pendingCash, pendingStorage] = await Promise.all([
-    safe("PENDING_CASH", () => readPendingEffects(client, canonical.pending, "cash")),
-    safe("PENDING_STORAGE", () => readPendingEffects(client, canonical.pending, "storage"))
+    safe("PENDING_CASH", () => readPendingEffects(client, canonical.effectOrchestrations, "cash")),
+    safe("PENDING_STORAGE", () => readPendingEffects(client, canonical.effectOrchestrations, "storage"))
   ]);
   const sources = {
     payments: state(sheet), cash: state(cash), storage: state(storage), orchestrations: state(orchestrations),
@@ -208,7 +208,10 @@ async function readPendingEffects(client: ReturnType<typeof serviceClient>, pend
     const chunk = pending.slice(offset, offset + 50);
     const clause = (column: string, values: Array<string | null | undefined>) => {
       const ids = Array.from(new Set(values.filter((value): value is string => Boolean(value))));
-      if (ids.some((id) => !/^[0-9a-f-]{36}$/i.test(id))) throw new Error("PENDING_EFFECT_IDENTITY_INVALID");
+      // Ledger event ids include deterministic cash-payment-/stockage-paid-exit-
+      // hashes, not UUIDs. Keep the PostgREST filter strictly delimiter-free.
+      const validId = column === "event_id" ? /^[a-z0-9:_-]{1,200}$/i : /^[0-9a-f-]{36}$/i;
+      if (ids.some((id) => !validId.test(id))) throw new Error("PENDING_EFFECT_IDENTITY_INVALID");
       return ids.length ? [`${column}.in.(${ids.join(",")})`] : [];
     };
     const filter = [
