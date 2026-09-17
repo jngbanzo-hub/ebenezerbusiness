@@ -13,7 +13,10 @@ import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { formatWeight } from "@/lib/format-weight";
 
 import { loadAdminBilan } from "./bilan-client";
-import { BILAN_COHORT_OPTIONS, buildBilanQuery, formatBilanStatus, monthPeriod, type BilanPayload, type BilanStatus } from "./bilan-ui";
+import { formatBilanStatus, monthPeriod, type BilanPayload, type BilanStatus } from "./bilan-ui";
+import type { OriginMonth } from "./cohort-catalog";
+import { loadOriginMonths } from "./origin-month-client";
+import { buildBilanFilterQuery, createBilanFilters, createBilanRequestGuard, type BilanFilters } from "./bilan-filter-state";
 
 const field = "mt-2 h-11 w-full rounded-md border border-white/15 bg-white/[0.05] px-3 text-white outline-none focus:border-accent";
 const agencies = ["FIH", "LSHI", "KLZ"] as const;
@@ -22,30 +25,68 @@ export function AdminBilanPage() {
   const router = useRouter(); const token = useRef("");
   const [ready, setReady] = useState(false); const [loading, setLoading] = useState(false); const [error, setError] = useState("");
   const [data, setData] = useState<BilanPayload | null>(null); const [unresolved, setUnresolved] = useState("");
-  const [cohort, setCohort] = useState("AT"); const [periodMode, setPeriodMode] = useState<"MONTH" | "CUSTOM">("MONTH");
-  const [periodMonth, setPeriodMonth] = useState("2026-08"); const [from, setFrom] = useState("2026-08-01"); const [to, setTo] = useState("2026-08-31");
-  const period = useMemo(() => periodMode === "MONTH" ? monthPeriod(Number(periodMonth.slice(0, 4)), Number(periodMonth.slice(5, 7))) : { from, to }, [from, periodMode, periodMonth, to]);
+  const [definitions, setDefinitions] = useState<readonly OriginMonth[]>([]);
+  const [filters, setFilters] = useState<BilanFilters>({ cohort: "", mode: "MONTH", from: "", to: "" });
+  const requests = useRef(createBilanRequestGuard());
+  const definition = definitions.find(item => item.prefix === filters.cohort);
+  const bounds = useMemo(() => definition ? monthPeriod(definition.year, definition.month) : { from: "", to: "" }, [definition]);
 
-  useEffect(() => { let active = true; void (async () => { try { const supabase = getSupabaseBrowserClient(); const { data: { session } } = await supabase.auth.getSession(); if (!session?.user || !session.access_token) return router.replace("/auth/sign-in"); await getAdminProfile(session.user); if (active) { token.current = session.access_token; setReady(true); } } catch { if (active) setError("Accès Admin refusé."); } })(); return () => { active = false; token.current = ""; }; }, [router]);
-  useEffect(() => { if (ready) void load(); }, [ready]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { let active = true; void (async () => { try {
+    const supabase = getSupabaseBrowserClient(); const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user || !session.access_token) return router.replace("/auth/sign-in");
+    await getAdminProfile(session.user);
+    const months = await loadOriginMonths(session.access_token);
+    const initial = months.find(item => item.prefix === "AT") ?? months.find(item => item.active) ?? months[0];
+    if (active) { token.current = session.access_token; setDefinitions(months); setFilters(createBilanFilters(initial.prefix, months)); setReady(true); }
+  } catch (cause) { if (active) setError(cause instanceof Error ? cause.message : "Registre indisponible — Bilan non certifié."); }
+  })(); return () => { active = false; token.current = ""; }; }, [router]);
+  useEffect(() => { if (ready) void load(); }, [ready, filters.cohort]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const guard = requests.current; return () => guard.invalidate(); }, []);
+
+  function changeFilters(next: BilanFilters) {
+    requests.current.invalidate();
+    setData(null); setUnresolved(""); setError(""); setLoading(false);
+    setFilters(next);
+  }
 
   async function load() {
-    if (!token.current || !period.from || !period.to || period.from > period.to) { setError("Période invalide."); return; }
-    const controller = new AbortController(); setLoading(true); setError(""); setUnresolved("");
-    try { const result = await loadAdminBilan(token.current, buildBilanQuery(cohort, period), controller.signal); if ("code" in result) { setData(null); setUnresolved(result.requested); } else setData(result); }
-    catch (cause) { setData(null); setError(cause instanceof Error ? cause.message : "Source BILAN temporairement indisponible."); }
-    finally { setLoading(false); }
+    if (!token.current) return;
+    const request = requests.current.begin();
+    setLoading(true); setData(null); setError(""); setUnresolved("");
+    try {
+      const query = buildBilanFilterQuery(filters, definitions);
+      const result = await loadAdminBilan(token.current, query, request.signal);
+      if (!request.isCurrent()) return;
+      if ("code" in result) { setUnresolved(result.requested); } else setData(result);
+    }
+    catch (cause) { if (request.isCurrent()) { setData(null); setError(cause instanceof Error ? cause.message : "Source BILAN temporairement indisponible."); } }
+    finally { if (request.isCurrent()) setLoading(false); }
   }
 
   return <main className="min-h-screen bg-ebe-night py-8 text-white"><Container>
     <header><Link href="/admin" className="inline-flex items-center gap-2 text-sm text-accent"><ArrowLeft className="h-4 w-4"/>Retour au tableau de bord Admin</Link><div className="mt-4 flex flex-wrap items-center gap-3"><h1 className="text-3xl font-semibold">BILAN</h1>{data ? <StatusBadge status={data.meta.status}/> : null}</div><p className="mt-2 text-sm text-muted-foreground">Lecture, agrégation et présentation uniquement — aucune écriture métier.</p></header>
-    <section className="mt-8" aria-label="Zone de pilotage du bilan">
+    <Link href="/admin/bilan/mois-origine" className="mt-4 inline-block text-accent">Gérer les mois d’origine</Link>
+    {definition ? <section className="mt-8" aria-label="Zone de pilotage du bilan">
       <div className="grid gap-5 md:grid-cols-2">
-        <GlassPanel className="border-accent/20 p-5"><p className="text-xs font-semibold uppercase tracking-wider text-accent">Mois d’origine</p><label className="mt-4 block text-sm">Mois d’origine<select className={field} value={cohort} onChange={event=>setCohort(event.target.value)}>{BILAN_COHORT_OPTIONS.map(option=><option key={option.prefix} value={option.prefix}>{option.prefix} — {option.label}</option>)}</select></label><p className="mt-3 text-xs text-muted-foreground">Le préfixe du code détermine le mois d’origine du colis. La période d’analyse ne change jamais son mois d’origine.</p></GlassPanel>
-        <GlassPanel className="border-primary/20 p-5"><p className="text-xs font-semibold uppercase tracking-wider text-[#AFC7FF]">Période</p><div className="mt-4 flex flex-wrap gap-2"><Button type="button" variant={periodMode==="MONTH"?"growth":"outline"} onClick={()=>setPeriodMode("MONTH")}>Mois / année</Button><Button type="button" variant={periodMode==="CUSTOM"?"growth":"outline"} onClick={()=>setPeriodMode("CUSTOM")}>Dates personnalisées</Button></div>{periodMode==="MONTH"?<label className="mt-4 block text-sm">Mois<input type="month" className={field} value={periodMonth} onChange={event=>setPeriodMonth(event.target.value)}/></label>:<div className="mt-4 grid gap-3 sm:grid-cols-2"><Input label="Date de début" value={from} onChange={setFrom}/><Input label="Date de fin" value={to} onChange={setTo}/></div>}<p className="mt-3 text-xs text-muted-foreground">Utilisée uniquement pour les indicateurs de période.</p></GlassPanel>
+        <GlassPanel className="border-accent/20 p-5"><p className="text-xs font-semibold uppercase tracking-wider text-accent">Mois d’origine</p><label className="mt-4 block text-sm">Mois d’origine<select className={field} value={filters.cohort} onChange={event=>changeFilters(createBilanFilters(event.target.value, definitions))}>{definitions.map(option=><option key={option.prefix} value={option.prefix}>{option.prefix} — {option.label}{option.active ? "" : " — Inactif / historique"}</option>)}</select></label><p className="mt-3 text-xs text-muted-foreground">Le préfixe du code détermine le mois d’origine du colis. La période d’analyse ne change jamais son mois d’origine.</p></GlassPanel>
+        <GlassPanel className="border-primary/20 p-5">
+          <p className="text-xs font-semibold uppercase tracking-wider text-[#AFC7FF]">Période</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button type="button" variant={filters.mode==="MONTH"?"growth":"outline"} onClick={()=>changeFilters({...filters,mode:"MONTH"})}>Mois / année</Button>
+            <Button type="button" variant={filters.mode==="CUSTOM"?"growth":"outline"} onClick={()=>changeFilters({...filters,mode:"CUSTOM"})}>Dates personnalisées</Button>
+          </div>
+          {filters.mode==="MONTH" ? <div className="mt-4" aria-label="Période mensuelle automatique"><p>{definition.label}</p><Badge>AUTOMATIQUE</Badge></div> : <>
+            <p className="mt-4 text-sm">Analyse personnalisée — mois d’origine {definition.prefix}/{definition.label}</p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <Input label="Date de début" value={filters.from} min={bounds.from} max={bounds.to} onChange={from=>changeFilters({...filters,from})}/>
+              <Input label="Date de fin" value={filters.to} min={bounds.from} max={bounds.to} onChange={to=>changeFilters({...filters,to})}/>
+            </div>
+          </>}
+          <p className="mt-3 text-xs text-muted-foreground">Utilisée uniquement pour les indicateurs de période. Les colis restent rattachés au mois d’origine ; les charges fixes restent le forfait mensuel.</p>
+        </GlassPanel>
       </div>
       <Button className="mt-5" variant="growth" onClick={()=>void load()} disabled={!ready||loading}>{loading?<LoaderCircle className="mr-2 h-4 w-4 animate-spin"/>:<RefreshCw className="mr-2 h-4 w-4"/>}Afficher le bilan</Button>
-    </section>
+    </section> : null}
     {loading && !data ? <State icon={<LoaderCircle className="h-8 w-8 animate-spin text-accent"/>} title="Chargement du BILAN…"/> : null}
     {error ? <State icon={<CircleAlert className="h-8 w-8 text-amber-200"/>} title="Source indisponible" detail={error}/> : null}
     {unresolved ? <State icon={<BarChart3 className="h-8 w-8 text-muted-foreground"/>} title="COHORTE NON RÉSOLUE" detail={`Aucun mois n’a été inventé pour ${unresolved}.`}/> : null}
@@ -102,7 +143,7 @@ function BilanSectionDetail({section,data}:{section:BilanSectionId;data:BilanPay
 function Metric({title,value,lines=[]}:{title:string;value:string;lines?:string[]}) { return <GlassPanel className="p-5"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</p><p className="mt-2 text-xl font-semibold">{value}</p>{lines.map(line=><p key={line} className="mt-1 text-sm text-muted-foreground">{line}</p>)}</GlassPanel>; }
 function StatusBadge({status}:{status:BilanStatus}) { const label=formatBilanStatus(status); const variant=label==="CERTIFIÉ"?"growth":label==="ANOMALIE"?"premium":"muted"; return <Badge variant={variant}>{label}</Badge>; }
 function CurrencyCards({totals}:{totals:Record<string,number>}) { return <div className="grid gap-4 sm:grid-cols-3">{(["USD","FCFA","CDF"] as const).map(currency=><Metric key={currency} title={currency} value={`${(totals[currency]??0).toLocaleString("fr-FR",{maximumFractionDigits:2})} ${currency}`}/>)}</div>; }
-function Input({label,value,onChange}:{label:string;value:string;onChange:(value:string)=>void}) { return <label className="text-sm">{label}<input type="date" className={field} value={value} onChange={event=>onChange(event.target.value)}/></label>; }
+function Input({label,value,onChange,min,max}:{label:string;value:string;onChange:(value:string)=>void;min:string;max:string}) { return <label className="text-sm">{label}<input type="date" className={field} value={value} min={min} max={max} onChange={event=>onChange(event.target.value)}/></label>; }
 function State({icon,title,detail}:{icon:React.ReactNode;title:string;detail?:string}) { return <GlassPanel className="mt-8 p-10 text-center"><div className="mx-auto w-fit">{icon}</div><h2 className="mt-3 font-semibold">{title}</h2>{detail?<p className="mt-2 text-sm text-muted-foreground">{detail}</p>:null}</GlassPanel>; }
 function Empty({text}:{text:string}) { return <GlassPanel className="p-6 text-center text-sm text-muted-foreground">{text}</GlassPanel>; }
 function kg(value:number){return formatWeight(value);} function nullableKg(value:number|null){return value===null?"NON CALCULABLE":kg(value);} function usd(value:number){return `${value.toLocaleString("fr-FR",{minimumFractionDigits:2,maximumFractionDigits:2})} USD`;} function percent(value:number|null){return value===null?"NON CALCULABLE":`${value.toLocaleString("fr-FR",{maximumFractionDigits:2})} %`;} function currency(value:Record<string,number>,code:string){return `${(value[code]??0).toLocaleString("fr-FR",{maximumFractionDigits:2})} ${code}`;} function currencyLine(value:Record<string,number>){return Object.entries(value).map(([currency,amount])=>`${amount.toLocaleString("fr-FR")} ${currency}`).join(" · ")||"Aucun montant";}

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import test from "node:test";
+import test from "./bilan-test-context";
 
-import { BILAN_COHORT_OPTIONS, buildBilanQuery, monthPeriod } from "./bilan-ui";
+import { buildBilanQuery, monthPeriod } from "./bilan-ui";
+import { getBilanCohorts } from "./cohort-registry";
 
 const ui = readFileSync("src/features/admin/bilan/admin-bilan-page.tsx", "utf8");
 const client = readFileSync("src/features/admin/bilan/bilan-client.ts", "utf8");
@@ -10,7 +11,18 @@ const page = readFileSync("src/app/admin/bilan/page.tsx", "utf8");
 const nav = readFileSync("src/features/admin/admin-workspace.tsx", "utf8");
 
 test("page Admin et navigation Bilan sont additives",()=>{assert.match(page,/AdminBilanPage/);assert.match(nav,/href: "\/admin\/bilan"/);assert.match(ui,/getAdminProfile/);});
-test("cohortes V1 et période août sont explicites",()=>{assert.deepEqual(BILAN_COHORT_OPTIONS.map(item=>item.prefix),["JL","AT","SE"]);assert.deepEqual(monthPeriod(2026,8),{from:"2026-08-01",to:"2026-08-31"});assert.equal(buildBilanQuery("AT",monthPeriod(2026,8)),"cohort=AT&startDate=2026-08-01&endDate=2026-08-31");});
+test("mois historiques et futurs proviennent du registre officiel de la requête", () => {
+  const cohorts = getBilanCohorts();
+  assert.deepEqual(cohorts.map(item => [item.prefix, item.id]), [
+    ["JL", "2026-07"], ["AT", "2026-08"], ["SE", "2026-09"],
+    ["OT", "2026-10"], ["NV", "2026-11"], ["DC", "2026-12"], ["JN", "2027-01"]
+  ]);
+  const august = cohorts.find(item => item.prefix === "AT");
+  assert.ok(august);
+  const period = monthPeriod(august.year, august.month);
+  assert.deepEqual(period, { from: "2026-08-01", to: "2026-08-31" });
+  assert.equal(buildBilanQuery(august.prefix, period), "cohort=AT&startDate=2026-08-01&endDate=2026-08-31");
+});
 test("zone de pilotage distingue mois d’origine et période d’analyse",()=>{for(const text of ["Zone de pilotage du bilan","Mois d’origine","Période","Afficher le bilan","Le préfixe du code détermine le mois d’origine du colis. La période d’analyse ne change jamais son mois d’origine."])assert.match(ui,new RegExp(text));assert.match(ui,/grid gap-5 md:grid-cols-2/);assert.doesNotMatch(ui,/Cohorte comptable/);});
 test("tableau de direction contient les cartes additives Charges fixes, Prime et Bénéfice",()=>{for(const text of ["Activité du mois d’origine","Expéditions du mois d’origine","Encaissements","Charges directes","Charges fixes","Dépenses opérationnelles","Prime du mois","Trésorerie","Bénéfice par agence","Résultat financier","Qualité des données"])assert.ok(ui.includes(`title:\"${text}\"`),text);assert.match(ui,/sm:grid-cols-2 xl:grid-cols-4/);assert.match(ui,/cards\.map\(/);});
 test("un seul panneau de détail est piloté au clavier et fermé par défaut",()=>{assert.match(ui,/useState<BilanSectionId \| null>\(null\)/);assert.match(ui,/aria-expanded=\{selected\}/);assert.match(ui,/aria-controls=\"bilan-detail-panel\"/);assert.match(ui,/selectedSection&&selectedCard/);assert.match(ui,/current===card\.id\?null:card\.id/);});

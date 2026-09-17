@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test from "./bilan-test-context";
 
 import { allocateUsdByWeight } from "./allocations";
 import { BILAN_ANOMALY_CODES } from "./data-quality";

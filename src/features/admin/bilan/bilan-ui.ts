@@ -1,8 +1,4 @@
-export const BILAN_COHORT_OPTIONS = Object.freeze([
-  { prefix: "JL", label: "Juillet 2026", year: 2026, month: 7 },
-  { prefix: "AT", label: "Août 2026", year: 2026, month: 8 },
-  { prefix: "SE", label: "Septembre 2026", year: 2026, month: 9 }
-] as const);
+export { monthPeriod } from "./cohort-catalog";
 
 export type BilanStatus = "CERTIFIE" | "PROVISOIRE" | "PARTIEL" | "NON_CALCULABLE" | "NON IMPUTÉ" | "ANOMALIE" | string;
 export type CurrencyTotals = Record<string, number>;
@@ -26,16 +22,11 @@ export type BilanPayload = {
 
 export type UnresolvedCohort = { code: "COHORTE_NON_RESOLUE"; requested: string; meta: { status: "NON_CALCULABLE" } };
 
-export function buildBilanQuery(cohort: string, period: { from: string; to: string } | null) {
+export function buildBilanQuery(cohort: string, period: { from: string; to: string } | null, mode: "MONTH" | "CUSTOM" = "MONTH") {
   const params = new URLSearchParams({ cohort });
+  if (mode === "CUSTOM") params.set("periodMode", mode);
   if (period) { params.set("startDate", period.from); params.set("endDate", period.to); }
   return params.toString();
-}
-
-export function monthPeriod(year: number, month: number) {
-  const from = `${year}-${String(month).padStart(2, "0")}-01`;
-  const to = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
-  return { from, to };
 }
 
 export function formatBilanStatus(status: BilanStatus) {

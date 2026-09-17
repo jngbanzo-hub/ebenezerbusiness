@@ -1,33 +1,23 @@
-import type { CohortDefinition, CohortResolution } from "./bilan-contracts";
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { CohortDefinition } from "./bilan-contracts";
+import { resolveCatalogCohort, validateCohortDefinitions } from "./cohort-catalog";
+export { canonicalParcelCode, monthPeriod } from "./cohort-catalog";
 
-export const BILAN_COHORTS = Object.freeze([
-  cohort("JL", 2026, 7, "Juillet 2026"),
-  cohort("AT", 2026, 8, "Août 2026"),
-  cohort("SE", 2026, 9, "Septembre 2026")
-]) satisfies readonly CohortDefinition[];
+// Immutable request-scoped snapshot; never substitute a static fallback.
+const registry = new AsyncLocalStorage<readonly CohortDefinition[]>();
 
-export function resolveCohort(rawCode: string): CohortResolution {
-  const canonicalCode = canonicalParcelCode(rawCode);
-  const definition = BILAN_COHORTS.find(({ prefix }) => canonicalCode.startsWith(prefix));
-  if (definition) return { state: "RESOLVED", definition };
-  return {
-    state: "UNRESOLVED",
-    code: "COHORTE_NON_RESOLUE",
-    prefix: canonicalCode.match(/^[A-Z]+/)?.[0] ?? ""
-  };
+export function getBilanCohorts() {
+  const snapshot = registry.getStore();
+  if (!snapshot) throw new Error("BILAN_REGISTRY_UNAVAILABLE");
+  return snapshot;
 }
 
-export function canonicalParcelCode(rawCode: string) {
-  return rawCode.trim().toUpperCase().replace(/[\s-]+/g, "");
+export function withBilanCohorts<T>(definitions: readonly CohortDefinition[], run: () => T): T {
+  validateCohortDefinitions(definitions);
+  const snapshot = Object.freeze(definitions.map(item => Object.freeze({ ...item })));
+  return registry.run(snapshot, run);
 }
 
-function cohort(prefix: string, year: number, month: number, label: string): CohortDefinition {
-  const normalizedPrefix = prefix.trim().toUpperCase();
-  return Object.freeze({
-    prefix: normalizedPrefix,
-    year,
-    month,
-    id: `${year}-${String(month).padStart(2, "0")}` as CohortDefinition["id"],
-    label
-  });
+export function resolveCohort(rawCode: string) {
+  return resolveCatalogCohort(rawCode, getBilanCohorts());
 }

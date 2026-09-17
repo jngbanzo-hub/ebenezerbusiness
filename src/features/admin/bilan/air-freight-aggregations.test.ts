@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test from "./bilan-test-context";
 import { aggregateAirFreight } from "./air-freight-aggregations";
 import { adaptShipmentRows } from "./manifest-readers";
 import type { BilanAirFreightRow } from "./bilan-readers-contracts";

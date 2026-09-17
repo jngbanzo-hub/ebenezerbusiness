@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test from "./bilan-test-context";
 
 import { aggregateCohortActivity } from "./activity-aggregations";
 import type { CohortDirectCost } from "./bilan-aggregation-contracts";
