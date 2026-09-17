@@ -56,6 +56,52 @@ type GoogleSheetsBatchResponse = {
 
 let tokenCache: { token: string; expiresAt: number } | null = null;
 
+export type CanonicalPaymentLookup = { status: "FOUND"; payment: AdminPayment } | { status: "ABSENT" | "UNKNOWN" };
+
+// Read-only lookup: an exhaustive request-id index, then only matching rows.
+// A malformed, duplicated or concurrently moved row is NOT proof of absence.
+export async function readCanonicalPaymentsByRequestIds(requestIds: readonly string[]): Promise<Map<string, CanonicalPaymentLookup>> {
+  const ids = new Set(requestIds.map((id) => id.trim().toLowerCase()));
+  if (!ids.size) return new Map();
+  const config = getAdminGoogleSheetsConfig();
+  const accessToken = await getGoogleAccessToken(config);
+  async function batch(ranges: string[]) {
+    const params = new URLSearchParams({ majorDimension: "ROWS", valueRenderOption: "UNFORMATTED_VALUE", dateTimeRenderOption: "SERIAL_NUMBER" });
+    ranges.forEach((range) => params.append("ranges", range));
+    const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId)}/values:batchGet?${params}`, {
+      headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store", signal: AbortSignal.timeout(10_000)
+    });
+    const payload = await response.json() as GoogleSheetsBatchResponse;
+    if (!response.ok || !Array.isArray(payload.valueRanges) || payload.valueRanges.length !== ranges.length) throw new Error("CANONICAL_PAYMENT_READ_INCOMPLETE");
+    return payload.valueRanges.map((value, index) => {
+      const expected = ranges[index].replaceAll("'", "");
+      const actual = value.range?.replaceAll("'", "") ?? "";
+      if (actual.split("!")[0] !== expected.split("!")[0] || actual.split("!")[1]?.split(":")[0] !== expected.split("!")[1].split(":")[0] || (value.values !== undefined && !Array.isArray(value.values))) throw new Error("CANONICAL_PAYMENT_RANGE_INVALID");
+      return value.values ?? [];
+    });
+  }
+  const index = await batch(ADMIN_SITES.map((site) => `${site}!P2:P`));
+  const matches: Array<{ requestId: string; site: AdminSite; row: number }> = [];
+  index.forEach((rows, siteIndex) => rows.forEach((row, rowIndex) => {
+    if (!Array.isArray(row)) throw new Error("CANONICAL_PAYMENT_INDEX_INVALID");
+    const requestId = String(row[0] ?? "").trim().toLowerCase();
+    if (ids.has(requestId)) matches.push({ requestId, site: ADMIN_SITES[siteIndex], row: rowIndex + 2 });
+  }));
+  const result = new Map<string, CanonicalPaymentLookup>(Array.from(ids, (id) => [id, { status: "ABSENT" }]));
+  const counts = new Map<string, number>();
+  matches.forEach(({ requestId }) => counts.set(requestId, (counts.get(requestId) ?? 0) + 1));
+  for (let offset = 0; offset < matches.length; offset += 100) {
+    const chunk = matches.slice(offset, offset + 100);
+    const rows = await batch(chunk.map(({ site, row }) => `${site}!A${row}:P${row}`));
+    chunk.forEach(({ requestId, site, row }, position) => {
+      const values = rows[position];
+      const payment = values.length === 1 && Array.isArray(values[0]) ? parseAdminPaymentRow(values[0], site, row) : null;
+      result.set(requestId, counts.get(requestId) === 1 && payment?.paymentRequestId === requestId ? { status: "FOUND", payment } : { status: "UNKNOWN" });
+    });
+  }
+  return result;
+}
+
 export async function readAdminPayments(trace?: OperationPerformanceTrace): Promise<AdminPayment[]> {
   const config = getAdminGoogleSheetsConfig();
   const valueRanges = trace

@@ -62,6 +62,7 @@ export function reconcileOperations(input: {
   paymentEffectGraceSeconds?: number;
   requireOrchestrationForPayments?: boolean;
   protectionsDeployedAt?: Date;
+  canonicalPaymentStatus?: ReadonlyMap<string, "PRESENT" | "ABSENT" | "UNKNOWN">;
   availability?: { payments?: boolean; cash?: boolean; storage?: boolean; orchestrations?: boolean; closures?: boolean; expenses?: boolean; expenseCash?: boolean };
 }) {
   const anomalies: OperationalAnomaly[] = [];
@@ -75,8 +76,11 @@ export function reconcileOperations(input: {
   const expenses = group(input.expenses ?? [], (row) => row.requestId);
   const expenseCash = group(input.expenseCash ?? [], (row) => row.requestId);
   const available = { payments: true, cash: true, storage: true, orchestrations: true, closures: true, expenses: true, expenseCash: true, ...input.availability };
+  const uncertified = input.orchestrations.filter((row) => input.canonicalPaymentStatus?.get(row.requestId) === "UNKNOWN");
+  const canonicalUnknownForEffect = (effect: ReconciliationCash | ReconciliationStorage) => input.canonicalPaymentStatus?.get(effect.requestId) === "UNKNOWN" || uncertified.some((row) => sameIdentity(row, effect));
 
   for (const payment of input.payments) {
+    if (input.canonicalPaymentStatus?.get(payment.requestId) === "UNKNOWN") continue;
     const orchestration = orchestrations.get(payment.requestId);
     const oldEnough = ageSeconds(payment.occurredAt, input.now) >= paymentEffectGraceSeconds;
     if (available.orchestrations && !orchestration) {
@@ -92,8 +96,8 @@ export function reconcileOperations(input: {
     if (available.cash && matchingCash.length === 1 && cents(matchingCash[0].amountUsd) !== cents(payment.amountUsd)) anomalies.push(anomaly(identifiedPayment, "CAISSE", "MONTANT_PAIEMENT_DIFFERENT_DU_CASH", "CAISSE", "Comparer le paiement canonique et le cash_event; aucune correction automatique.", input.now, "CRITICAL"));
     if (available.storage && payment.weightKg != null && matchingStorage.length === 1 && matchingStorage[0].weightKg != null && cents(matchingStorage[0].weightKg) !== cents(payment.weightKg)) anomalies.push(anomaly(identifiedPayment, "STOCKAGE", "POIDS_COLIS_DIFFERENT_DE_LA_SORTIE", "STOCKAGE", "Comparer la source colis et la sortie Stockage; aucune correction automatique.", input.now, "CRITICAL"));
   }
-  if (available.payments) for (const row of input.cash) if (!hasPayment(row, payments, orchestrations)) anomalies.push(anomaly(row, "CAISSE", "CASH_EVENT_SANS_PAIEMENT_CANONIQUE", "PAIEMENT", "Contrôler la source canonique avant toute action.", input.now, "CRITICAL"));
-  if (available.payments) for (const row of input.storage) if (!hasPayment(row, payments, orchestrations)) anomalies.push(anomaly(row, "STOCKAGE", "SORTIE_SANS_PAIEMENT_CANONIQUE", "PAIEMENT", "Contrôler le paiement canonique et l’identité colis.", input.now, "CRITICAL"));
+  if (available.payments) for (const row of input.cash) if (!canonicalUnknownForEffect(row) && !hasPayment(row, payments, orchestrations)) anomalies.push(anomaly(row, "CAISSE", "CASH_EVENT_SANS_PAIEMENT_CANONIQUE", "PAIEMENT", "Contrôler la source canonique avant toute action.", input.now, "CRITICAL"));
+  if (available.payments) for (const row of input.storage) if (!canonicalUnknownForEffect(row) && !hasPayment(row, payments, orchestrations)) anomalies.push(anomaly(row, "STOCKAGE", "SORTIE_SANS_PAIEMENT_CANONIQUE", "PAIEMENT", "Contrôler le paiement canonique et l’identité colis.", input.now, "CRITICAL"));
   addDuplicates(anomalies, cash, "CASH_EVENT_DUPLIQUE", "CAISSE", input.now);
   addDuplicates(anomalies, storage, "SORTIE_STOCKAGE_DUPLIQUEE", "STOCKAGE", input.now);
   for (const values of Array.from(payments.values())) if (values.length > 1) anomalies.push(anomaly(values[0], "DOUBLON", "PAYMENT_REQUEST_ID_DUPLIQUE", "ENCAISSEMENTS", "Auditer l’unicité globale avant toute action.", input.now, "CRITICAL"));
@@ -107,6 +111,11 @@ export function reconcileOperations(input: {
     const stage = orchestrationStage(row);
     const hasCanonicalPayment = payments.has(row.requestId) || row.paymentCreated;
     if (stage === "COMPLETED") continue;
+    const canonicalStatus = input.canonicalPaymentStatus?.get(row.requestId);
+    if (canonicalStatus === "UNKNOWN" || (!hasCanonicalPayment && canonicalStatus !== "ABSENT" && !available.payments)) {
+      anomalies.push(anomaly(row, "ORCHESTRATION", "PAIEMENT_CANONIQUE_NON_CERTIFIE", "LECTURE", "À vérifier : existence ou statut du paiement canonique non certifié. Aucune reprise automatique.", input.now, "ATTENTION"));
+      continue;
+    }
     if (stage === "PENDING" && !hasCanonicalPayment && !row.lastError) {
       information.push({ ...anomaly(row, "ORCHESTRATION", "ORCHESTRATION_EN_ATTENTE_LEGITIME", null, "Aucune action : aucun paiement canonique n’existe pour cette tentative.", input.now, "INFO"), status: "INFORMATION" });
       continue;
@@ -133,7 +142,8 @@ export function reconcileOperations(input: {
 
   const deployedAt = input.protectionsDeployedAt ?? new Date(OPERATIONAL_PROTECTIONS_DEPLOYED_AT);
   const active = deduplicate(anomalies).map((row) => classify(row, deployedAt));
-  const informational = deduplicate(information).map((row) => classify(row, deployedAt));
+  const activeRequestIds = new Set(active.flatMap((row) => row.paymentRequestId ? [row.paymentRequestId] : []));
+  const informational = deduplicate(information).filter((row) => !row.paymentRequestId || !activeRequestIds.has(row.paymentRequestId)).map((row) => classify(row, deployedAt));
   const oldest = active.reduce((max, row) => Math.max(max, row.ageMinutes), 0);
   return { anomalies: active, information: informational, metrics: {
     pending: active.filter((row) => row.type === "ORCHESTRATION_PENDING_TROP_LONGTEMPS").length,
@@ -150,6 +160,23 @@ export function reconcileOperations(input: {
     historical: active.filter((row) => row.temporalClass === "HISTORIQUE").length,
     newAfterProtections: active.filter((row) => row.temporalClass === "NOUVELLE_APRES_PROTECTIONS").length
   }};
+}
+
+// Arbitrate the two independently persisted projections by request identity.
+// Current global classification replaces stale LSHI pending information; an
+// active anomaly always prevents an incompatible legitimate-pending label.
+export function arbitrateOperationalClassifications(
+  anomalies: readonly OperationalAnomaly[],
+  information: readonly OperationalAnomaly[],
+  current: { anomalies: readonly OperationalAnomaly[]; information: readonly OperationalAnomaly[] },
+  resolvedRequestIds: ReadonlySet<string>
+) {
+  const pendingTypes = new Set(["PAIEMENT_SANS_CASH_EVENT", "PAIEMENT_SANS_SORTIE_STOCKAGE", "ORCHESTRATION_PENDING_TROP_LONGTEMPS", "PAIEMENT_CANONIQUE_NON_CERTIFIE", "ORCHESTRATION_EN_ATTENTE_LEGITIME"]);
+  const retain = (row: OperationalAnomaly) => !(row.agency === "LSHI" && row.paymentRequestId && resolvedRequestIds.has(row.paymentRequestId) && pendingTypes.has(row.type));
+  const active = deduplicate([...anomalies.filter(retain), ...current.anomalies]);
+  const blocked = new Set(active.flatMap((row) => row.paymentRequestId ? [row.paymentRequestId] : []));
+  const informational = deduplicate([...information.filter((row) => retain(row) && !(row.agency === "LSHI" && row.type === "ORCHESTRATION_EN_ATTENTE_LEGITIME")), ...current.information]).filter((row) => !row.paymentRequestId || !blocked.has(row.paymentRequestId));
+  return { anomalies: active, information: informational };
 }
 
 export function evaluatePaymentTelemetry(input: { events: readonly PaymentPerformanceEvent[]; now: Date }) {

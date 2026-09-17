@@ -3,11 +3,12 @@ import "server-only";
 import { createClient } from "@supabase/supabase-js";
 
 import type { AdminSite } from "@/features/admin/types";
-import { readAdminPayments } from "@/server/admin-payments-sheets";
+import { readAdminPayments, readCanonicalPaymentsByRequestIds } from "@/server/admin-payments-sheets";
+import { replacePendingPayments, resolveLshiPendingCanonical } from "@/server/lshi-pending-canonical";
 import { readExhaustivePages, type PaginationMetrics } from "@/server/exhaustive-pagination";
 import { readLatestKlzReconciliationReport } from "@/server/klz-operational-reconciliation";
 import { readLatestLshiReconciliationReport } from "@/server/lshi-operational-reconciliation";
-import { reconcileOperations, type CashClosure, type ReconciliationCash, type ReconciliationOrchestration, type ReconciliationPayment, type ReconciliationStorage } from "@/server/operational-reconciliation";
+import { arbitrateOperationalClassifications, reconcileOperations, type CashClosure, type ReconciliationCash, type ReconciliationOrchestration, type ReconciliationPayment, type ReconciliationStorage } from "@/server/operational-reconciliation";
 
 type SourceResult<T> = { available: true; rows: T[]; pagination?: PaginationMetrics } | { available: false; rows: T[]; error: string };
 type ForwardingContext = { forwardingId: string; originAgency: AdminSite; destinationAgency: AdminSite };
@@ -25,7 +26,8 @@ export async function readOperationalAnomalies(now = new Date()) {
   ]);
   const contextById = new Map(forwardings.rows.map((row) => [row.forwardingId, row]));
   const enrich = <T extends { forwardingId?: string | null }>(rows: T[]) => rows.map((row) => ({ ...row, ...(row.forwardingId ? contextById.get(row.forwardingId) : undefined) }));
-  const result = reconcileOperations({ payments: payments.rows, cash: enrich(cash.rows), storage: enrich(storage.rows), orchestrations: enrich(orchestrations.rows), closures: closures.rows, now, availability: { payments: payments.available, cash: cash.available, storage: storage.available, orchestrations: orchestrations.available, closures: closures.available } });
+  const canonical = await resolveLshiPendingCanonical(orchestrations.rows, readCanonicalPaymentsByRequestIds);
+  const result = reconcileOperations({ payments: replacePendingPayments(payments.rows, canonical), cash: enrich(cash.rows), storage: enrich(storage.rows), orchestrations: enrich(orchestrations.rows), closures: closures.rows, now, canonicalPaymentStatus: canonical.statuses, availability: { payments: payments.available, cash: cash.available, storage: storage.available, orchestrations: orchestrations.available, closures: closures.available } });
   const latestLshi = lshiMonitoring.available ? lshiMonitoring.rows[0] : null;
   const latestKlz = klzMonitoring.available ? klzMonitoring.rows[0] : null;
   const unavailable = [payments, cash, storage, orchestrations, closures, forwardings, lshiMonitoring, klzMonitoring].filter((source) => !source.available).length;
@@ -39,14 +41,17 @@ export async function readOperationalAnomalies(now = new Date()) {
     dossierKey: `SOURCE:${source}`, temporalClass: "NOUVELLE_APRES_PROTECTIONS" as const
   }]);
   const paginations = [cash, storage, orchestrations, closures, forwardings].flatMap((source) => source.available && source.pagination ? [source.pagination] : []);
-  const anomalies = uniqueAnomalies([...sourceAnomalies, ...(latestLshi?.anomalies ?? []), ...(latestKlz?.anomalies ?? []), ...result.anomalies]);
-  const information = uniqueAnomalies([...(latestLshi?.information ?? []), ...(latestKlz?.information ?? []), ...result.information]);
+  const { anomalies, information } = arbitrateOperationalClassifications(
+    [...sourceAnomalies, ...(latestLshi?.anomalies ?? []), ...(latestKlz?.anomalies ?? [])],
+    [...(latestLshi?.information ?? []), ...(latestKlz?.information ?? [])], result, new Set(canonical.statuses.keys())
+  );
   return {
     generatedAt: now.toISOString(),
     anomalies,
     information,
     metrics: {
       ...result.metrics,
+      legitimatePending: information.length,
       realDossiers: new Set(anomalies.map((row) => row.dossierKey)).size,
       historicalBacklog: anomalies.filter((row) => row.temporalClass === "HISTORIQUE").length,
       newAfterProtections: anomalies.filter((row) => row.temporalClass === "NOUVELLE_APRES_PROTECTIONS").length,
@@ -96,5 +101,4 @@ function nullable(value: unknown) { return typeof value === "string" && value.tr
 function record(value: unknown) { return value && typeof value === "object" ? value as Record<string, unknown> : {}; }
 function metadataIdentity(value: unknown) { const metadata = record(value); return { parcelId: nullable(metadata.parcelId), forwardingId: nullable(metadata.forwardingId) }; }
 function storageIdentity(row: Record<string, unknown>) { const metadata = metadataIdentity(row.metadata); return { parcelId: metadata.parcelId, forwardingId: metadata.forwardingId ?? (row.source_type === "INTER_AGENCY_FORWARDING" ? nullable(row.source_request_id) : null) }; }
-function uniqueAnomalies<T extends { id: string }>(rows: T[]) { return Array.from(new Map(rows.map((row) => [row.id, row])).values()); }
 function serviceClient() { const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim(), key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim(); if (!url || !key) throw new Error("SERVICE_NOT_CONFIGURED"); return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false }, global: { fetch: (input, init) => fetch(input, { ...init, cache: "no-store" }) } }).schema("public"); }

@@ -2,7 +2,9 @@ import "server-only";
 
 import { createClient } from "@supabase/supabase-js";
 
-import { readAdminPaymentNextRow, readAdminPaymentWindow } from "@/server/admin-payments-sheets";
+import { readAdminPaymentNextRow, readAdminPaymentWindow, readCanonicalPaymentsByRequestIds } from "@/server/admin-payments-sheets";
+import { readExhaustivePages } from "@/server/exhaustive-pagination";
+import { replacePendingPayments, resolveLshiPendingCanonical } from "@/server/lshi-pending-canonical";
 import { readAdminExpenses } from "@/server/agent-expenses-apps-script";
 import {
   isTimestampInLshiExpenseWindow,
@@ -122,8 +124,15 @@ async function inspect(client: ReturnType<typeof serviceClient>, input: { busine
     input.kind === "INCREMENTAL" ? Promise.resolve({ available: true as const, rows: [] as Array<{ metrics: Record<string, unknown> }> }) : safe("PREVIOUS_DAILY", () => dbRows(client.from("lshi_reconciliation_runs").select("metrics").eq("status", "COMPLETED").in("run_kind", ["DAILY", "DAILY_RETRY"]).lt("business_date", input.businessDate).order("business_date", { ascending: false }).limit(1), (row) => ({ metrics: record(row.metrics) })))
   ]);
 
+  const canonical = await resolveLshiPendingCanonical(orchestrations.rows, readCanonicalPaymentsByRequestIds);
+  const [pendingCash, pendingStorage] = await Promise.all([
+    safe("PENDING_CASH", () => readPendingEffects(client, canonical.pending, "cash")),
+    safe("PENDING_STORAGE", () => readPendingEffects(client, canonical.pending, "storage"))
+  ]);
   const sources = {
     payments: state(sheet), cash: state(cash), storage: state(storage), orchestrations: state(orchestrations),
+    pendingCanonical: Array.from(canonical.statuses.values()).includes("UNKNOWN") ? "UNAVAILABLE" : "AVAILABLE",
+    pendingCash: state(pendingCash), pendingStorage: state(pendingStorage),
     cashClosure: input.kind === "INCREMENTAL"
       ? state(closures)
       : closures.available && closures.rows.some((row) => row.businessDate === input.businessDate && row.status === "CLOSED") ? "AVAILABLE" : "UNAVAILABLE",
@@ -131,16 +140,17 @@ async function inspect(client: ReturnType<typeof serviceClient>, input: { busine
     dailyStorage: state(dailyStorage), storageAccount: state(storageAccount)
   };
   const reconciliation = reconcileOperations({
-    payments: sheet.rows,
-    cash: cash.rows,
-    storage: storage.rows,
+    payments: replacePendingPayments(sheet.rows, canonical),
+    cash: uniqueEvents([...cash.rows, ...pendingCash.rows]) as ReconciliationCash[],
+    storage: uniqueEvents([...storage.rows, ...pendingStorage.rows]) as ReconciliationStorage[],
     orchestrations: orchestrations.rows,
     closures: closures.rows,
     expenses: expenses.rows,
     expenseCash: expenseCash.rows,
     now: input.now,
     requireOrchestrationForPayments: true,
-    availability: { payments: sheet.available, cash: cash.available, storage: storage.available, orchestrations: orchestrations.available, closures: closures.available, expenses: expenses.available, expenseCash: expenseCash.available }
+    canonicalPaymentStatus: canonical.statuses,
+    availability: { payments: sheet.available, cash: state(cash) === "AVAILABLE" && pendingCash.available, storage: state(storage) === "AVAILABLE" && pendingStorage.available, orchestrations: state(orchestrations) === "AVAILABLE", closures: closures.available, expenses: expenses.available, expenseCash: expenseCash.available }
   });
   const sourceAnomalies = Object.entries(sources).flatMap(([name, status]) => status === "AVAILABLE" ? [] : [technicalAnomaly(input.now, `SOURCE_${name.toUpperCase()}_INDISPONIBLE`, "PAGINATION", `${name}: source bornée indisponible ou incomplète.`)]);
   if (sheet.available && sheet.paginationIncomplete) sourceAnomalies.push(technicalAnomaly(input.now, "PAGINATION_PAIEMENTS_BORNE_ATTEINTE", "PAGINATION", "La fenêtre de 500 lignes est pleine; le curseur poursuivra au prochain passage."));
@@ -186,6 +196,39 @@ async function dbRows<T>(query: PromiseLike<{ data: unknown; error: { message?: 
   const response = await query;
   if (response.error || !Array.isArray(response.data)) throw new Error("BOUNDED_DATABASE_READ_FAILED");
   return { rows: response.data.map((row) => decode(row as Record<string, unknown>)), paginationIncomplete: response.data.length >= DATABASE_ROW_LIMIT };
+}
+
+function uniqueEvents(rows: Array<ReconciliationCash | ReconciliationStorage>) {
+  return Array.from(new Map(rows.map((row) => [row.eventId, row])).values());
+}
+
+async function readPendingEffects(client: ReturnType<typeof serviceClient>, pending: readonly ReconciliationOrchestration[], kind: "cash" | "storage") {
+  const rows: Array<ReconciliationCash | ReconciliationStorage> = [];
+  for (let offset = 0; offset < pending.length; offset += 50) {
+    const chunk = pending.slice(offset, offset + 50);
+    const clause = (column: string, values: Array<string | null | undefined>) => {
+      const ids = Array.from(new Set(values.filter((value): value is string => Boolean(value))));
+      if (ids.some((id) => !/^[0-9a-f-]{36}$/i.test(id))) throw new Error("PENDING_EFFECT_IDENTITY_INVALID");
+      return ids.length ? [`${column}.in.(${ids.join(",")})`] : [];
+    };
+    const filter = [
+      ...clause(kind === "cash" ? "source_request_id" : "request_id", chunk.map((row) => row.requestId)),
+      ...clause("event_id", chunk.map((row) => kind === "cash" ? row.cashEventId : row.storageEventId)),
+      ...clause("metadata->>parcelId", chunk.map((row) => row.parcelId)),
+      ...clause("metadata->>forwardingId", chunk.map((row) => row.forwardingId)),
+      ...(kind === "storage" ? clause("source_request_id", chunk.map((row) => row.forwardingId)) : [])
+    ].join(",");
+    const result = await readExhaustivePages<Record<string, unknown>>(async (from, to) => {
+      const query = kind === "cash"
+        ? client.from("cash_events").select("event_id,source_request_id,agency,amount,occurred_at,metadata").eq("source_type", "PAYMENT_ENGINE")
+        : client.from("stockage_events").select("event_id,request_id,agency,tracking_code,weight_kg_delta,occurred_at,metadata,source_type,source_request_id").in("event_type", ["SORTIE_APRES_PAIEMENT_TOTAL_DESTINATION", "SORTIE_APRES_REMISE_ACHEMINEMENT"]);
+      const response = await query.eq("agency", "LSHI").or(filter).order("event_id", { ascending: true }).range(from, to);
+      if (response.error || !Array.isArray(response.data)) throw new Error("PENDING_EFFECT_READ_FAILED");
+      return response.data;
+    }, { identity: (row) => String(row.event_id) });
+    rows.push(...result.rows.map((row) => kind === "cash" ? decodeCash(row) : decodeStorage(row)));
+  }
+  return { rows: uniqueEvents(rows) };
 }
 
 function decodeCash(row: Record<string, unknown>): ReconciliationCash { const metadata = record(row.metadata); return { eventId: String(row.event_id), requestId: String(row.source_request_id).toLowerCase(), agency: "LSHI", amountUsd: Number(row.amount), occurredAt: String(row.occurred_at), parcelId: nullable(metadata.parcelId), forwardingId: nullable(metadata.forwardingId) }; }
