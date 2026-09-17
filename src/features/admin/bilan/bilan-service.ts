@@ -21,6 +21,7 @@ import { aggregateReadAnomalies } from "./quality-aggregations";
 import { calculateAgencyProfits, calculateAutomaticKlzShipmentCost, calculateCertifiedCohortRevenue, calculateRealProfit, calculateTheoreticalReceivable } from "./revenue-aggregations";
 import { calculateDeclarantDirectCosts, calculateLshiDhlDeclarantDirectCosts, calculateTransitDirectCosts, summarizeOfficialTransit, summarizeShipmentStructure } from "./shipment-aggregations";
 import { aggregateShipmentByAgency } from "./shipment-by-agency";
+import { getBilanCohorts } from "./cohort-registry";
 
 type AuthorizedAdmin = Extract<AdminAuthorizationResult, { authorized: true }>;
 
@@ -32,6 +33,8 @@ const sheetsSource: BilanRangeReader = Object.freeze({
 });
 
 export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdmin) {
+  const official = getBilanCohorts().find(item => item.prefix === query.cohort.prefix);
+  if (!official || official.id !== query.cohort.id || official.year !== query.cohort.year || official.month !== query.cohort.month) throw new Error("BILAN_REGISTRY_INVALID");
   const [fih, lshi, klz, shipmentsRead, officialRead, airFreightRead, paymentsRead, expensesRead, bonusRows] = await Promise.all([
     readBilanManifestParcels(sheetsSource, "FIH"), readBilanManifestParcels(sheetsSource, "LSHI"), readBilanManifestParcels(sheetsSource, "KLZ"),
     readBilanShipments(sheetsSource), readBilanOfficialTransit(sheetsSource), readBilanAirFreight(sheetsSource), readBilanPayments(() => readAdminPayments()),

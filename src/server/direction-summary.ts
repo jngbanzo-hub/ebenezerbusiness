@@ -6,7 +6,8 @@ import { readAdminExpenses, type AdminExpenseListResponse } from "@/server/agent
 import { businessDatePortoNovo, readAdminStorage } from "@/server/stockages-v2";
 import { buildDailyAgencyReport, REPORT_AGENCIES, type ReportAgency } from "@/features/daily-report/daily-report";
 import { buildAdminBilan } from "@/features/admin/bilan/bilan-service";
-import { BILAN_COHORTS } from "@/features/admin/bilan/cohort-registry";
+import { withBilanCohorts } from "@/features/admin/bilan/cohort-registry";
+import { readBilanOriginMonths } from "@/server/bilan-origin-months";
 import type { BilanApiQuery } from "@/features/admin/bilan/bilan-api-query";
 import { resolveDirectionScope } from "@/server/direction-summary-scope";
 
@@ -51,15 +52,20 @@ export type DirectionSummary = Readonly<{
 
 export async function readDirectionSummary(now = new Date()): Promise<DirectionSummary> {
   const businessDate = businessDatePortoNovo(now);
-  const scope = resolveDirectionScope(businessDate, BILAN_COHORTS);
-  const { cohort, analysisPeriod: period } = scope;
+  let scope = resolveDirectionScope<import("@/features/admin/bilan/bilan-contracts").CohortDefinition>(businessDate, []);
 
   const [cash, expenses, profit, storage] = await Promise.all([
     isolated(() => readCash(businessDate)),
     isolated(() => readExpenses(businessDate)),
-    cohort ? isolated(() => readProfit({ cohort, period })) : Promise.resolve(null),
+    isolated(async () => {
+      const definitions = await readBilanOriginMonths();
+      scope = resolveDirectionScope(businessDate, definitions);
+      const { cohort, analysisPeriod: period } = scope;
+      return cohort ? withBilanCohorts(definitions, () => readProfit({ cohort, period })) : null;
+    }),
     isolated(readStorage)
   ]);
+  const { cohort, analysisPeriod: period } = scope;
 
   const agencies = Object.fromEntries(REPORT_AGENCIES.map((agency) => [agency, Object.freeze({
     cash: agency === "COO" ? notApplicableCash() : cash?.[agency] ?? unavailableCash(),

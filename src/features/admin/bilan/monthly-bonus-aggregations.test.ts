@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test from "./bilan-test-context";
 import { aggregateMonthlyAgentBonuses, applyMonthlyBonuses, type MonthlyAgentBonus } from "./monthly-bonus-aggregations";
 
 const row = (agentId: string, agency: MonthlyAgentBonus["agency"], amountUsd: number | null, status: MonthlyAgentBonus["status"] = "CERTIFIEE"): MonthlyAgentBonus => ({ id: agentId, monthOrigin: "2026-08", agentId, agentName: agentId, agency, amountUsd, status, decidedAt: null, decidedBy: null, note: null, createdAt: "2026-08-31", updatedAt: "2026-08-31" });

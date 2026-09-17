@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import test from "node:test";
+import test from "./bilan-test-context";
 
 import type { AdminAuthorizationResult } from "@/server/admin-authorization";
 
 import { BILAN_ALLOWED_METHODS, parseBilanApiQuery } from "./bilan-api-query";
 import { createBilanGetHandler } from "./bilan-route-handler";
+import { TEST_COHORTS } from "./bilan-test-context";
 
 const admin: AdminAuthorizationResult = { authorized: true, userId: "admin-1", email: "admin@example.com", role: "ADMIN", agency: "COO" };
+const registry: Parameters<typeof createBilanGetHandler>[0]["registry"] = async () => TEST_COHORTS;
 
 test("GET Admin autorisé retourne une réponse privée no-store", async () => {
   const response = await handler(admin)(request("?cohort=AT&startDate=2026-08-01&endDate=2026-08-31"));
@@ -22,18 +24,20 @@ test("Auth absente et non-Admin sont refusés selon le mécanisme existant", asy
 });
 
 test("une source indisponible retourne 503 sans données fabriquées", async () => {
-  const response = await createBilanGetHandler({ authorize: async () => admin, build: async () => { throw new Error("BILAN_SOURCE_UNAVAILABLE"); } })(request("?cohort=AT"));
+  const response = await createBilanGetHandler({ registry, authorize: async () => admin, build: async () => { throw new Error("BILAN_SOURCE_UNAVAILABLE"); } })(request("?cohort=AT"));
   assert.equal(response.status, 503);
   assert.equal((await response.json()).error.code, "BILAN_SOURCE_UNAVAILABLE");
 });
 
-test("résout explicitement AT sans déduire une cohorte depuis la période", () => {
-  const parsed = parseBilanApiQuery("https://example.test/api/admin/bilan?cohort=AT&startDate=2026-09-01&endDate=2026-09-30");
-  assert.equal(parsed.state, "VALID");
-  if (parsed.state === "VALID") {
-    assert.equal(parsed.query.cohort.id, "2026-08");
-    assert.deepEqual(parsed.query.period, { from: "2026-09-01", to: "2026-09-30" });
+test("refuse une période incompatible avant toute lecture des sources", async () => {
+  let builds = 0;
+  const get = createBilanGetHandler({ registry, authorize: async () => admin, build: async () => { builds++; return {}; } });
+  for (const query of ["?cohort=AT&startDate=2026-09-01&endDate=2026-09-30", "?cohort=SE&startDate=2026-08-01&endDate=2026-08-31", "?cohort=AT&periodMode=CUSTOM&startDate=2026-08-20&endDate=2026-09-05"]) {
+    const response = await get(request(query));
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error.code, "INVALID_PARAMETERS");
   }
+  assert.equal(builds, 0);
 });
 
 test("accepte year+month uniquement via le registre explicite", () => {
@@ -44,7 +48,7 @@ test("accepte year+month uniquement via le registre explicite", () => {
 
 test("cohorte inconnue retourne COHORTE_NON_RESOLUE sans appeler les sources", async () => {
   let builds = 0;
-  const response = await createBilanGetHandler({ authorize: async () => admin, build: async () => { builds += 1; return {}; } })(request("?cohort=XX"));
+  const response = await createBilanGetHandler({ registry, authorize: async () => admin, build: async () => { builds += 1; return {}; } })(request("?cohort=XX"));
   assert.equal(response.status, 200);
   assert.equal((await response.json()).code, "COHORTE_NON_RESOLUE");
   assert.equal(builds, 0);
@@ -91,7 +95,7 @@ test("aucune primitive d’écriture n’est présente dans l’API BILAN", () =
 });
 
 function handler(auth: AdminAuthorizationResult) {
-  return createBilanGetHandler({ authorize: async () => auth, build: async () => fixtureResponse() });
+  return createBilanGetHandler({ registry, authorize: async () => auth, build: async () => fixtureResponse() });
 }
 function request(query: string) { return new Request(`https://example.test/api/admin/bilan${query}`, { headers: { Authorization: "Bearer test" } }); }
 function fixtureResponse() {
