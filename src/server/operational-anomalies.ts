@@ -26,7 +26,10 @@ export async function readOperationalAnomalies(now = new Date()) {
   ]);
   const contextById = new Map(forwardings.rows.map((row) => [row.forwardingId, row]));
   const enrich = <T extends { forwardingId?: string | null }>(rows: T[]) => rows.map((row) => ({ ...row, ...(row.forwardingId ? contextById.get(row.forwardingId) : undefined) }));
-  const canonical = await resolveLshiPendingCanonical(orchestrations.rows, readCanonicalPaymentsByRequestIds);
+  // The global reader already provides the full canonical history. Only missing
+  // event references need a targeted lookup; do not reread every historical row.
+  const knownPaymentIds = new Set(payments.rows.filter((row) => row.agency === "LSHI").map((row) => row.requestId));
+  const canonical = await resolveLshiPendingCanonical(orchestrations.rows, readCanonicalPaymentsByRequestIds, [...cash.rows, ...storage.rows].filter((row) => !knownPaymentIds.has(row.requestId)));
   const result = reconcileOperations({ payments: replacePendingPayments(payments.rows, canonical), cash: enrich(cash.rows), storage: enrich(storage.rows), orchestrations: enrich(orchestrations.rows), closures: closures.rows, now, canonicalPaymentStatus: canonical.statuses, availability: { payments: payments.available, cash: cash.available, storage: storage.available, orchestrations: orchestrations.available, closures: closures.available } });
   const latestLshi = lshiMonitoring.available ? lshiMonitoring.rows[0] : null;
   const latestKlz = klzMonitoring.available ? klzMonitoring.rows[0] : null;
@@ -43,7 +46,8 @@ export async function readOperationalAnomalies(now = new Date()) {
   const paginations = [cash, storage, orchestrations, closures, forwardings].flatMap((source) => source.available && source.pagination ? [source.pagination] : []);
   const { anomalies, information } = arbitrateOperationalClassifications(
     [...sourceAnomalies, ...(latestLshi?.anomalies ?? []), ...(latestKlz?.anomalies ?? [])],
-    [...(latestLshi?.information ?? []), ...(latestKlz?.information ?? [])], result, new Set(canonical.statuses.keys())
+    [...(latestLshi?.information ?? []), ...(latestKlz?.information ?? [])], result,
+    new Set([...Array.from(canonical.statuses.keys()), ...(payments.available && cash.available && storage.available && orchestrations.available ? Array.from(knownPaymentIds) : [])])
   );
   return {
     generatedAt: now.toISOString(),

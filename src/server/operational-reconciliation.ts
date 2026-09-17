@@ -79,6 +79,12 @@ export function reconcileOperations(input: {
   const uncertified = input.orchestrations.filter((row) => input.canonicalPaymentStatus?.get(row.requestId) === "UNKNOWN");
   const canonicalUnknownForEffect = (effect: ReconciliationCash | ReconciliationStorage) => input.canonicalPaymentStatus?.get(effect.requestId) === "UNKNOWN" || uncertified.some((row) => sameIdentity(row, effect));
 
+  // Event-only and COMPLETED dossiers also need an explicit non-certified
+  // verdict when the canonical reader fails. Never silently call them orphans.
+  for (const row of [...input.cash, ...input.storage]) {
+    if (input.canonicalPaymentStatus?.get(row.requestId) === "UNKNOWN") anomalies.push(anomaly(row, "ORCHESTRATION", "PAIEMENT_CANONIQUE_NON_CERTIFIE", "LECTURE", "À vérifier : existence ou statut du paiement canonique non certifié. Aucune reprise automatique.", input.now, "ATTENTION"));
+  }
+
   for (const payment of input.payments) {
     if (input.canonicalPaymentStatus?.get(payment.requestId) === "UNKNOWN") continue;
     const orchestration = orchestrations.get(payment.requestId);
@@ -110,12 +116,12 @@ export function reconcileOperations(input: {
     const age = ageMinutes(row.updatedAt, input.now);
     const stage = orchestrationStage(row);
     const hasCanonicalPayment = payments.has(row.requestId) || row.paymentCreated;
-    if (stage === "COMPLETED") continue;
     const canonicalStatus = input.canonicalPaymentStatus?.get(row.requestId);
     if (canonicalStatus === "UNKNOWN" || (!hasCanonicalPayment && canonicalStatus !== "ABSENT" && !available.payments)) {
       anomalies.push(anomaly(row, "ORCHESTRATION", "PAIEMENT_CANONIQUE_NON_CERTIFIE", "LECTURE", "À vérifier : existence ou statut du paiement canonique non certifié. Aucune reprise automatique.", input.now, "ATTENTION"));
       continue;
     }
+    if (stage === "COMPLETED") continue;
     if (stage === "PENDING" && !hasCanonicalPayment && !row.lastError) {
       information.push({ ...anomaly(row, "ORCHESTRATION", "ORCHESTRATION_EN_ATTENTE_LEGITIME", null, "Aucune action : aucun paiement canonique n’existe pour cette tentative.", input.now, "INFO"), status: "INFORMATION" });
       continue;
@@ -171,7 +177,7 @@ export function arbitrateOperationalClassifications(
   current: { anomalies: readonly OperationalAnomaly[]; information: readonly OperationalAnomaly[] },
   resolvedRequestIds: ReadonlySet<string>
 ) {
-  const pendingTypes = new Set(["PAIEMENT_SANS_CASH_EVENT", "PAIEMENT_SANS_SORTIE_STOCKAGE", "ORCHESTRATION_PENDING_TROP_LONGTEMPS", "PAIEMENT_CANONIQUE_NON_CERTIFIE", "ORCHESTRATION_EN_ATTENTE_LEGITIME"]);
+  const pendingTypes = new Set(["PAIEMENT_SANS_CASH_EVENT", "PAIEMENT_SANS_SORTIE_STOCKAGE", "ORCHESTRATION_PENDING_TROP_LONGTEMPS", "PAIEMENT_CANONIQUE_NON_CERTIFIE", "ORCHESTRATION_EN_ATTENTE_LEGITIME", "CASH_EVENT_SANS_PAIEMENT_CANONIQUE", "SORTIE_SANS_PAIEMENT_CANONIQUE"]);
   const retain = (row: OperationalAnomaly) => !(row.agency === "LSHI" && row.paymentRequestId && resolvedRequestIds.has(row.paymentRequestId) && pendingTypes.has(row.type));
   const active = deduplicate([...anomalies.filter(retain), ...current.anomalies]);
   const blocked = new Set(active.flatMap((row) => row.paymentRequestId ? [row.paymentRequestId] : []));
