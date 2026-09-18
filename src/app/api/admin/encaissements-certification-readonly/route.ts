@@ -170,12 +170,61 @@ function buildP1ModernAudit(manifests: readonly ManifestShipperRow[], payments: 
       return true;
     });
     const excluded = rows.filter((payment) => !certified.includes(payment));
+    const manifestByKey = new Map<string, ManifestShipperRow[]>();
+    manifests.forEach((manifest) => {
+      const code = exactCode(manifest.codeColisRaw);
+      const year = Number(parseDate(manifest.dateRaw)?.slice(0, 4) ?? NaN);
+      if (!Number.isFinite(year) || year < 2026 || !/^(AT|SE|OT|NV|DC)/.test(code)) return;
+      const key = `${manifest.sourceSite}:${code}`;
+      manifestByKey.set(key, [...(manifestByKey.get(key) ?? []), manifest]);
+    });
+    const diagnosticRows = rows.map((payment) => {
+      const key = `${agency}:${payment.code}`;
+      const matches = manifestByKey.get(key) ?? [];
+      const manifest = matches[0] ?? null;
+      const manifestYear = manifest ? Number(parseDate(manifest.dateRaw)?.slice(0, 4) ?? NaN) : NaN;
+      const cohort = Number.isFinite(manifestYear) ? resolveCohort(payment.code, manifestYear) : null;
+      const identityItem = identity.get(key);
+      const isCertified = certified.includes(payment);
+      const firstFail = !payment.code ? "CODE_EXACT_PRESERVE" : !payment.destination ? "DESTINATION_RESOLVED" : !cohort || cohort.state !== "RESOLVED" ? "COHORTE_RESOLVED" : !matches.length ? "MANIFEST_SEARCH" : identityItem?.reason ? "MANIFEST_IDENTITY" : !isCertified ? "CERTIFICATION" : null;
+      const pipeline = {
+        P1_LU: "PASS",
+        CODE_EXACT_PRESERVE: payment.code ? "PASS" : "FAIL",
+        DESTINATION_RESOLVED: payment.destination ? "PASS" : "FAIL",
+        COHORTE_RESOLVED: cohort?.state === "RESOLVED" ? "PASS" : "FAIL",
+        SHEET_MANIFEST_RESOLVED: matches.length ? "PASS" : "FAIL",
+        MANIFEST_SEARCH: matches.length ? "PASS" : "FAIL",
+        MANIFEST_IDENTITY: identityItem?.valid ? "PASS" : "FAIL",
+        PHYSICAL_DISAMBIGUATION: "NOT_REQUIRED",
+        CERTIFICATION: isCertified ? "PASS" : "FAIL"
+      } as const;
+      return {
+        code: payment.code,
+        date: payment.dateKey,
+        weightKg: manifest ? parseAmount(manifest.poidsRaw) : null,
+        expectedUsd: payment.expectedAmount,
+        paidUsd: payment.amount,
+        remainingUsd: payment.remainingAmount,
+        status: payment.status,
+        paymentAgency: payment.agency,
+        destination: payment.destination,
+        cohort: cohort?.state === "RESOLVED" ? cohort.definition.id : null,
+        manifestSheet: manifest?.sourceSite ?? agency,
+        manifestCode: manifest ? exactCode(manifest.codeColisRaw) : null,
+        manifestMatches: matches.length,
+        manifestDate: manifest ? parseDate(manifest.dateRaw) : null,
+        result: isCertified ? "CERTIFIED" : "NON_RECONCILED",
+        reason: identityItem?.reason ?? (isCertified ? null : "IDENTITE_PAIEMENT_NON_RETROUVEE"),
+        firstFail,
+        pipeline
+      };
+    });
     const statusCounts = rows.reduce((acc, payment) => { const status = /SOLD|PAYE|PAID|REGLE|COMPLET/i.test(payment.status) ? "SOLDÉ" : /PARTIEL/i.test(payment.status) ? "PARTIEL" : "AUTRE"; acc[status] = (acc[status] ?? 0) + 1; return acc; }, {} as Record<string, number>);
     const reasons = excluded.reduce((acc, payment) => { const item = identity.get(`${agency}:${payment.code}`); const reason = item?.reason ?? (!item ? "IDENTITE_PAIEMENT_NON_RETROUVEE" : "PAIEMENT_DUPLIQUE_OU_STATUT_NON_CERTIFIABLE"); const bucket = acc[reason] ??= { count: 0, amount: 0, examples: [] as string[] }; bucket.count += 1; bucket.amount = round(bucket.amount + payment.amount); if (bucket.examples.length < 5) bucket.examples.push(`${payment.code} (${payment.amount} USD)`); return acc; }, {} as Record<string, { count: number; amount: number; examples: string[] }>);
     const grossPaidUsd = round(rows.reduce((sum, row) => sum + row.amount, 0));
     const certifiedPaidUsd = round(certified.reduce((sum, row) => sum + row.amount, 0));
     const excludedAmountUsd = round(excluded.reduce((sum, row) => sum + row.amount, 0));
-    return [agency, { rowCount: rows.length, grossExpectedUsd: round(rows.reduce((sum, row) => sum + (row.expectedAmount ?? 0), 0)), grossPaidUsd, grossRemainingUsd: round(rows.reduce((sum, row) => sum + (row.remainingAmount ?? 0), 0)), settledCount: statusCounts["SOLDÉ"] ?? 0, partialCount: statusCounts["PARTIEL"] ?? 0, otherStatusCount: statusCounts["AUTRE"] ?? 0, certifiedRowCount: certified.length, certifiedPaidUsd, nonReconciledCount: excluded.length, nonReconciledAmountUsd: excludedAmountUsd, excludedCount: excluded.length, excludedAmountUsd, ambiguousCount: excluded.filter((payment) => (identity.get(`${agency}:${payment.code}`)?.reason ?? "").includes("AMBIGU")).length, ambiguousAmountUsd: round(excluded.filter((payment) => (identity.get(`${agency}:${payment.code}`)?.reason ?? "").includes("AMBIGU")).reduce((sum, row) => sum + row.amount, 0)), exclusionReasons: reasons, lineConservation: rows.length === certified.length + excluded.length ? "PASS" : "FAIL", amountConservation: grossPaidUsd === round(certifiedPaidUsd + excludedAmountUsd) ? "PASS" : "FAIL" }];
+    return [agency, { rowCount: rows.length, grossExpectedUsd: round(rows.reduce((sum, row) => sum + (row.expectedAmount ?? 0), 0)), grossPaidUsd, grossRemainingUsd: round(rows.reduce((sum, row) => sum + (row.remainingAmount ?? 0), 0)), settledCount: statusCounts["SOLDÉ"] ?? 0, partialCount: statusCounts["PARTIEL"] ?? 0, otherStatusCount: statusCounts["AUTRE"] ?? 0, certifiedRowCount: certified.length, certifiedPaidUsd, nonReconciledCount: excluded.length, nonReconciledAmountUsd: excludedAmountUsd, excludedCount: excluded.length, excludedAmountUsd, ambiguousCount: excluded.filter((payment) => (identity.get(`${agency}:${payment.code}`)?.reason ?? "").includes("AMBIGU")).length, ambiguousAmountUsd: round(excluded.filter((payment) => (identity.get(`${agency}:${payment.code}`)?.reason ?? "").includes("AMBIGU")).reduce((sum, row) => sum + row.amount, 0)), exclusionReasons: reasons, diagnosticRows, lineConservation: rows.length === certified.length + excluded.length ? "PASS" : "FAIL", amountConservation: grossPaidUsd === round(certifiedPaidUsd + excludedAmountUsd) ? "PASS" : "FAIL" }];
   }));
 }
 
