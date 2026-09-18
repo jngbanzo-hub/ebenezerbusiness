@@ -66,10 +66,13 @@ function buildReport(manifests: readonly ManifestShipperRow[], payments: readonl
 
   const byAgency = Object.fromEntries((["FIH", "LSHI", "KLZ"] as const).map((agency) => {
     const certified = rows.filter((row) => row.sheet === agency && (row.state === "PAYE_CERTIFIE" || row.state === "RESTE_A_ENCAISSER_CERTIFIE"));
+    const expectedValues = certified.map((row) => row.expectedUsd);
+    const paidValues = certified.map((row) => row.paidUsd);
+    const remainingValues = certified.map((row) => row.remainingUsd);
     return [agency, {
-      certifiedExpectedUsd: round(certified.reduce((sum, row) => sum + (row.expectedUsd ?? 0), 0)),
-      certifiedPaidUsd: round(certified.reduce((sum, row) => sum + (row.paidUsd ?? 0), 0)),
-      certifiedRemainingUsd: round(certified.reduce((sum, row) => sum + (row.remainingUsd ?? 0), 0)),
+      certifiedExpectedUsd: certified.length && expectedValues.every((value) => value !== null) ? round(expectedValues.reduce((sum, value) => sum + (value ?? 0), 0)) : null,
+      certifiedPaidUsd: certified.length && paidValues.every((value) => value !== null) ? round(paidValues.reduce((sum, value) => sum + (value ?? 0), 0)) : null,
+      certifiedRemainingUsd: certified.length && remainingValues.every((value) => value !== null) ? round(remainingValues.reduce((sum, value) => sum + (value ?? 0), 0)) : null,
       paidIdentityCount: certified.filter((row) => row.state === "PAYE_CERTIFIE").length,
       remainingIdentityCount: certified.filter((row) => row.state === "RESTE_A_ENCAISSER_CERTIFIE").length,
       historicalNonCertifiedCount: rows.filter((row) => row.sheet === agency && row.state === "PAIEMENT_HISTORIQUE_NON_CERTIFIE").length,
@@ -91,8 +94,8 @@ function buildReport(manifests: readonly ManifestShipperRow[], payments: readonl
     p1Checks,
     aggregates: byAgency,
     conservation: Object.fromEntries((["FIH", "LSHI", "KLZ"] as const).map((agency) => {
-      const item = byAgency[agency] as { certifiedExpectedUsd: number; certifiedPaidUsd: number; certifiedRemainingUsd: number };
-      return [agency, item.certifiedExpectedUsd === round(item.certifiedPaidUsd + item.certifiedRemainingUsd) ? "PASS" : "FAIL"];
+      const item = byAgency[agency] as { certifiedExpectedUsd: number | null; certifiedPaidUsd: number | null; certifiedRemainingUsd: number | null };
+      return [agency, item.certifiedExpectedUsd !== null && item.certifiedPaidUsd !== null && item.certifiedRemainingUsd !== null && item.certifiedExpectedUsd === round(item.certifiedPaidUsd + item.certifiedRemainingUsd) ? "PASS" : "NON CALCULABLE"];
     })) as Record<Agency, string>
   };
 }
