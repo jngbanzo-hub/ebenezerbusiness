@@ -18,6 +18,6 @@ export function withBilanCohorts<T>(definitions: readonly CohortDefinition[], ru
   return registry.run(snapshot, run);
 }
 
-export function resolveCohort(rawCode: string) {
-  return resolveCatalogCohort(rawCode, getBilanCohorts());
+export function resolveCohort(rawCode: string, businessYear?: number) {
+  return resolveCatalogCohort(rawCode, getBilanCohorts(), businessYear);
 }

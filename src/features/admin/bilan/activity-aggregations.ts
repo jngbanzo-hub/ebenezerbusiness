@@ -12,7 +12,7 @@ export function aggregateCohortActivity(
 ): CohortActivity {
   const anomalies: AggregatedQualityIssue[] = [];
   const periodWeightKg = period ? sum(rows.filter((row) => inPeriod(row.date, period)).map((row) => row.weightKg)) : null;
-  const cohortRows = rows.filter((row) => resolvedCohortId(row.code) === cohortId);
+  const cohortRows = rows.filter((row) => resolvedCohortId(row.code, Number(row.date.slice(0, 4))) === cohortId);
   const agencies = Object.fromEntries(AGENCIES.map((agency) => {
     const agencyRows = cohortRows.filter((row) => analyticalAgency(row) === agency);
     const certified = certifyIdentities(agencyRows, cohortId, anomalies);
@@ -53,7 +53,7 @@ function certifyIdentities(rows: readonly BilanManifestParcel[], cohortId: Cohor
 }
 
 function analyticalAgency(row: BilanManifestParcel): BilanAgency { return row.code.endsWith("KLZ") ? "KLZ" : row.agency; }
-function resolvedCohortId(code: string) { const cohort = resolveCohort(code); return cohort.state === "RESOLVED" ? cohort.definition.id : null; }
+function resolvedCohortId(code: string, businessYear?: number) { const cohort = resolveCohort(code, businessYear); return cohort.state === "RESOLVED" ? cohort.definition.id : null; }
 function inPeriod(date: string, period: { from: string; to: string }) { return date >= period.from && date <= period.to; }
 function sum(values: readonly number[]) { return money(values.reduce((total, value) => total + value, 0)); }
 function money(value: number) { return Math.round((value + Number.EPSILON) * 100) / 100; }
