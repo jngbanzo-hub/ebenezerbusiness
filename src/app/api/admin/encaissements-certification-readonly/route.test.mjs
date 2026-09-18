@@ -25,3 +25,12 @@ test("façade ne renvoie que des agrégats et détails read-only non sensibles",
   assert.match(route, /SUPABASE_SERVICE_ROLE_KEY/);
   assert.doesNotMatch(route, /NextResponse\.json\([^)]*SUPABASE_SERVICE_ROLE_KEY/);
 });
+
+test("rapprochement manifeste conserve le fallback de montant et les catégories d'identité", () => {
+  assert.match(route, /parseFirstAmount\(row\.historicalCurrentPriceFieldRaw, row\.montantAttenduRaw\)/);
+  assert.match(route, /MANIFEST_MATCH_MULTIPLE/);
+  assert.match(route, /MANIFEST_DESTINATION_MISMATCH/);
+  assert.match(route, /MANIFEST_CODE_NOT_FOUND/);
+  assert.match(route, /MANIFEST_COHORT_MISMATCH/);
+  assert.match(route, /parseFirstAmount\(\.\.\.values/);
+});
