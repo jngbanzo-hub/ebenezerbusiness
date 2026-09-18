@@ -49,6 +49,7 @@ test("façade expose uniquement les diagnostics F/M/G/L read-only", () => {
 test("F_ZERO est rapproché depuis le Manifeste vers toutes les feuilles P1", () => {
   assert.match(route, /buildFZeroAudit\(manifests, payments\)/);
   assert.match(route, /paymentIndex\.get\(code\)/);
+  assert.match(route, /paymentIndex\.get\(code\) \?\? \[\]\)\.filter\(\(payment\) => payment\.destination === agency\)/);
   assert.match(route, /F_ZERO_P1_SOLDE_CERTIFIE/);
   assert.match(route, /F_ZERO_P1_PARTIEL_CERTIFIE/);
   assert.match(route, /paymentRequestId/);
