@@ -107,7 +107,11 @@ async function readManifestRows(config: ManifestGoogleSheetsConfig): Promise<Man
         beneficiaireRaw: headerMap.beneficiaryIndex >= 0 ? getCell(row, headerMap.beneficiaryIndex) : "",
         poidsRaw: getCell(row, 4),
         montantAttenduRaw: getCell(row, 5),
-        statutRaw: headerMap.statusIndex >= 0 ? getCell(row, headerMap.statusIndex) : ""
+        statutRaw: headerMap.statusIndex >= 0 ? getCell(row, headerMap.statusIndex) : "",
+        historicalCurrentPriceFieldRaw: getCell(row, 5),
+        historicalPaymentStatusRaw: getCell(row, 6),
+        historicalRemainingAmountRaw: getCell(row, 11),
+        historicalPaidAmountRaw: getCell(row, 12)
       });
     });
   }

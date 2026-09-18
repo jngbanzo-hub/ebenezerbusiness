@@ -72,6 +72,10 @@ export type ManifestShipperRow = {
   poidsRaw: string | number;
   montantAttenduRaw?: string | number;
   statutRaw?: string;
+  historicalCurrentPriceFieldRaw?: string | number;
+  historicalPaymentStatusRaw?: string | number;
+  historicalRemainingAmountRaw?: string | number;
+  historicalPaidAmountRaw?: string | number;
 };
 
 export type ShipperSuggestion = {
