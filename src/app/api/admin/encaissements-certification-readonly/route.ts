@@ -137,12 +137,42 @@ function buildReport(manifests: readonly ManifestShipperRow[], payments: readonl
     fields: { A: true, B: true, E: true, F: true, G: true, L: true, M: true },
     targets,
     p1Checks,
+    modern: buildModernReport(manifests, payments),
     aggregates: byAgency,
     conservation: Object.fromEntries((["FIH", "LSHI", "KLZ"] as const).map((agency) => {
       const item = byAgency[agency] as { certifiedExpectedUsd: number | null; certifiedPaidUsd: number | null; certifiedRemainingUsd: number | null };
       return [agency, item.certifiedExpectedUsd !== null && item.certifiedPaidUsd !== null && item.certifiedRemainingUsd !== null && item.certifiedExpectedUsd === round(item.certifiedPaidUsd + item.certifiedRemainingUsd) ? "PASS" : "NON CALCULABLE"];
     })) as Record<Agency, string>
   };
+}
+
+function buildModernReport(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[]) {
+  const modern = manifests.map((row) => ({ row, code: exactCode(row.codeColisRaw), year: Number(parseDate(row.dateRaw)?.slice(0, 4) ?? NaN) }))
+    .filter(({ code, year }) => Number.isFinite(year) && year >= 2026 && /^AT|^SE|^OT|^NV|^DC/.test(code));
+  const unique = new Map<string, typeof modern>();
+  modern.forEach((item) => { const key = `${item.row.sourceSite}:${item.code}`; unique.set(key, [...(unique.get(key) ?? []), item]); });
+  const byAgency = Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => {
+    const candidates = Array.from(unique.values()).filter((items) => items[0]?.row.sourceSite === agency);
+    let expected = 0; let paid = 0; let remaining = 0; let paidCount = 0; let remainingCount = 0; let nonCertified = 0; let insufficient = 0;
+    const debts: Array<Record<string, unknown>> = [];
+    candidates.forEach((items) => {
+      const item = items[0];
+      const code = item.code;
+      const cohort = resolveCohort(code, item.year);
+      const amountExpected = parseAmount(item.row.historicalCurrentPriceFieldRaw ?? item.row.montantAttenduRaw);
+      if (items.length !== 1 || !cohort || cohort.state !== 'RESOLVED' || amountExpected === null || amountExpected <= 0) { insufficient += 1; return; }
+      const matching = payments.filter((payment) => payment.code === code && payment.destination === agency && !/PENDING|ATTENTE|FAILED|ECHEC|ANNUL/i.test(payment.status));
+      const seen = new Set<string>();
+      const amountPaid = matching.reduce((sum, payment) => { const key = payment.paymentRequestId ?? payment.id; if (seen.has(key)) return sum; seen.add(key); return sum + payment.amount; }, 0);
+      const paidAmount = round(Math.min(amountExpected, amountPaid));
+      const restAmount = round(Math.max(0, amountExpected - amountPaid));
+      expected += amountExpected; paid += paidAmount; remaining += restAmount;
+      if (restAmount > 0) { remainingCount += 1; debts.push({ code, agency, cohort: cohort.definition.id, year: item.year, weightKg: parseAmount(item.row.poidsRaw), expectedUsd: amountExpected, paidUsd: paidAmount, remainingUsd: restAmount, beneficiary: item.row.beneficiaireRaw || null, physicalIdentity: null, provenance: 'MANIFEST_COO_PLUS_P1' }); }
+      else paidCount += 1;
+    });
+    return [agency, { certifiedExpectedUsd: round(expected), certifiedPaidUsd: round(paid), certifiedRemainingUsd: round(remaining), paidIdentityCount: paidCount, remainingIdentityCount: remainingCount, nonCertifiedCount: nonCertified, insufficientDataCount: insufficient, debts, conservation: round(expected) === round(paid + remaining) ? 'PASS' : 'FAIL' }];
+  })) as Record<Agency, unknown>;
+  return byAgency;
 }
 
 function certifyHistoricalRow(row: ManifestShipperRow) {
@@ -194,8 +224,8 @@ function sanitizeEvidence(row: ReturnType<typeof certifyHistoricalRow>) {
   return { sheet: row.sheet, code: row.code, date: row.date, weightKg: row.weightKg, expectedUsd: row.expectedUsd, paidUsd: row.paidUsd, remainingUsd: row.remainingUsd, status: row.status, cohort: row.cohort, state: row.state, reasons: row.reasons };
 }
 
-function normalizePayment(payment: { id: string; dateKey: string; codeColis: string; destinationCode: string; agenceEncaissement: string; montantPaye: number; paymentRequestId?: string }) {
-  return { id: payment.id, dateKey: payment.dateKey, code: exactCode(payment.codeColis), destination: String(payment.destinationCode).toUpperCase(), agency: String(payment.agenceEncaissement).toUpperCase(), amount: payment.montantPaye, paymentRequestId: payment.paymentRequestId || null };
+function normalizePayment(payment: { id: string; dateKey: string; codeColis: string; destinationCode: string; agenceEncaissement: string; montantPaye: number; statutPaiement?: string; paymentRequestId?: string }) {
+  return { id: payment.id, dateKey: payment.dateKey, code: exactCode(payment.codeColis), destination: String(payment.destinationCode).toUpperCase(), agency: String(payment.agenceEncaissement).toUpperCase(), amount: payment.montantPaye, status: payment.statutPaiement ?? "", paymentRequestId: payment.paymentRequestId || null };
 }
 
 function paymentSum(payments: readonly ReturnType<typeof normalizePayment>[], code: string, expectedByAgency: Partial<Record<Agency | "COO", number>>) {
