@@ -152,14 +152,17 @@ function normalizePayment(payment: { id: string; dateKey: string; codeColis: str
 
 function paymentSum(payments: readonly ReturnType<typeof normalizePayment>[], code: string, expectedByAgency: Partial<Record<Agency | "COO", number>>) {
   const rows = payments.filter((payment) => payment.code === code);
-  const uniqueIds = new Set(rows.map((payment) => payment.id));
+  const expectedAgencies = new Set(Object.keys(expectedByAgency));
+  const matchedRows = rows.filter((payment) => expectedAgencies.has(payment.agency));
+  const unexpectedRows = rows.filter((payment) => !expectedAgencies.has(payment.agency));
+  const uniqueIds = new Set(matchedRows.map((payment) => payment.id));
   const byAgency: Record<string, number> = {};
-  rows.forEach((payment) => { byAgency[payment.agency] ??= 0; });
-  rows.forEach((payment) => { byAgency[payment.agency] = round((byAgency[payment.agency] ?? 0) + payment.amount); });
+  matchedRows.forEach((payment) => { byAgency[payment.agency] ??= 0; });
+  matchedRows.forEach((payment) => { byAgency[payment.agency] = round((byAgency[payment.agency] ?? 0) + payment.amount); });
   const expected = round(Object.values(expectedByAgency).reduce((sum, amount) => sum + (amount ?? 0), 0));
-  const total = round(rows.reduce((sum, row) => sum + row.amount, 0));
+  const total = round(matchedRows.reduce((sum, row) => sum + row.amount, 0));
   const agencyPass = Object.entries(expectedByAgency).every(([agency, amount]) => byAgency[agency] === amount);
-  return { totalPaidUsd: total, expectedUsd: expected, byAgency, rowCount: rows.length, uniquePaymentCount: uniqueIds.size, duplicatePaymentIds: rows.length - uniqueIds.size, rows: rows.map((row) => ({ id: row.id, date: row.dateKey, agency: row.agency, destination: row.destination, amount: row.amount, paymentRequestId: row.paymentRequestId })), pass: total === expected && agencyPass && rows.length === uniqueIds.size };
+  return { totalPaidUsd: total, expectedUsd: expected, byAgency, rowCount: matchedRows.length, uniquePaymentCount: uniqueIds.size, duplicatePaymentIds: matchedRows.length - uniqueIds.size, unexpectedRows: unexpectedRows.map((row) => ({ id: row.id, date: row.dateKey, agency: row.agency, destination: row.destination, amount: row.amount, paymentRequestId: row.paymentRequestId })), rows: matchedRows.map((row) => ({ id: row.id, date: row.dateKey, agency: row.agency, destination: row.destination, amount: row.amount, paymentRequestId: row.paymentRequestId })), pass: total === expected && agencyPass && matchedRows.length === uniqueIds.size };
 }
 
 function exactCode(value: unknown) { return String(value ?? "").trim().toUpperCase(); }
