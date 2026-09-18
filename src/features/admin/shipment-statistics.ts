@@ -114,7 +114,7 @@ function summarizeShipments(shipments: ShipmentStatisticRow[]): ShipmentStatisti
   };
 }
 
-function usesLshiKlzBreakdown(row: ShipmentStatisticRow) {
+export function usesLshiKlzBreakdown(row: ShipmentStatisticRow) {
   return row.destination === "LSHI" && ["ETHIOPIAN", "DHL"].includes(row.company);
 }
 
