@@ -154,9 +154,12 @@ function buildP1ModernAudit(manifests: readonly ManifestShipperRow[], payments: 
   modernRows.forEach(({ row, code, year }) => {
     const key = `${row.sourceSite}:${code}`;
     const cohort = resolveCohort(code, year);
-    const expected = parseAmount(row.historicalCurrentPriceFieldRaw ?? row.montantAttenduRaw);
+    const expected = parseFirstAmount(row.historicalCurrentPriceFieldRaw, row.montantAttenduRaw);
     const current = identity.get(key);
-    identity.set(key, current ? { valid: false, reason: "IDENTITE_MANIFESTE_DUPLIQUEE" } : { valid: Boolean(cohort && cohort.state === "RESOLVED" && expected !== null && expected > 0), reason: cohort?.state === "RESOLVED" && expected !== null && expected > 0 ? null : "IDENTITE_MANIFESTE_NON_CERTIFIABLE" });
+    identity.set(key, current ? { valid: false, reason: "MANIFEST_MATCH_MULTIPLE" } : {
+      valid: Boolean(cohort && cohort.state === "RESOLVED" && expected !== null && expected > 0),
+      reason: cohort?.state !== "RESOLVED" ? "MANIFEST_COHORT_MISMATCH" : expected === null || expected <= 0 ? "OTHER_IDENTITY_FAILURE" : null
+    });
   });
   return Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => {
     const rows = payments.filter((payment) => payment.destination === agency && /^(AT|SE|OT|NV|DC)/.test(payment.code));
@@ -170,12 +173,70 @@ function buildP1ModernAudit(manifests: readonly ManifestShipperRow[], payments: 
       return true;
     });
     const excluded = rows.filter((payment) => !certified.includes(payment));
+    const manifestByKey = new Map<string, ManifestShipperRow[]>();
+    manifests.forEach((manifest) => {
+      const code = exactCode(manifest.codeColisRaw);
+      const year = Number(parseDate(manifest.dateRaw)?.slice(0, 4) ?? NaN);
+      if (!Number.isFinite(year) || year < 2026 || !/^(AT|SE|OT|NV|DC)/.test(code)) return;
+      const key = `${manifest.sourceSite}:${code}`;
+      manifestByKey.set(key, [...(manifestByKey.get(key) ?? []), manifest]);
+    });
+    const diagnosticRows = rows.map((payment) => {
+      const key = `${agency}:${payment.code}`;
+      const matches = manifestByKey.get(key) ?? [];
+      const manifest = matches[0] ?? null;
+      const manifestYear = manifest ? Number(parseDate(manifest.dateRaw)?.slice(0, 4) ?? NaN) : NaN;
+      const cohort = Number.isFinite(manifestYear) ? resolveCohort(payment.code, manifestYear) : null;
+      const identityItem = identity.get(key);
+      const crossSiteMatch = !matches.length && manifests.some((candidate) => exactCode(candidate.codeColisRaw) === payment.code);
+      const isCertified = certified.includes(payment);
+      const firstFail = !payment.code ? "CODE_EXACT_PRESERVE" : !payment.destination ? "DESTINATION_RESOLVED" : !cohort || cohort.state !== "RESOLVED" ? "COHORTE_RESOLVED" : !matches.length ? (crossSiteMatch ? "MANIFEST_DESTINATION_MISMATCH" : "MANIFEST_CODE_NOT_FOUND") : identityItem?.reason ? "MANIFEST_IDENTITY" : !isCertified ? "CERTIFICATION" : null;
+      const pipeline = {
+        P1_LU: "PASS",
+        CODE_EXACT_PRESERVE: payment.code ? "PASS" : "FAIL",
+        DESTINATION_RESOLVED: payment.destination ? "PASS" : "FAIL",
+        COHORTE_RESOLVED: cohort?.state === "RESOLVED" ? "PASS" : "FAIL",
+        SHEET_MANIFEST_RESOLVED: matches.length ? "PASS" : "FAIL",
+        MANIFEST_SEARCH: matches.length ? "PASS" : "FAIL",
+        MANIFEST_IDENTITY: identityItem?.valid ? "PASS" : "FAIL",
+        PHYSICAL_DISAMBIGUATION: "NOT_REQUIRED",
+        CERTIFICATION: isCertified ? "PASS" : "FAIL"
+      } as const;
+      return {
+        code: payment.code,
+        date: payment.dateKey,
+        weightKg: manifest ? parseAmount(manifest.poidsRaw) : null,
+        expectedUsd: payment.expectedAmount,
+        paidUsd: payment.amount,
+        remainingUsd: payment.remainingAmount,
+        status: payment.status,
+        paymentAgency: payment.agency,
+        destination: payment.destination,
+        cohort: cohort?.state === "RESOLVED" ? cohort.definition.id : null,
+        manifestSheet: manifest?.sourceSite ?? agency,
+        manifestCode: manifest ? exactCode(manifest.codeColisRaw) : null,
+        manifestMatches: matches.length,
+        manifestDate: manifest ? parseDate(manifest.dateRaw) : null,
+        manifestF: manifest ? manifest.historicalCurrentPriceFieldRaw ?? manifest.montantAttenduRaw ?? null : null,
+        manifestFType: manifest ? rawValueType(manifest.historicalCurrentPriceFieldRaw ?? manifest.montantAttenduRaw) : null,
+        manifestFState: manifest ? classifyManifestF(manifest.historicalCurrentPriceFieldRaw ?? manifest.montantAttenduRaw) : null,
+        manifestM: manifest ? manifest.historicalPaidAmountRaw ?? null : null,
+        manifestMType: manifest ? rawValueType(manifest.historicalPaidAmountRaw) : null,
+        manifestMPresent: manifest ? hasRawValue(manifest.historicalPaidAmountRaw) : false,
+        manifestG: manifest ? manifest.historicalPaymentStatusRaw ?? null : null,
+        manifestL: manifest ? manifest.historicalRemainingAmountRaw ?? null : null,
+        result: isCertified ? "CERTIFIED" : "NON_RECONCILED",
+        reason: identityItem?.reason ?? (isCertified ? null : crossSiteMatch ? "MANIFEST_DESTINATION_MISMATCH" : "MANIFEST_CODE_NOT_FOUND"),
+        firstFail,
+        pipeline
+      };
+    });
     const statusCounts = rows.reduce((acc, payment) => { const status = /SOLD|PAYE|PAID|REGLE|COMPLET/i.test(payment.status) ? "SOLDÉ" : /PARTIEL/i.test(payment.status) ? "PARTIEL" : "AUTRE"; acc[status] = (acc[status] ?? 0) + 1; return acc; }, {} as Record<string, number>);
     const reasons = excluded.reduce((acc, payment) => { const item = identity.get(`${agency}:${payment.code}`); const reason = item?.reason ?? (!item ? "IDENTITE_PAIEMENT_NON_RETROUVEE" : "PAIEMENT_DUPLIQUE_OU_STATUT_NON_CERTIFIABLE"); const bucket = acc[reason] ??= { count: 0, amount: 0, examples: [] as string[] }; bucket.count += 1; bucket.amount = round(bucket.amount + payment.amount); if (bucket.examples.length < 5) bucket.examples.push(`${payment.code} (${payment.amount} USD)`); return acc; }, {} as Record<string, { count: number; amount: number; examples: string[] }>);
     const grossPaidUsd = round(rows.reduce((sum, row) => sum + row.amount, 0));
     const certifiedPaidUsd = round(certified.reduce((sum, row) => sum + row.amount, 0));
     const excludedAmountUsd = round(excluded.reduce((sum, row) => sum + row.amount, 0));
-    return [agency, { rowCount: rows.length, grossExpectedUsd: round(rows.reduce((sum, row) => sum + (row.expectedAmount ?? 0), 0)), grossPaidUsd, grossRemainingUsd: round(rows.reduce((sum, row) => sum + (row.remainingAmount ?? 0), 0)), settledCount: statusCounts["SOLDÉ"] ?? 0, partialCount: statusCounts["PARTIEL"] ?? 0, otherStatusCount: statusCounts["AUTRE"] ?? 0, certifiedRowCount: certified.length, certifiedPaidUsd, nonReconciledCount: excluded.length, nonReconciledAmountUsd: excludedAmountUsd, excludedCount: excluded.length, excludedAmountUsd, ambiguousCount: excluded.filter((payment) => (identity.get(`${agency}:${payment.code}`)?.reason ?? "").includes("AMBIGU")).length, ambiguousAmountUsd: round(excluded.filter((payment) => (identity.get(`${agency}:${payment.code}`)?.reason ?? "").includes("AMBIGU")).reduce((sum, row) => sum + row.amount, 0)), exclusionReasons: reasons, lineConservation: rows.length === certified.length + excluded.length ? "PASS" : "FAIL", amountConservation: grossPaidUsd === round(certifiedPaidUsd + excludedAmountUsd) ? "PASS" : "FAIL" }];
+    return [agency, { rowCount: rows.length, grossExpectedUsd: round(rows.reduce((sum, row) => sum + (row.expectedAmount ?? 0), 0)), grossPaidUsd, grossRemainingUsd: round(rows.reduce((sum, row) => sum + (row.remainingAmount ?? 0), 0)), settledCount: statusCounts["SOLDÉ"] ?? 0, partialCount: statusCounts["PARTIEL"] ?? 0, otherStatusCount: statusCounts["AUTRE"] ?? 0, certifiedRowCount: certified.length, certifiedPaidUsd, nonReconciledCount: excluded.length, nonReconciledAmountUsd: excludedAmountUsd, excludedCount: excluded.length, excludedAmountUsd, ambiguousCount: excluded.filter((payment) => (identity.get(`${agency}:${payment.code}`)?.reason ?? "").includes("AMBIGU")).length, ambiguousAmountUsd: round(excluded.filter((payment) => (identity.get(`${agency}:${payment.code}`)?.reason ?? "").includes("AMBIGU")).reduce((sum, row) => sum + row.amount, 0)), exclusionReasons: reasons, diagnosticRows, lineConservation: rows.length === certified.length + excluded.length ? "PASS" : "FAIL", amountConservation: grossPaidUsd === round(certifiedPaidUsd + excludedAmountUsd) ? "PASS" : "FAIL" }];
   }));
 }
 
@@ -192,7 +253,7 @@ function buildModernReport(manifests: readonly ManifestShipperRow[], payments: r
       const item = items[0];
       const code = item.code;
       const cohort = resolveCohort(code, item.year);
-      const amountExpected = parseAmount(item.row.historicalCurrentPriceFieldRaw ?? item.row.montantAttenduRaw);
+      const amountExpected = parseFirstAmount(item.row.historicalCurrentPriceFieldRaw, item.row.montantAttenduRaw);
       if (items.length !== 1 || !cohort || cohort.state !== 'RESOLVED' || amountExpected === null || amountExpected <= 0) { insufficient += 1; return; }
       const matching = payments.filter((payment) => payment.code === code && payment.destination === agency && !/PENDING|ATTENTE|FAILED|ECHEC|ANNUL/i.test(payment.status));
       const seen = new Set<string>();
@@ -213,7 +274,7 @@ function certifyHistoricalRow(row: ManifestShipperRow) {
   const year = parseDate(row.dateRaw)?.slice(0, 4) ?? null;
   const prefix = code.match(/^[A-Z]+/)?.[0] ?? "";
   const cohort = year ? resolveCohort(code, Number(year)) : null;
-  const expected = parseAmount(row.historicalCurrentPriceFieldRaw ?? row.montantAttenduRaw);
+  const expected = parseFirstAmount(row.historicalCurrentPriceFieldRaw, row.montantAttenduRaw);
   const paid = parseAmount(row.historicalPaidAmountRaw);
   const remainingHistorical = parseAmount(row.historicalRemainingAmountRaw);
   const status = String(row.historicalPaymentStatusRaw ?? "").trim();
@@ -277,7 +338,23 @@ function paymentSum(payments: readonly ReturnType<typeof normalizePayment>[], co
 }
 
 function exactCode(value: unknown) { return String(value ?? "").trim().toUpperCase(); }
+function hasRawValue(value: unknown) { return value !== null && value !== undefined && !(typeof value === "string" && value.trim() === ""); }
+function rawValueType(value: unknown) {
+  if (value === null || value === undefined) return "NULL";
+  if (typeof value === "number") return Number.isFinite(value) ? "NUMBER" : "NON_NUMERIC";
+  if (typeof value === "string") return "STRING";
+  return typeof value;
+}
+function classifyManifestF(value: unknown) {
+  if (value === null || value === undefined) return "F_NULL";
+  if (typeof value === "string" && value.trim() === "") return "F_VIDE";
+  const parsed = parseAmount(value);
+  if (parsed !== null && parsed > 0) return "F_POSITIF";
+  if (parsed === 0) return "F_ZERO";
+  return "F_NON_NUMERIQUE";
+}
 function parseAmount(value: unknown): number | null { const text = String(value ?? "").replace(/\s/g, "").replace(",", ".").replace(/[^\d.-]/g, ""); const number = Number(text); return text && Number.isFinite(number) ? number : null; }
+function parseFirstAmount(...values: unknown[]) { for (const value of values) { const parsed = parseAmount(value); if (parsed !== null) return parsed; } return null; }
 function parseDate(value: unknown): string | null { const raw = String(value ?? "").trim(); const french = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/); if (french) return `${french[3]}-${french[2].padStart(2, "0")}-${french[1].padStart(2, "0")}`; return /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : null; }
 function round(value: number) { return Math.round((value + Number.EPSILON) * 100) / 100; }
 function jsonError(message: string, status: number) { return NextResponse.json({ message }, { status, headers: { "Cache-Control": "private, no-store, max-age=0" } }); }
