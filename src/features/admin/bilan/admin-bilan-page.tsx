@@ -28,7 +28,7 @@ export function AdminBilanPage() {
   const [definitions, setDefinitions] = useState<readonly OriginMonth[]>([]);
   const [filters, setFilters] = useState<BilanFilters>({ cohort: "", mode: "MONTH", from: "", to: "" });
   const requests = useRef(createBilanRequestGuard());
-  const definition = definitions.find(item => item.prefix === filters.cohort);
+  const definition = definitions.find(item => item.id === filters.cohort) ?? definitions.find(item => item.prefix === filters.cohort);
   const bounds = useMemo(() => definition ? monthPeriod(definition.year, definition.month) : { from: "", to: "" }, [definition]);
 
   useEffect(() => { let active = true; void (async () => { try {
@@ -36,7 +36,7 @@ export function AdminBilanPage() {
     if (!session?.user || !session.access_token) return router.replace("/auth/sign-in");
     await getAdminProfile(session.user);
     const months = await loadOriginMonths(session.access_token);
-    const initial = months.find(item => item.prefix === "AT") ?? months.find(item => item.active) ?? months[0];
+    const initial = months.find(item => item.prefix === "AT" && item.year === 2026) ?? months.find(item => item.active) ?? months[0];
     if (active) { token.current = session.access_token; setDefinitions(months); setFilters(createBilanFilters(initial.prefix, months)); setReady(true); }
   } catch (cause) { if (active) setError(cause instanceof Error ? cause.message : "Registre indisponible — Bilan non certifié."); }
   })(); return () => { active = false; token.current = ""; }; }, [router]);
@@ -68,7 +68,7 @@ export function AdminBilanPage() {
     <Link href="/admin/bilan/mois-origine" className="mt-4 inline-block text-accent">Gérer les mois d’origine</Link>
     {definition ? <section className="mt-8" aria-label="Zone de pilotage du bilan">
       <div className="grid gap-5 md:grid-cols-2">
-        <GlassPanel className="border-accent/20 p-5"><p className="text-xs font-semibold uppercase tracking-wider text-accent">Mois d’origine</p><label className="mt-4 block text-sm">Mois d’origine<select className={field} value={filters.cohort} onChange={event=>changeFilters(createBilanFilters(event.target.value, definitions))}>{definitions.map(option=><option key={option.prefix} value={option.prefix}>{option.prefix} — {option.label}{option.active ? "" : " — Inactif / historique"}</option>)}</select></label><p className="mt-3 text-xs text-muted-foreground">Le préfixe du code détermine le mois d’origine du colis. La période d’analyse ne change jamais son mois d’origine.</p></GlassPanel>
+        <GlassPanel className="border-accent/20 p-5"><p className="text-xs font-semibold uppercase tracking-wider text-accent">Mois d’origine</p><label className="mt-4 block text-sm">Mois d’origine<select className={field} value={filters.cohort} onChange={event=>changeFilters(createBilanFilters(event.target.value, definitions))}>{definitions.filter(option=>option.active).map(option=><option key={option.id} value={option.id}>{option.prefix} — {option.label}</option>)}</select></label><p className="mt-3 text-xs text-muted-foreground">Le préfixe et l’année du code déterminent le mois d’origine. Les mois inactifs restent protégés dans l’historique.</p></GlassPanel>
         <GlassPanel className="border-primary/20 p-5">
           <p className="text-xs font-semibold uppercase tracking-wider text-[#AFC7FF]">Période</p>
           <div className="mt-4 flex flex-wrap gap-2">

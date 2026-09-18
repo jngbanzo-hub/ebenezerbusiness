@@ -12,16 +12,16 @@ export type BilanFilters = Readonly<{
 
 // A cohort change replaces the whole selection, including any custom range.
 export function createBilanFilters(prefix: string, definitions: readonly CohortDefinition[]): BilanFilters {
-  const cohort = definitions.find((item) => item.prefix === prefix);
+  const cohort = definitions.find((item) => item.id === prefix) ?? definitions.find((item) => item.prefix === prefix);
   if (!cohort) throw new Error("COHORTE NON RÉSOLUE");
-  return { cohort: cohort.prefix, mode: "MONTH", ...monthPeriod(cohort.year, cohort.month) };
+  return { cohort: cohort.id, mode: "MONTH", ...monthPeriod(cohort.year, cohort.month) };
 }
 
 export function buildBilanFilterQuery(filters: BilanFilters, definitions: readonly CohortDefinition[]) {
-  const definition = definitions.find((item) => item.prefix === filters.cohort);
+  const definition = definitions.find((item) => item.id === filters.cohort) ?? definitions.find((item) => item.prefix === filters.cohort);
   if (!definition) throw new Error("COHORTE NON RÉSOLUE");
   const period = filters.mode === "MONTH" ? monthPeriod(definition.year, definition.month) : filters;
-  const query = buildBilanQuery(filters.cohort, period, filters.mode);
+  const query = buildBilanQuery(definition.id, period, filters.mode);
   const parsed = parseBilanQuery(`https://bilan.invalid/?${query}`, definitions);
   if (parsed.state !== "VALID") throw new Error(parsed.state === "INVALID" ? parsed.message : "COHORTE NON RÉSOLUE");
   return query;

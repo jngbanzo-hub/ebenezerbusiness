@@ -15,15 +15,19 @@ export type BilanQueryResult =
 
 export function parseBilanQuery(url: string, definitions: readonly CohortDefinition[]): BilanQueryResult {
   const params = new URL(url).searchParams;
-  const allowed = new Set(["cohort", "year", "month", "startDate", "endDate", "periodMode"]);
+  const allowed = new Set(["cohort", "cohortId", "year", "month", "startDate", "endDate", "periodMode"]);
   if (Array.from(params.keys()).some((key) => !allowed.has(key))) return { state: "INVALID", message: "Paramètre inconnu." };
   if (Array.from(params.keys()).some((key) => params.getAll(key).length !== 1)) return { state: "INVALID", message: "Paramètre répété." };
   const prefix = (params.get("cohort") ?? "").trim().toUpperCase();
+  const cohortId = (params.get("cohortId") ?? "").trim();
   const year = (params.get("year") ?? "").trim();
   const month = (params.get("month") ?? "").trim();
-  if (prefix && (year || month)) return { state: "INVALID", message: "Utiliser cohort ou year+month, jamais les deux." };
+  if ((prefix || cohortId) && (year || month)) return { state: "INVALID", message: "Utiliser une identité de cohorte ou année+mois, jamais les deux." };
   let cohort: CohortDefinition | undefined;
-  if (prefix) {
+  if (cohortId) {
+    cohort = definitions.find((candidate) => candidate.id === cohortId);
+    if (!cohort) return { state: "COHORTE_NON_RESOLUE", requested: cohortId };
+  } else if (prefix) {
     const resolution = resolveCatalogCohort(prefix, definitions);
     if (resolution.state !== "RESOLVED" || resolution.definition.prefix !== prefix) return { state: "COHORTE_NON_RESOLUE", requested: prefix };
     cohort = resolution.definition;

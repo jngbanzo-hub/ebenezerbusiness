@@ -190,7 +190,7 @@ export function aggregateShipmentByAgency(
 function registeredIdentities(rows: readonly BilanManifestParcel[], cohortId: CohortId) {
   const grouped = new Map<string, BilanManifestParcel[]>();
   for (const row of rows) {
-    if (cohortOf(row.code) !== cohortId) continue;
+    if (cohortOf(row.code, Number(row.date.slice(0, 4))) !== cohortId) continue;
     const agency = row.sourceSheet;
     const key = identityKey(cohortId, agency, row.code);
     grouped.set(key, [...(grouped.get(key) ?? []), row]);
@@ -287,8 +287,8 @@ function overallStatus(statuses: readonly ShipmentAgencyStatus[]): ShipmentAgenc
   return "PARTIAL";
 }
 
-function cohortOf(code: string) {
-  const cohort = resolveCohort(code);
+function cohortOf(code: string, businessYear?: number) {
+  const cohort = resolveCohort(code, businessYear);
   return cohort.state === "RESOLVED" ? cohort.definition.id : null;
 }
 function identityKey(cohortId: CohortId, agency: BilanAgency, code: string) { return `${cohortId}|${agency}|${code}`; }

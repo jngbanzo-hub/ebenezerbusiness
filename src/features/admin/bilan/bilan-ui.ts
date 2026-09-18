@@ -23,7 +23,8 @@ export type BilanPayload = {
 export type UnresolvedCohort = { code: "COHORTE_NON_RESOLUE"; requested: string; meta: { status: "NON_CALCULABLE" } };
 
 export function buildBilanQuery(cohort: string, period: { from: string; to: string } | null, mode: "MONTH" | "CUSTOM" = "MONTH") {
-  const params = new URLSearchParams({ cohort });
+  const params = new URLSearchParams({ cohort: cohort.includes("-") ? "" : cohort });
+  if (cohort.includes("-")) { const [year, month] = cohort.split("-"); params.set("year", year); params.set("month", String(Number(month))); }
   if (mode === "CUSTOM") params.set("periodMode", mode);
   if (period) { params.set("startDate", period.from); params.set("endDate", period.to); }
   return params.toString();

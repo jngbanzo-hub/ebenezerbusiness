@@ -15,7 +15,7 @@ const actor = "00000000-0000-4000-8000-000000000001";
 const admin: AdminAuthorizationResult = { authorized: true, userId: actor, email: "admin@example.test", role: "ADMIN", agency: "COO" };
 const months: OriginMonth[] = TEST_COHORTS.map(row => ({ ...row, registryId: actor, active: true, createdAt: "2026-09-17", updatedAt: "2026-09-17" }));
 
-for (const [prefix, period, end] of [["JL","2026-07","31"],["AT","2026-08","31"],["SE","2026-09","30"],["OT","2026-10","31"],["NV","2026-11","30"],["DC","2026-12","31"],["JN","2027-01","31"]]) {
+for (const [prefix, period, end] of [["MR","2026-03","31"],["AV","2026-04","30"],["MA","2026-05","31"],["JN","2026-06","30"],["JL","2026-07","31"],["AT","2026-08","31"],["SE","2026-09","30"],["OT","2026-10","31"],["NV","2026-11","30"],["DC","2026-12","31"],["JA","2027-01","31"],["FE","2027-02","28"]]) {
   test(`${prefix} : résolution, interface, API et Direction partagent ${period}`, () => withBilanCohorts(months, () => {
     const resolved = resolveCohort(`${prefix}00126B`);
     assert.equal(resolved.state,"RESOLVED");
