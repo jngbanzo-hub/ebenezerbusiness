@@ -217,6 +217,14 @@ function buildP1ModernAudit(manifests: readonly ManifestShipperRow[], payments: 
         manifestCode: manifest ? exactCode(manifest.codeColisRaw) : null,
         manifestMatches: matches.length,
         manifestDate: manifest ? parseDate(manifest.dateRaw) : null,
+        manifestF: manifest ? manifest.historicalCurrentPriceFieldRaw ?? manifest.montantAttenduRaw ?? null : null,
+        manifestFType: manifest ? rawValueType(manifest.historicalCurrentPriceFieldRaw ?? manifest.montantAttenduRaw) : null,
+        manifestFState: manifest ? classifyManifestF(manifest.historicalCurrentPriceFieldRaw ?? manifest.montantAttenduRaw) : null,
+        manifestM: manifest ? manifest.historicalPaidAmountRaw ?? null : null,
+        manifestMType: manifest ? rawValueType(manifest.historicalPaidAmountRaw) : null,
+        manifestMPresent: manifest ? hasRawValue(manifest.historicalPaidAmountRaw) : false,
+        manifestG: manifest ? manifest.historicalPaymentStatusRaw ?? null : null,
+        manifestL: manifest ? manifest.historicalRemainingAmountRaw ?? null : null,
         result: isCertified ? "CERTIFIED" : "NON_RECONCILED",
         reason: identityItem?.reason ?? (isCertified ? null : crossSiteMatch ? "MANIFEST_DESTINATION_MISMATCH" : "MANIFEST_CODE_NOT_FOUND"),
         firstFail,
@@ -330,6 +338,21 @@ function paymentSum(payments: readonly ReturnType<typeof normalizePayment>[], co
 }
 
 function exactCode(value: unknown) { return String(value ?? "").trim().toUpperCase(); }
+function hasRawValue(value: unknown) { return value !== null && value !== undefined && !(typeof value === "string" && value.trim() === ""); }
+function rawValueType(value: unknown) {
+  if (value === null || value === undefined) return "NULL";
+  if (typeof value === "number") return Number.isFinite(value) ? "NUMBER" : "NON_NUMERIC";
+  if (typeof value === "string") return "STRING";
+  return typeof value;
+}
+function classifyManifestF(value: unknown) {
+  if (value === null || value === undefined) return "F_NULL";
+  if (typeof value === "string" && value.trim() === "") return "F_VIDE";
+  const parsed = parseAmount(value);
+  if (parsed !== null && parsed > 0) return "F_POSITIF";
+  if (parsed === 0) return "F_ZERO";
+  return "F_NON_NUMERIQUE";
+}
 function parseAmount(value: unknown): number | null { const text = String(value ?? "").replace(/\s/g, "").replace(",", ".").replace(/[^\d.-]/g, ""); const number = Number(text); return text && Number.isFinite(number) ? number : null; }
 function parseFirstAmount(...values: unknown[]) { for (const value of values) { const parsed = parseAmount(value); if (parsed !== null) return parsed; } return null; }
 function parseDate(value: unknown): string | null { const raw = String(value ?? "").trim(); const french = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/); if (french) return `${french[3]}-${french[2].padStart(2, "0")}-${french[1].padStart(2, "0")}`; return /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : null; }

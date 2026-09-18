@@ -34,3 +34,14 @@ test("rapprochement manifeste conserve le fallback de montant et les catégories
   assert.match(route, /MANIFEST_COHORT_MISMATCH/);
   assert.match(route, /parseFirstAmount\(\.\.\.values/);
 });
+
+test("façade expose uniquement les diagnostics F/M/G/L read-only", () => {
+  assert.match(route, /manifestFState/);
+  assert.match(route, /manifestM/);
+  assert.match(route, /manifestMPresent/);
+  assert.match(route, /manifestG/);
+  assert.match(route, /manifestL/);
+  for (const state of ["F_POSITIF", "F_ZERO", "F_VIDE", "F_NULL", "F_NON_NUMERIQUE"]) assert.match(route, new RegExp(state));
+  assert.doesNotMatch(route, /export async function (?:POST|PUT|PATCH|DELETE)/);
+  assert.doesNotMatch(route, /\.\s*(?:insert|update|delete|upsert|rpc)\s*\(/);
+});
