@@ -7,6 +7,7 @@ import { getAdminProfile } from "@/features/agent/auth";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { monthPeriod, type OriginMonth } from "./cohort-catalog";
 import { loadOriginMonths } from "./origin-month-client";
+import { draftMonthPeriod, originMonthDraft, planOriginYear } from "./origin-month-planning";
 
 const field = "mt-1 w-full rounded border border-white/15 bg-ebe-night p-2 text-white";
 export function AdminOriginMonthsPage() {
@@ -15,6 +16,9 @@ export function AdminOriginMonthsPage() {
   const [form, setForm] = useState({ prefix: "", year: "", month: "", label: "" });
   const [labels, setLabels] = useState<Record<string, string>>({});
   const flight = useRef(false);
+  const prefixInput = useRef<HTMLInputElement>(null);
+  const calendar = planOriginYear(2027, months);
+  const draftPeriod = draftMonthPeriod(form.year, form.month);
   async function sessionToken() {
     const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
     if (!session?.user || !session.access_token) throw new Error("Session Admin requise.");
@@ -51,12 +55,25 @@ export function AdminOriginMonthsPage() {
     <p className="mt-3 text-muted-foreground">Préfixe, année et mois sont immuables. Les mois inactifs restent disponibles pour l’analyse historique. Aucun préfixe n’est généré automatiquement.</p>
     {message ? <p role="status" className="mt-4 text-amber-100">{message}</p> : null}
     {ready ? <>
+      <GlassPanel className="mt-6 p-5">
+        <h2 className="text-xl">Calendrier 2027</h2>
+        <p className="mt-2 text-sm text-muted-foreground">Les mois à configurer ne sont pas des cohortes du Bilan. Un préfixe métier explicite doit être enregistré avant leur utilisation. Après ajout, rechargez le Bilan pour les retrouver.</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{calendar.map(slot => <section key={slot.month} className="rounded-lg border border-white/15 p-4">
+          <h3 className="font-semibold">{slot.label}</h3>
+          <p className="mt-2">Préfixe : {slot.configured?.prefix ?? "À DÉFINIR"}</p>
+          <p>Période : {slot.period.from.slice(0, 7)}</p>
+          <p className="text-sm text-muted-foreground">{slot.period.from} → {slot.period.to}</p>
+          <p className="mt-2 text-sm">État : {slot.configured ? "CONFIGURÉ" : "À CONFIGURER"}{slot.configured && !slot.configured.active ? " — Inactif / historique" : ""}</p>
+          {!slot.configured ? <Button type="button" variant="outline" className="mt-3" disabled={busy} onClick={() => { setForm(originMonthDraft(slot)); prefixInput.current?.focus(); }}>Configurer {slot.label}</Button> : null}
+        </section>)}</div>
+      </GlassPanel>
       <GlassPanel className="mt-6 p-5"><h2 className="text-xl">Ajouter un mois</h2>
         <form className="mt-4 grid gap-4 md:grid-cols-4" onSubmit={event => { event.preventDefault(); void save("POST", { ...form, year: Number(form.year), month: Number(form.month) }); }}>
-          <label>Préfixe<input required pattern="[A-Za-z]{2,8}" minLength={2} maxLength={8} className={field} value={form.prefix} onChange={e=>setForm({...form,prefix:e.target.value.toUpperCase()})}/></label>
+          <label>Préfixe<input ref={prefixInput} required pattern="[A-Za-z]{2,8}" minLength={2} maxLength={8} className={field} value={form.prefix} onChange={e=>setForm({...form,prefix:e.target.value.toUpperCase()})}/></label>
           <label>Année<input required type="number" min={2000} max={2199} className={field} value={form.year} onChange={e=>setForm({...form,year:e.target.value})}/></label>
           <label>Mois<input required type="number" min={1} max={12} className={field} value={form.month} onChange={e=>setForm({...form,month:e.target.value})}/></label>
           <label>Libellé<input required maxLength={80} className={field} value={form.label} onChange={e=>setForm({...form,label:e.target.value})}/></label>
+          {draftPeriod ? <p className="text-sm text-muted-foreground md:col-span-4">Période automatique : {draftPeriod.from} → {draftPeriod.to}</p> : null}
           <Button type="submit" disabled={busy}>Ajouter</Button>
         </form>
       </GlassPanel>
