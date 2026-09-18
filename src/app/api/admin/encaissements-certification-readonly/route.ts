@@ -139,12 +139,58 @@ function buildReport(manifests: readonly ManifestShipperRow[], payments: readonl
     p1Checks,
     modern: buildModernReport(manifests, payments),
     p1ModernAudit: buildP1ModernAudit(manifests, payments),
+    fZeroAudit: buildFZeroAudit(manifests, payments),
     aggregates: byAgency,
     conservation: Object.fromEntries((["FIH", "LSHI", "KLZ"] as const).map((agency) => {
       const item = byAgency[agency] as { certifiedExpectedUsd: number | null; certifiedPaidUsd: number | null; certifiedRemainingUsd: number | null };
       return [agency, item.certifiedExpectedUsd !== null && item.certifiedPaidUsd !== null && item.certifiedRemainingUsd !== null && item.certifiedExpectedUsd === round(item.certifiedPaidUsd + item.certifiedRemainingUsd) ? "PASS" : "NON CALCULABLE"];
     })) as Record<Agency, string>
   };
+}
+
+type FZeroClassification = "F_ZERO_P1_SOLDE_CERTIFIE" | "F_ZERO_P1_PARTIEL_CERTIFIE" | "F_ZERO_P1_TROUVE_IDENTITE_AMBIGUE" | "F_ZERO_P1_ABSENT" | "F_ZERO_P1_DUPLICATION_A_CONTROLER" | "F_ZERO_FORWARDING_A_DESAMBIGUISER";
+
+function isSettledPayment(payment: ReturnType<typeof normalizePayment>) {
+  return !/PENDING|ATTENTE|FAILED|ECHEC|ANNUL|PARTIEL/i.test(payment.status) && /SOLD|PAYE|PAID|REGLE|COMPLET/i.test(payment.status);
+}
+
+function buildFZeroAudit(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[]) {
+  const candidates = manifests.map((row) => ({ row, code: exactCode(row.codeColisRaw), year: Number(parseDate(row.dateRaw)?.slice(0, 4) ?? NaN) }))
+    .filter(({ code, year }) => Number.isFinite(year) && year >= 2026 && /^(AT|SE|OT|NV|DC)/.test(code));
+  const byCode = new Map<string, typeof candidates>();
+  candidates.forEach((item) => byCode.set(`${item.row.sourceSite}:${item.code}`, [...(byCode.get(`${item.row.sourceSite}:${item.code}`) ?? []), item]));
+  const paymentIndex = new Map<string, ReturnType<typeof normalizePayment>[]>();
+  payments.forEach((payment) => paymentIndex.set(payment.code, [...(paymentIndex.get(payment.code) ?? []), payment]));
+  return Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => {
+    const identities = Array.from(byCode.entries()).filter(([key, items]) => key.startsWith(`${agency}:`) && classifyManifestF(items[0].row.historicalCurrentPriceFieldRaw ?? items[0].row.montantAttenduRaw) === "F_ZERO");
+    const rows = identities.map(([key, items]) => {
+      const item = items[0];
+      const code = key.slice(agency.length + 1);
+      const cohort = resolveCohort(code, item.year);
+      const allPayments = paymentIndex.get(code) ?? [];
+      const seen = new Set<string>();
+      const duplicateIds = new Set<string>();
+      const transactions = allPayments.filter((payment) => {
+        const id = payment.paymentRequestId ?? payment.id;
+        if (seen.has(id)) { duplicateIds.add(id); return false; }
+        seen.add(id); return true;
+      });
+      const totalPaidUsd = round(transactions.reduce((sum, payment) => sum + payment.amount, 0));
+      const hasPartial = transactions.some((payment) => /PARTIEL/i.test(payment.status) || (payment.remainingAmount ?? 0) > 0);
+      const allSettled = transactions.length > 0 && transactions.every(isSettledPayment);
+      const identityValid = items.length === 1 && cohort?.state === "RESOLVED";
+      let classification: FZeroClassification = "F_ZERO_P1_ABSENT";
+      if (duplicateIds.size) classification = "F_ZERO_P1_DUPLICATION_A_CONTROLER";
+      else if (!transactions.length) classification = "F_ZERO_P1_ABSENT";
+      else if (!identityValid) classification = "F_ZERO_P1_TROUVE_IDENTITE_AMBIGUE";
+      else if (hasPartial) classification = "F_ZERO_P1_PARTIEL_CERTIFIE";
+      else if (allSettled) classification = "F_ZERO_P1_SOLDE_CERTIFIE";
+      else classification = "F_ZERO_P1_TROUVE_IDENTITE_AMBIGUE";
+      return { code, destination: agency, cohort: cohort?.state === "RESOLVED" ? cohort.definition.id : null, weightKg: parseAmount(item.row.poidsRaw), manifestF: item.row.historicalCurrentPriceFieldRaw ?? item.row.montantAttenduRaw ?? null, manifestG: item.row.historicalPaymentStatusRaw ?? null, manifestL: item.row.historicalRemainingAmountRaw ?? null, transactions: transactions.map((payment) => ({ amountUsd: payment.amount, status: payment.status, date: payment.dateKey, agency: payment.agency, destination: payment.destination, paymentRequestId: payment.paymentRequestId })), totalPaidUsd, classification, duplicateIds: Array.from(duplicateIds) };
+    });
+    const count = (classification: FZeroClassification) => rows.filter((row) => row.classification === classification).length;
+    return [agency, { total: rows.length, withP1: rows.filter((row) => row.transactions.length).length, settled: count("F_ZERO_P1_SOLDE_CERTIFIE"), partial: count("F_ZERO_P1_PARTIEL_CERTIFIE"), ambiguous: count("F_ZERO_P1_TROUVE_IDENTITE_AMBIGUE"), absent: count("F_ZERO_P1_ABSENT"), duplicates: count("F_ZERO_P1_DUPLICATION_A_CONTROLER"), forwarding: count("F_ZERO_FORWARDING_A_DESAMBIGUISER"), rows }];
+  }));
 }
 
 function buildP1ModernAudit(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[]) {
