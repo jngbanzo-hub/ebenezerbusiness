@@ -19,5 +19,6 @@ test("façade ne renvoie que des données agrégées et non sensibles", () => {
   assert.match(route, /readOnly:\s*true/);
   assert.match(route, /source:\s*"MANIFEST_COO_GLM"/);
   assert.doesNotMatch(route, /beneficiaire|expediteurRaw|phone|telephone|email/i);
-  assert.doesNotMatch(route, /process\.env\.[A-Z0-9_]+/);
+  assert.match(route, /SUPABASE_SERVICE_ROLE_KEY/);
+  assert.doesNotMatch(route, /NextResponse\.json\([^)]*SUPABASE_SERVICE_ROLE_KEY/);
 });

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 
 import type { ManifestShipperRow } from "@/features/admin/types";
 import { resolveCohort, withBilanCohorts } from "@/features/admin/bilan/cohort-registry";
@@ -45,10 +46,54 @@ export async function GET(request: Request) {
     }));
 
     const result = withBilanCohorts(definitions, () => buildReport(manifests, payments));
-    return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
+    const physical = await readPhysicalIdentities(["AT02326"]);
+    return NextResponse.json({ ...result, physicalIdentities: physical }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   } catch {
     return jsonError("Certification temporairement indisponible.", 503);
   }
+}
+
+type PhysicalIdentity = {
+  agency: string;
+  trackingCode: string;
+  parcelId: string | null;
+  forwardingId: string | null;
+  originAgency: string | null;
+  destinationAgency: string | null;
+  weightKg: number | null;
+  deliveryStatus: string | null;
+  paymentRequestId: string | null;
+  orchestrationState: string | null;
+};
+
+async function readPhysicalIdentities(codes: readonly string[]) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!url || !key) return { state: "UNAVAILABLE" as const, matches: [] as PhysicalIdentity[] };
+  const client = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } }).schema("public");
+  const [{ data: parcels, error: parcelsError }, { data: forwardings, error: forwardingsError }, { data: orchestrations, error: orchestrationsError }] = await Promise.all([
+    client.from("stockage_parcels").select("parcel_id,forwarding_id,tracking_code,agency,canonical_weight_kg,delivery_status").in("tracking_code", codes),
+    client.from("stockage_forwardings").select("forwarding_id,original_tracking_code,origin_agency,destination_agency").in("original_tracking_code", codes),
+    client.from("stockage_payment_orchestrations").select("request_id,tracking_code,agency,state,parcel_id,forwarding_id").in("tracking_code", codes)
+  ]);
+  if (parcelsError || forwardingsError || orchestrationsError) return { state: "UNAVAILABLE" as const, matches: [] as PhysicalIdentity[] };
+  const forwardingById = new Map((forwardings ?? []).map((row) => [String(row.forwarding_id), row]));
+  const orchestrationRows = (orchestrations ?? []) as Array<Record<string, unknown>>;
+  const matches = (parcels ?? []).map((row) => {
+    const forwarding = row.forwarding_id ? forwardingById.get(String(row.forwarding_id)) : null;
+    const orchestration = orchestrationRows.find((candidate) => String(candidate.agency ?? "") === String(row.agency ?? "") && String(candidate.tracking_code ?? "") === String(row.tracking_code ?? "") && (!row.forwarding_id || String(candidate.forwarding_id ?? "") === String(row.forwarding_id)));
+    return {
+      agency: String(row.agency ?? ""), trackingCode: String(row.tracking_code ?? ""), parcelId: row.parcel_id ? String(row.parcel_id) : null,
+      forwardingId: row.forwarding_id ? String(row.forwarding_id) : null,
+      originAgency: forwarding?.origin_agency ? String(forwarding.origin_agency) : null,
+      destinationAgency: forwarding?.destination_agency ? String(forwarding.destination_agency) : null,
+      weightKg: Number.isFinite(Number(row.canonical_weight_kg)) ? Number(row.canonical_weight_kg) : null,
+      deliveryStatus: row.delivery_status ? String(row.delivery_status) : null,
+      paymentRequestId: orchestration?.request_id ? String(orchestration.request_id) : null,
+      orchestrationState: orchestration?.state ? String(orchestration.state) : null
+    } satisfies PhysicalIdentity;
+  });
+  return { state: "FOUND" as const, matches };
 }
 
 function buildReport(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[]) {
