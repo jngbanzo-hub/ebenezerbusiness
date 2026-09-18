@@ -154,9 +154,12 @@ function buildP1ModernAudit(manifests: readonly ManifestShipperRow[], payments: 
   modernRows.forEach(({ row, code, year }) => {
     const key = `${row.sourceSite}:${code}`;
     const cohort = resolveCohort(code, year);
-    const expected = parseAmount(row.historicalCurrentPriceFieldRaw ?? row.montantAttenduRaw);
+    const expected = parseFirstAmount(row.historicalCurrentPriceFieldRaw, row.montantAttenduRaw);
     const current = identity.get(key);
-    identity.set(key, current ? { valid: false, reason: "IDENTITE_MANIFESTE_DUPLIQUEE" } : { valid: Boolean(cohort && cohort.state === "RESOLVED" && expected !== null && expected > 0), reason: cohort?.state === "RESOLVED" && expected !== null && expected > 0 ? null : "IDENTITE_MANIFESTE_NON_CERTIFIABLE" });
+    identity.set(key, current ? { valid: false, reason: "MANIFEST_MATCH_MULTIPLE" } : {
+      valid: Boolean(cohort && cohort.state === "RESOLVED" && expected !== null && expected > 0),
+      reason: cohort?.state !== "RESOLVED" ? "MANIFEST_COHORT_MISMATCH" : expected === null || expected <= 0 ? "OTHER_IDENTITY_FAILURE" : null
+    });
   });
   return Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => {
     const rows = payments.filter((payment) => payment.destination === agency && /^(AT|SE|OT|NV|DC)/.test(payment.code));
@@ -185,8 +188,9 @@ function buildP1ModernAudit(manifests: readonly ManifestShipperRow[], payments: 
       const manifestYear = manifest ? Number(parseDate(manifest.dateRaw)?.slice(0, 4) ?? NaN) : NaN;
       const cohort = Number.isFinite(manifestYear) ? resolveCohort(payment.code, manifestYear) : null;
       const identityItem = identity.get(key);
+      const crossSiteMatch = !matches.length && manifests.some((candidate) => exactCode(candidate.codeColisRaw) === payment.code);
       const isCertified = certified.includes(payment);
-      const firstFail = !payment.code ? "CODE_EXACT_PRESERVE" : !payment.destination ? "DESTINATION_RESOLVED" : !cohort || cohort.state !== "RESOLVED" ? "COHORTE_RESOLVED" : !matches.length ? "MANIFEST_SEARCH" : identityItem?.reason ? "MANIFEST_IDENTITY" : !isCertified ? "CERTIFICATION" : null;
+      const firstFail = !payment.code ? "CODE_EXACT_PRESERVE" : !payment.destination ? "DESTINATION_RESOLVED" : !cohort || cohort.state !== "RESOLVED" ? "COHORTE_RESOLVED" : !matches.length ? (crossSiteMatch ? "MANIFEST_DESTINATION_MISMATCH" : "MANIFEST_CODE_NOT_FOUND") : identityItem?.reason ? "MANIFEST_IDENTITY" : !isCertified ? "CERTIFICATION" : null;
       const pipeline = {
         P1_LU: "PASS",
         CODE_EXACT_PRESERVE: payment.code ? "PASS" : "FAIL",
@@ -214,7 +218,7 @@ function buildP1ModernAudit(manifests: readonly ManifestShipperRow[], payments: 
         manifestMatches: matches.length,
         manifestDate: manifest ? parseDate(manifest.dateRaw) : null,
         result: isCertified ? "CERTIFIED" : "NON_RECONCILED",
-        reason: identityItem?.reason ?? (isCertified ? null : "IDENTITE_PAIEMENT_NON_RETROUVEE"),
+        reason: identityItem?.reason ?? (isCertified ? null : crossSiteMatch ? "MANIFEST_DESTINATION_MISMATCH" : "MANIFEST_CODE_NOT_FOUND"),
         firstFail,
         pipeline
       };
@@ -241,7 +245,7 @@ function buildModernReport(manifests: readonly ManifestShipperRow[], payments: r
       const item = items[0];
       const code = item.code;
       const cohort = resolveCohort(code, item.year);
-      const amountExpected = parseAmount(item.row.historicalCurrentPriceFieldRaw ?? item.row.montantAttenduRaw);
+      const amountExpected = parseFirstAmount(item.row.historicalCurrentPriceFieldRaw, item.row.montantAttenduRaw);
       if (items.length !== 1 || !cohort || cohort.state !== 'RESOLVED' || amountExpected === null || amountExpected <= 0) { insufficient += 1; return; }
       const matching = payments.filter((payment) => payment.code === code && payment.destination === agency && !/PENDING|ATTENTE|FAILED|ECHEC|ANNUL/i.test(payment.status));
       const seen = new Set<string>();
@@ -262,7 +266,7 @@ function certifyHistoricalRow(row: ManifestShipperRow) {
   const year = parseDate(row.dateRaw)?.slice(0, 4) ?? null;
   const prefix = code.match(/^[A-Z]+/)?.[0] ?? "";
   const cohort = year ? resolveCohort(code, Number(year)) : null;
-  const expected = parseAmount(row.historicalCurrentPriceFieldRaw ?? row.montantAttenduRaw);
+  const expected = parseFirstAmount(row.historicalCurrentPriceFieldRaw, row.montantAttenduRaw);
   const paid = parseAmount(row.historicalPaidAmountRaw);
   const remainingHistorical = parseAmount(row.historicalRemainingAmountRaw);
   const status = String(row.historicalPaymentStatusRaw ?? "").trim();
@@ -327,6 +331,7 @@ function paymentSum(payments: readonly ReturnType<typeof normalizePayment>[], co
 
 function exactCode(value: unknown) { return String(value ?? "").trim().toUpperCase(); }
 function parseAmount(value: unknown): number | null { const text = String(value ?? "").replace(/\s/g, "").replace(",", ".").replace(/[^\d.-]/g, ""); const number = Number(text); return text && Number.isFinite(number) ? number : null; }
+function parseFirstAmount(...values: unknown[]) { for (const value of values) { const parsed = parseAmount(value); if (parsed !== null) return parsed; } return null; }
 function parseDate(value: unknown): string | null { const raw = String(value ?? "").trim(); const french = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/); if (french) return `${french[3]}-${french[2].padStart(2, "0")}-${french[1].padStart(2, "0")}`; return /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : null; }
 function round(value: number) { return Math.round((value + Number.EPSILON) * 100) / 100; }
 function jsonError(message: string, status: number) { return NextResponse.json({ message }, { status, headers: { "Cache-Control": "private, no-store, max-age=0" } }); }
