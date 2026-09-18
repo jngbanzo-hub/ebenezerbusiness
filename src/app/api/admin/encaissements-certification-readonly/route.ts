@@ -146,8 +146,8 @@ function sanitizeEvidence(row: ReturnType<typeof certifyHistoricalRow>) {
   return { sheet: row.sheet, code: row.code, date: row.date, weightKg: row.weightKg, expectedUsd: row.expectedUsd, paidUsd: row.paidUsd, remainingUsd: row.remainingUsd, status: row.status, cohort: row.cohort, state: row.state, reasons: row.reasons };
 }
 
-function normalizePayment(payment: { id: string; codeColis: string; destinationCode: string; agenceEncaissement: string; montantPaye: number }) {
-  return { id: payment.id, code: exactCode(payment.codeColis), destination: String(payment.destinationCode).toUpperCase(), agency: String(payment.agenceEncaissement).toUpperCase(), amount: payment.montantPaye };
+function normalizePayment(payment: { id: string; dateKey: string; codeColis: string; destinationCode: string; agenceEncaissement: string; montantPaye: number; paymentRequestId?: string }) {
+  return { id: payment.id, dateKey: payment.dateKey, code: exactCode(payment.codeColis), destination: String(payment.destinationCode).toUpperCase(), agency: String(payment.agenceEncaissement).toUpperCase(), amount: payment.montantPaye, paymentRequestId: payment.paymentRequestId || null };
 }
 
 function paymentSum(payments: readonly ReturnType<typeof normalizePayment>[], code: string, expectedByAgency: Partial<Record<Agency | "COO", number>>) {
@@ -159,7 +159,7 @@ function paymentSum(payments: readonly ReturnType<typeof normalizePayment>[], co
   const expected = round(Object.values(expectedByAgency).reduce((sum, amount) => sum + (amount ?? 0), 0));
   const total = round(rows.reduce((sum, row) => sum + row.amount, 0));
   const agencyPass = Object.entries(expectedByAgency).every(([agency, amount]) => byAgency[agency] === amount);
-  return { totalPaidUsd: total, expectedUsd: expected, byAgency, rowCount: rows.length, uniquePaymentCount: uniqueIds.size, duplicatePaymentIds: rows.length - uniqueIds.size, pass: total === expected && agencyPass && rows.length === uniqueIds.size };
+  return { totalPaidUsd: total, expectedUsd: expected, byAgency, rowCount: rows.length, uniquePaymentCount: uniqueIds.size, duplicatePaymentIds: rows.length - uniqueIds.size, rows: rows.map((row) => ({ id: row.id, date: row.dateKey, agency: row.agency, destination: row.destination, amount: row.amount, paymentRequestId: row.paymentRequestId })), pass: total === expected && agencyPass && rows.length === uniqueIds.size };
 }
 
 function exactCode(value: unknown) { return String(value ?? "").trim().toUpperCase(); }
