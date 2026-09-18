@@ -12,9 +12,12 @@ test("conserve le poids expédition et ajoute les cartes générales", () => {
 });
 
 test("affiche seulement les ventilations correspondant aux filtres", () => {
-  assert.match(page, /company==="ETHIOPIAN"&&destination==="LSHI"/);
+  assert.match(page, /company==="ETHIOPIAN"&&\(data\.totals\.destinationParcels\.lshi>0/);
+  assert.doesNotMatch(page, /company==="ETHIOPIAN"&&destination==="LSHI"/);
   assert.match(page, /label="Nombre de colis LSHI"/);
+  assert.match(page, /label="Poids total LSHI"/);
   assert.match(page, /label="Nombre de colis KLZ"/);
+  assert.match(page, /label="Poids total KLZ"/);
   assert.match(page, /destination==="FIH"&&\["ASKY","DHL"\]\.includes\(company\)/);
   assert.match(page, /label="Nombre de colis FIH"/);
 });

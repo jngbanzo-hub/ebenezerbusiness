@@ -1,4 +1,5 @@
 export const SHIPMENT_STATISTICS_SHEET = "STATISTIQUES DES EXPÉDITIONS";
+const AGENCY_SCOPED_IDENTITY_START_DATE = "2026-08-01";
 
 export type ShipmentStatisticRow = {
   id: string; date: string; company: string; destination: string; groupages: number;
@@ -77,8 +78,8 @@ function summarizeShipments(shipments: ShipmentStatisticRow[]): ShipmentStatisti
   for (const row of shipments) {
     if (row.parcelCodes.length) {
       for (const code of row.parcelCodes) {
-        detailedCodes.add(code);
-        if (usesLshiKlzBreakdown(row)) {
+        detailedCodes.add(statisticalParcelIdentity(row, code));
+        if (usesLshiKlzBreakdown(row) && row.company !== "ETHIOPIAN") {
           destinationCodes[classifyLshiKlzParcel(code)].add(code);
         } else if (["ASKY", "DHL"].includes(row.company) && row.destination === "FIH") {
           destinationCodes.fih.add(code);
@@ -92,6 +93,7 @@ function summarizeShipments(shipments: ShipmentStatisticRow[]): ShipmentStatisti
     }
     if (usesLshiKlzBreakdown(row)) {
       for (const parcel of row.parcelDetails ?? []) {
+        if (row.company === "ETHIOPIAN") destinationCodes[classifyLshiKlzParcel(parcel.code)].add(parcel.code);
         destinationManifestWeightKg[classifyLshiKlzParcel(parcel.code)] += parcel.weightKg;
       }
     }
@@ -112,12 +114,21 @@ function summarizeShipments(shipments: ShipmentStatisticRow[]): ShipmentStatisti
   };
 }
 
-export function usesLshiKlzBreakdown(row: ShipmentStatisticRow) {
+function usesLshiKlzBreakdown(row: ShipmentStatisticRow) {
   return row.destination === "LSHI" && ["ETHIOPIAN", "DHL"].includes(row.company);
 }
 
 function classifyLshiKlzParcel(code: string) {
   return code.endsWith("KLZ") ? "klz" as const : "lshi" as const;
+}
+
+function statisticalParcelIdentity(row: ShipmentStatisticRow, code: string) {
+  if (row.date < AGENCY_SCOPED_IDENTITY_START_DATE) return code;
+  const destination = row.company === "ETHIOPIAN" && row.destination === "LSHI" && code.endsWith("KLZ")
+    ? "KLZ"
+    : row.destination;
+  const businessCode = destination === "KLZ" ? code.replace(/KLZ$/, "") : code;
+  return `${destination}|${businessCode}`;
 }
 
 function text(value: unknown) { return typeof value === "string" ? value.trim() : String(value ?? "").trim(); }
@@ -144,7 +155,11 @@ function parseParcelDetails(value: unknown) {
   return Array.from(raw.matchAll(pattern)).flatMap((match) => {
     const code = match[1].replace(/[^A-Z0-9]/g, "");
     const weightKg = Number(match[2].replace(",", "."));
-    return code && !/^(?:GROUPAGE|GRP)\d+$/.test(code) && Number.isFinite(weightKg) && weightKg > 0
+    // Groupage titles can carry the destination suffix (for example
+    // GROUPAGE081KLZ). They are not parcel-code/weight pairs and must not
+    // inflate the ventilated KLZ count. Keep the broader parcel-code parser
+    // unchanged so the historical global parcel total remains stable.
+    return code && !/^(?:GROUPAGE|GRP)\d+[A-Z]*$/.test(code) && Number.isFinite(weightKg) && weightKg > 0
       ? [{ code, weightKg }]
       : [];
   });
