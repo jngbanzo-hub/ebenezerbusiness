@@ -138,12 +138,42 @@ function buildReport(manifests: readonly ManifestShipperRow[], payments: readonl
     targets,
     p1Checks,
     modern: buildModernReport(manifests, payments),
+    p1ModernAudit: buildP1ModernAudit(manifests, payments),
     aggregates: byAgency,
     conservation: Object.fromEntries((["FIH", "LSHI", "KLZ"] as const).map((agency) => {
       const item = byAgency[agency] as { certifiedExpectedUsd: number | null; certifiedPaidUsd: number | null; certifiedRemainingUsd: number | null };
       return [agency, item.certifiedExpectedUsd !== null && item.certifiedPaidUsd !== null && item.certifiedRemainingUsd !== null && item.certifiedExpectedUsd === round(item.certifiedPaidUsd + item.certifiedRemainingUsd) ? "PASS" : "NON CALCULABLE"];
     })) as Record<Agency, string>
   };
+}
+
+function buildP1ModernAudit(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[]) {
+  const modernRows = manifests.map((row) => ({ row, code: exactCode(row.codeColisRaw), year: Number(parseDate(row.dateRaw)?.slice(0, 4) ?? NaN) }))
+    .filter(({ code, year }) => Number.isFinite(year) && year >= 2026 && /^(AT|SE|OT|NV|DC)/.test(code));
+  const identity = new Map<string, { valid: boolean; reason: string | null }>();
+  modernRows.forEach(({ row, code, year }) => {
+    const key = `${row.sourceSite}:${code}`;
+    const cohort = resolveCohort(code, year);
+    const expected = parseAmount(row.historicalCurrentPriceFieldRaw ?? row.montantAttenduRaw);
+    const current = identity.get(key);
+    identity.set(key, current ? { valid: false, reason: "IDENTITE_MANIFESTE_DUPLIQUEE" } : { valid: Boolean(cohort && cohort.state === "RESOLVED" && expected !== null && expected > 0), reason: cohort?.state === "RESOLVED" && expected !== null && expected > 0 ? null : "IDENTITE_MANIFESTE_NON_CERTIFIABLE" });
+  });
+  return Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => {
+    const rows = payments.filter((payment) => payment.destination === agency && /^(AT|SE|OT|NV|DC)/.test(payment.code));
+    const settled = rows.filter((payment) => !/PENDING|ATTENTE|FAILED|ECHEC|ANNUL/i.test(payment.status));
+    const seen = new Set<string>();
+    const certified = settled.filter((payment) => {
+      const item = identity.get(`${agency}:${payment.code}`);
+      const requestKey = payment.paymentRequestId ?? payment.id;
+      if (!item?.valid || seen.has(requestKey)) return false;
+      seen.add(requestKey);
+      return true;
+    });
+    const excluded = rows.filter((payment) => !certified.includes(payment));
+    const statusCounts = rows.reduce((acc, payment) => { const status = /SOLD|PAYE|PAID|REGLE|COMPLET/i.test(payment.status) ? "SOLDÉ" : /PARTIEL/i.test(payment.status) ? "PARTIEL" : "AUTRE"; acc[status] = (acc[status] ?? 0) + 1; return acc; }, {} as Record<string, number>);
+    const reasons = excluded.reduce((acc, payment) => { const item = identity.get(`${agency}:${payment.code}`); const reason = item?.reason ?? (!item ? "IDENTITE_PAIEMENT_NON_RETROUVEE" : "PAIEMENT_DUPLIQUE_OU_STATUT_NON_CERTIFIABLE"); acc[reason] ??= { count: 0, amount: 0 }; acc[reason].count += 1; acc[reason].amount = round(acc[reason].amount + payment.amount); return acc; }, {} as Record<string, { count: number; amount: number }>);
+    return [agency, { rowCount: rows.length, grossExpectedUsd: round(rows.reduce((sum, row) => sum + (row.expectedAmount ?? 0), 0)), grossPaidUsd: round(rows.reduce((sum, row) => sum + row.amount, 0)), grossRemainingUsd: round(rows.reduce((sum, row) => sum + (row.remainingAmount ?? 0), 0)), settledCount: statusCounts["SOLDÉ"] ?? 0, partialCount: statusCounts["PARTIEL"] ?? 0, otherStatusCount: statusCounts["AUTRE"] ?? 0, certifiedRowCount: certified.length, certifiedPaidUsd: round(certified.reduce((sum, row) => sum + row.amount, 0)), excludedCount: excluded.length, excludedAmountUsd: round(excluded.reduce((sum, row) => sum + row.amount, 0)), exclusionReasons: reasons }];
+  }));
 }
 
 function buildModernReport(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[]) {
@@ -224,8 +254,8 @@ function sanitizeEvidence(row: ReturnType<typeof certifyHistoricalRow>) {
   return { sheet: row.sheet, code: row.code, date: row.date, weightKg: row.weightKg, expectedUsd: row.expectedUsd, paidUsd: row.paidUsd, remainingUsd: row.remainingUsd, status: row.status, cohort: row.cohort, state: row.state, reasons: row.reasons };
 }
 
-function normalizePayment(payment: { id: string; dateKey: string; codeColis: string; destinationCode: string; agenceEncaissement: string; montantPaye: number; statutPaiement?: string; paymentRequestId?: string }) {
-  return { id: payment.id, dateKey: payment.dateKey, code: exactCode(payment.codeColis), destination: String(payment.destinationCode).toUpperCase(), agency: String(payment.agenceEncaissement).toUpperCase(), amount: payment.montantPaye, status: payment.statutPaiement ?? "", paymentRequestId: payment.paymentRequestId || null };
+function normalizePayment(payment: { id: string; dateKey: string; codeColis: string; destinationCode: string; agenceEncaissement: string; montantPaye: number; montantAttendu?: number | null; soldeRestant?: number | null; statutPaiement?: string; paymentRequestId?: string }) {
+  return { id: payment.id, dateKey: payment.dateKey, code: exactCode(payment.codeColis), destination: String(payment.destinationCode).toUpperCase(), agency: String(payment.agenceEncaissement).toUpperCase(), amount: payment.montantPaye, expectedAmount: payment.montantAttendu ?? null, remainingAmount: payment.soldeRestant ?? null, status: payment.statutPaiement ?? "", paymentRequestId: payment.paymentRequestId || null };
 }
 
 function paymentSum(payments: readonly ReturnType<typeof normalizePayment>[], code: string, expectedByAgency: Partial<Record<Agency | "COO", number>>) {
