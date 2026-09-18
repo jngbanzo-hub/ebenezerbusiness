@@ -167,7 +167,7 @@ function buildFZeroAudit(manifests: readonly ManifestShipperRow[], payments: rea
       const item = items[0];
       const code = key.slice(agency.length + 1);
       const cohort = resolveCohort(code, item.year);
-      const allPayments = paymentIndex.get(code) ?? [];
+      const allPayments = (paymentIndex.get(code) ?? []).filter((payment) => payment.destination === agency);
       const seen = new Set<string>();
       const duplicateIds = new Set<string>();
       const transactions = allPayments.filter((payment) => {
