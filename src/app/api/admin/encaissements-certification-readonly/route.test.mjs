@@ -55,3 +55,10 @@ test("F_ZERO est rapproché depuis le Manifeste vers toutes les feuilles P1", ()
   assert.match(route, /paymentRequestId/);
   assert.doesNotMatch(route, /fZeroAudit.*\.insert\(|fZeroAudit.*\.update\(|fZeroAudit.*\.upsert\(/s);
 });
+
+test("F_ZERO classe l'état final selon la dernière transaction chronologique", () => {
+  assert.match(route, /const chronological = \[\.\.\.transactions\]\.sort/);
+  assert.match(route, /const finalPayment = chronological\.at\(-1\)/);
+  assert.match(route, /else if \(finalIsSettled\) classification = "F_ZERO_P1_SOLDE_CERTIFIE"/);
+  assert.match(route, /else if \(finalIsPartial\) classification = "F_ZERO_P1_PARTIEL_CERTIFIE"/);
+});
