@@ -1,8 +1,10 @@
+export type BilanCohortOption = Readonly<{ prefix: string; label: string; year: number; month: number }>;
+/** Compatibility fixture for consumers that have not migrated to the registry endpoint. */
 export const BILAN_COHORT_OPTIONS = Object.freeze([
   { prefix: "JL", label: "Juillet 2026", year: 2026, month: 7 },
   { prefix: "AT", label: "Août 2026", year: 2026, month: 8 },
   { prefix: "SE", label: "Septembre 2026", year: 2026, month: 9 }
-] as const);
+] as const) satisfies readonly BilanCohortOption[];
 
 export type BilanStatus = "CERTIFIE" | "PROVISOIRE" | "PARTIEL" | "NON_CALCULABLE" | "NON IMPUTÉ" | "ANOMALIE" | string;
 export type CurrencyTotals = Record<string, number>;
@@ -12,7 +14,7 @@ export type BilanPayload = {
   meta: { cohort: string; cohortId: string; cohortYear: number; cohortMonth: number; period: { from: string; to: string } | null; calculatedAt: string; status: BilanStatus; sources: string[] };
   activity: Record<"FIH" | "LSHI" | "KLZ", { occurrences: number; uniqueIdentities: number; cohortWeightKg: number }> & { totalCohortWeightKg: number; periodRegisteredWeightKg: number | null; cohortPeriodDifferenceKg: number | null };
   shipment: { registeredCohortWeightKg: number; certifiedShippedWeightKg: number; remainingWeightKg: number; status: BilanStatus; anomalies: ShipmentAgencyAnomaly[]; byAgency: Record<"FIH" | "LSHI" | "KLZ", ShipmentAgencyMetrics> };
-  payments: { receivedAmount: number; recordedExpectedAmount: number; historicalRevenueStatus: string; paymentCount: number; partialPayments: number; completePayments: number; unmatchedPayments: number; collectionRate: number | null; remainingAmount: number | null };
+  payments: { receivedAmount: number; recordedExpectedAmount: number; historicalRevenueStatus: string; paymentCount: number; partialPayments: number; completePayments: number; unmatchedPayments: number; collectionRate: number | null; remainingAmount: number | null; byAgency: Record<"FIH" | "LSHI" | "KLZ", { paymentCount: number; receivedAmount: number; expectedAmount: number; remainingAmount: number; completePayments: number; partialPayments: number }> };
   directCosts: { declarantLshiUsd: number; declarantLshiDhlUsd: number; declarantFihStandardUsd: number; declarantFihDhlUsd: number; transitFihLshiUsd: number; expeditionKlzUsd: number; otherCertifiedUsd: number; totalAllocatedUsd: number; totalUnallocatedUsd: number; unallocated: unknown[] };
   fixedCosts: { basis: "BILAN_ANALYSIS_MONTH"; byAgency: Record<"COO" | "FIH" | "LSHI" | "KLZ", number>; totalUsd: number; definitions: Record<"COO" | "FIH" | "LSHI" | "KLZ", { amountUsd: number; components: readonly string[] }> };
   monthlyBonuses: { monthOrigin: string; status: "A_DEFINIR" | "PARTIELLEMENT_CERTIFIE" | "CERTIFIE"; byAgency: Record<"COO" | "FIH" | "LSHI" | "KLZ", number>; totalUsd: number; rows: Array<{ id: string; agentId: string; agentName: string; agency: "COO" | "FIH" | "LSHI" | "KLZ"; amountUsd: number | null; status: "A_DEFINIR" | "CERTIFIEE" | "PAYEE" }> };
@@ -26,8 +28,11 @@ export type BilanPayload = {
 
 export type UnresolvedCohort = { code: "COHORTE_NON_RESOLUE"; requested: string; meta: { status: "NON_CALCULABLE" } };
 
-export function buildBilanQuery(cohort: string, period: { from: string; to: string } | null) {
-  const params = new URLSearchParams({ cohort });
+export function buildBilanQuery(cohort: string | BilanCohortOption, period: { from: string; to: string } | null) {
+  const option = typeof cohort === "string" ? null : cohort;
+  const prefix = typeof cohort === "string" ? cohort : cohort.prefix;
+  const params = new URLSearchParams({ cohort: prefix });
+  if (option) { params.set("year", String(option.year)); params.set("month", String(option.month)); }
   if (period) { params.set("startDate", period.from); params.set("endDate", period.to); }
   return params.toString();
 }

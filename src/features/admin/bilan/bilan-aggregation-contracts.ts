@@ -48,6 +48,7 @@ export type CohortPaymentsSummary = Readonly<{
   completePayments: number;
   unmatchedPayments: number;
   collectionRate: number | null;
+  byAgency: Readonly<Record<BilanAgency, Readonly<{ paymentCount: number; receivedAmount: number; expectedAmount: number; remainingAmount: number; completePayments: number; partialPayments: number }>>>;
   anomalies: readonly AggregatedQualityIssue[];
 }>;
 

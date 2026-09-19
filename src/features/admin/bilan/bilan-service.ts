@@ -18,6 +18,7 @@ import { aggregateMonthlyAgentBonuses, applyMonthlyBonuses } from "./monthly-bon
 import { readMonthlyAgentBonuses } from "./monthly-bonus-reader";
 import { aggregateCohortPayments, aggregatePeriodReceiptsUsd } from "./payment-aggregations";
 import { aggregateReadAnomalies } from "./quality-aggregations";
+import { discoverCohorts } from "./cohort-registry";
 import { calculateAgencyProfits, calculateAutomaticKlzShipmentCost, calculateCertifiedCohortRevenue, calculateRealProfit, calculateTheoreticalReceivable } from "./revenue-aggregations";
 import { calculateDeclarantDirectCosts, calculateLshiDhlDeclarantDirectCosts, calculateTransitDirectCosts, summarizeOfficialTransit, summarizeShipmentStructure } from "./shipment-aggregations";
 import { aggregateShipmentByAgency } from "./shipment-by-agency";
@@ -32,22 +33,27 @@ const sheetsSource: BilanRangeReader = Object.freeze({
 });
 
 export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdmin) {
-  const [fih, lshi, klz, shipmentsRead, officialRead, airFreightRead, paymentsRead, expensesRead, bonusRows] = await Promise.all([
-    readBilanManifestParcels(sheetsSource, "FIH"), readBilanManifestParcels(sheetsSource, "LSHI"), readBilanManifestParcels(sheetsSource, "KLZ"),
-    readBilanShipments(sheetsSource), readBilanOfficialTransit(sheetsSource), readBilanAirFreight(sheetsSource), readBilanPayments(() => readAdminPayments()),
+  const [fih, lshi, klz] = await Promise.all([
+    readBilanManifestParcels(sheetsSource, "FIH"), readBilanManifestParcels(sheetsSource, "LSHI"), readBilanManifestParcels(sheetsSource, "KLZ")
+  ]);
+  const manifestRows = [...fih.rows, ...lshi.rows, ...klz.rows];
+  const cohortDefinitions = discoverCohorts(manifestRows);
+  const requested = cohortDefinitions.find((candidate) => candidate.prefix === query.cohort.prefix && candidate.year === query.cohort.year && candidate.month === query.cohort.month);
+  if (!requested) throw new Error("COHORTE_NON_RESOLUE");
+  const [shipmentsRead, officialRead, airFreightRead, paymentsRead, expensesRead, bonusRows] = await Promise.all([
+    readBilanShipments(sheetsSource, cohortDefinitions), readBilanOfficialTransit(sheetsSource), readBilanAirFreight(sheetsSource), readBilanPayments(() => readAdminPayments()),
     query.period ? readBilanExpenses(() => readAllExpenses(admin, query.period!)) : Promise.resolve({ rows: [], anomalies: [] } as const),
     readMonthlyAgentBonuses(`${query.cohort.year}-${String(query.cohort.month).padStart(2, "0")}`)
   ]);
   if ([fih, lshi, klz, shipmentsRead, officialRead, airFreightRead, paymentsRead, expensesRead].some((read) => read.anomalies.some((anomaly) => anomaly.code === "SOURCE_INDISPONIBLE"))) {
     throw new Error("BILAN_SOURCE_UNAVAILABLE");
   }
-  const manifestRows = [...fih.rows, ...lshi.rows, ...klz.rows];
-  const activity = aggregateCohortActivity(manifestRows, query.cohort.id, query.period);
+  const activity = aggregateCohortActivity(manifestRows, requested.id, query.period, cohortDefinitions);
   const shipment = aggregateShipmentByAgency(manifestRows, shipmentsRead.rows, query.cohort.id);
   const revenue = calculateCertifiedCohortRevenue({ FIH: shipment.FIH.registeredWeightKg, LSHI: shipment.LSHI.registeredWeightKg, KLZ: shipment.KLZ.registeredWeightKg });
   const shipmentStructure = summarizeShipmentStructure(shipmentsRead.rows, query.cohort.id);
   const airFreight = aggregateAirFreight(airFreightRead.rows, shipmentsRead.rows, query.cohort.id);
-  const payments = aggregateCohortPayments(paymentsRead.rows, query.cohort.id);
+  const payments = aggregateCohortPayments(paymentsRead.rows, requested.id, cohortDefinitions);
   const reconciliation = reconcileOfficialTransit(officialRead.rows, shipmentsRead.rows);
   const transit = summarizeOfficialTransit(officialRead.rows);
   const directCosts = [...calculateDeclarantDirectCosts(shipmentsRead.rows), ...calculateLshiDhlDeclarantDirectCosts(reconciliation.matches), ...calculateTransitDirectCosts(reconciliation.matches), calculateAutomaticKlzShipmentCost(shipment.KLZ.registeredWeightKg, query.cohort.id)];

@@ -1,14 +1,14 @@
-import type { CohortId } from "./bilan-contracts";
+import type { BilanAgency, CohortDefinition, CohortId } from "./bilan-contracts";
 import type { AggregatedQualityIssue, CohortPaymentsSummary } from "./bilan-aggregation-contracts";
 import type { BilanPayment } from "./bilan-readers-contracts";
 import { resolveCohort } from "./cohort-registry";
 
-export function aggregateCohortPayments(payments: readonly BilanPayment[], cohortId: CohortId): CohortPaymentsSummary {
+export function aggregateCohortPayments(payments: readonly BilanPayment[], cohortId: CohortId, definitions?: readonly CohortDefinition[]): CohortPaymentsSummary {
   const anomalies: AggregatedQualityIssue[] = [];
   const deduplicated = new Map<string, BilanPayment>();
   let unmatchedPayments = 0;
   for (const payment of payments) {
-    const paymentCohort = resolveCohort(payment.code);
+    const paymentCohort = resolveCohort(payment.code, definitions);
     if (paymentCohort.state !== "RESOLVED") {
       unmatchedPayments += 1;
       anomalies.push(issue("PAIEMENT_NON_RAPPROCHE", "ENCAISSEMENTS", payment.sourceReference, payment.collectingAgency, null, "Paiement exclu de la cohorte : code non résolu."));
@@ -28,6 +28,12 @@ export function aggregateCohortPayments(payments: readonly BilanPayment[], cohor
   const recordedExpectedAmount = money(sum(rows.map(({ expectedAmount }) => expectedAmount ?? 0)));
   const completePayments = rows.filter((row) => row.expectedAmount !== null && row.paidAmount >= row.expectedAmount).length;
   const partialPayments = rows.filter((row) => row.expectedAmount !== null && row.paidAmount > 0 && row.paidAmount < row.expectedAmount).length;
+  const byAgency = Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => {
+    const agencyRows = rows.filter((row) => row.collectingAgency.toUpperCase() === agency || row.destination.toUpperCase() === agency);
+    const expected = sum(agencyRows.map((row) => row.expectedAmount ?? 0));
+    const received = sum(agencyRows.map((row) => row.paidAmount));
+    return [agency, { paymentCount: agencyRows.length, receivedAmount: money(received), expectedAmount: money(expected), remainingAmount: money(Math.max(0, expected - received)), completePayments: agencyRows.filter((row) => row.expectedAmount !== null && row.paidAmount >= row.expectedAmount).length, partialPayments: agencyRows.filter((row) => row.expectedAmount !== null && row.paidAmount > 0 && row.paidAmount < row.expectedAmount).length }];
+  })) as Record<BilanAgency, { paymentCount: number; receivedAmount: number; expectedAmount: number; remainingAmount: number; completePayments: number; partialPayments: number }>;
   return Object.freeze({
     cohortId,
     receivedAmount,
@@ -39,6 +45,7 @@ export function aggregateCohortPayments(payments: readonly BilanPayment[], cohor
     completePayments,
     unmatchedPayments,
     collectionRate: expectedCertified && recordedExpectedAmount > 0 ? money(receivedAmount / recordedExpectedAmount * 100) : null,
+    byAgency: Object.freeze(byAgency),
     anomalies: Object.freeze(anomalies)
   });
 }

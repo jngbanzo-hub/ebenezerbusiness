@@ -1,4 +1,4 @@
-import { BILAN_AGENCIES, type BilanAgency, type ParcelIdentity } from "./bilan-contracts";
+import { BILAN_AGENCIES, type BilanAgency, type CohortDefinition, type ParcelIdentity } from "./bilan-contracts";
 import { canonicalParcelCode, resolveCohort } from "./cohort-registry";
 
 export function resolveAnalyticalAgency(rawCode: string, structuredAgency: BilanAgency): BilanAgency {
@@ -10,6 +10,7 @@ export function createParcelIdentity(input: Readonly<{
   structuredAgency: BilanAgency;
   sourceSheet: string;
   sourceRow: number;
+  cohortDefinitions?: readonly CohortDefinition[];
 }>): ParcelIdentity {
   const rawCode = input.rawCode.trim();
   if (!rawCode) throw new Error("BILAN_EMPTY_PARCEL_CODE");
@@ -19,7 +20,7 @@ export function createParcelIdentity(input: Readonly<{
   return Object.freeze({
     rawCode,
     canonicalCode,
-    cohort: resolveCohort(canonicalCode),
+    cohort: resolveCohort(canonicalCode, input.cohortDefinitions),
     agency: resolveAnalyticalAgency(canonicalCode, input.structuredAgency),
     sourceSheet: input.sourceSheet,
     sourceRow: input.sourceRow

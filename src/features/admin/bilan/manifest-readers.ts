@@ -1,4 +1,4 @@
-import type { BilanAgency, ShipmentContext } from "./bilan-contracts";
+import type { BilanAgency, CohortDefinition, ShipmentContext } from "./bilan-contracts";
 import type {
   BilanManifestParcel,
   BilanAirFreightRow,
@@ -36,11 +36,11 @@ export function adaptManifestParcelRows(rows: readonly (readonly unknown[])[], a
   return freezeResult(result, anomalies);
 }
 
-export async function readBilanShipments(source: BilanRangeReader) {
-  return readSafely(() => source.read({ spreadsheet: "MANIFESTE_EXPEDITION_COO", range: "EXPÉDITION!A2:F" }), "EXPÉDITION", (rows) => adaptShipmentRows(rows, 2));
+export async function readBilanShipments(source: BilanRangeReader, cohortDefinitions?: readonly CohortDefinition[]) {
+  return readSafely(() => source.read({ spreadsheet: "MANIFESTE_EXPEDITION_COO", range: "EXPÉDITION!A2:F" }), "EXPÉDITION", (rows) => adaptShipmentRows(rows, 2, cohortDefinitions));
 }
 
-export function adaptShipmentRows(rows: readonly (readonly unknown[])[], firstRow = 2): BilanReadResult<BilanShipment> {
+export function adaptShipmentRows(rows: readonly (readonly unknown[])[], firstRow = 2, cohortDefinitions?: readonly CohortDefinition[]): BilanReadResult<BilanShipment> {
   const result: BilanShipment[] = [];
   const anomalies: BilanReadAnomaly[] = [];
   rows.forEach((row, index) => {
@@ -55,7 +55,7 @@ export function adaptShipmentRows(rows: readonly (readonly unknown[])[], firstRo
       return;
     }
     const context: ShipmentContext = { company, destination, shipmentDate: date, sourceSheet: "EXPÉDITION", sourceRow };
-    const parsed = parseShipmentGroups(details, context);
+    const parsed = parseShipmentGroups(details, context, cohortDefinitions);
     for (const parsedAnomaly of parsed.anomalies) {
       if (parsedAnomaly.code === "POIDS_ABSENT") anomalies.push(anomaly("POIDS_INVALIDE", "EXPÉDITION", sourceRow, parsedAnomaly.message));
       if (parsedAnomaly.code === "GROUPAGE_NON_SEGMENTABLE") anomalies.push(anomaly("GROUPAGE_NON_SEGMENTABLE", "EXPÉDITION", sourceRow, parsedAnomaly.message));

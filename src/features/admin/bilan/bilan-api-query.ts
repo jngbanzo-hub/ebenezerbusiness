@@ -20,12 +20,19 @@ export function parseBilanApiQuery(url: string): BilanQueryResult {
   const prefix = (params.get("cohort") ?? "").trim().toUpperCase();
   const year = (params.get("year") ?? "").trim();
   const month = (params.get("month") ?? "").trim();
-  if (prefix && (year || month)) return { state: "INVALID", message: "Utiliser cohort ou year+month, jamais les deux." };
+  if ((year && !month) || (!year && month)) return { state: "INVALID", message: "year et month doivent être fournis ensemble." };
   let cohort: CohortDefinition | undefined;
   if (prefix) {
     const resolution = resolveCohort(prefix);
-    if (resolution.state !== "RESOLVED" || resolution.definition.prefix !== prefix) return { state: "COHORTE_NON_RESOLUE", requested: prefix };
-    cohort = resolution.definition;
+    if (year && month) {
+      if (!/^\d{4}$/.test(year) || !/^\d{1,2}$/.test(month)) return { state: "INVALID", message: "Année ou mois invalide." };
+      const monthNumber = Number(month);
+      if (monthNumber < 1 || monthNumber > 12) return { state: "INVALID", message: "Mois invalide." };
+      cohort = { prefix, year: Number(year), month: monthNumber, id: `${year}-${String(monthNumber).padStart(2, "0")}` as CohortDefinition["id"], label: `${prefix} — ${monthNumber}/${year}` };
+    } else {
+      if (resolution.state !== "RESOLVED" || resolution.definition.prefix !== prefix) return { state: "COHORTE_NON_RESOLUE", requested: prefix };
+      cohort = resolution.definition;
+    }
   } else {
     if (!/^\d{4}$/.test(year) || !/^\d{1,2}$/.test(month)) return { state: "INVALID", message: "Cohorte ou année et mois obligatoires." };
     const monthNumber = Number(month);

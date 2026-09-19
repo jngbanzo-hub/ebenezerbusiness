@@ -1,6 +1,6 @@
 import type { BilanAnomaly } from "./data-quality";
 import { bilanAnomaly } from "./data-quality";
-import type { ShipmentContext, ShipmentGroup, ShipmentParcel } from "./bilan-contracts";
+import type { CohortDefinition, ShipmentContext, ShipmentGroup, ShipmentParcel } from "./bilan-contracts";
 import { createParcelIdentity, parcelIdentityKey } from "./parcel-identity";
 
 const GROUP_HEADING = /(?:^|\s)((?:GROU?PAGE|GRP)\s*[- ]?\s*\d+)\b/gi;
@@ -11,7 +11,7 @@ export type ShipmentGroupParseResult = Readonly<{
   anomalies: readonly BilanAnomaly[];
 }>;
 
-export function parseShipmentGroups(details: string, context: ShipmentContext): ShipmentGroupParseResult {
+export function parseShipmentGroups(details: string, context: ShipmentContext, cohortDefinitions?: readonly CohortDefinition[]): ShipmentGroupParseResult {
   const normalizedDetails = String(details ?? "").replace(/\r\n?/g, "\n");
   const headings = Array.from(normalizedDetails.matchAll(GROUP_HEADING));
   if (!headings.length) {
@@ -31,7 +31,7 @@ export function parseShipmentGroups(details: string, context: ShipmentContext): 
     const end = headings[index + 1]?.index ?? normalizedDetails.length;
     const label = heading[1].trim();
     const block = normalizedDetails.slice(start, end);
-    const parcels = parseParcels(block, context, label, anomalies);
+    const parcels = parseParcels(block, context, label, anomalies, cohortDefinitions);
     if (!parcels.length) {
       anomalies.push(bilanAnomaly("GROUPAGE_NON_SEGMENTABLE", {
         source: `${context.sourceSheet}!${context.sourceRow}`,
@@ -86,7 +86,7 @@ export function deduplicateShipmentParcels(group: ShipmentGroup) {
   };
 }
 
-function parseParcels(block: string, context: ShipmentContext, label: string, anomalies: BilanAnomaly[]) {
+function parseParcels(block: string, context: ShipmentContext, label: string, anomalies: BilanAnomaly[], cohortDefinitions?: readonly CohortDefinition[]) {
   const parcels: ShipmentParcel[] = [];
   for (const match of Array.from(block.matchAll(PARCEL_WITH_WEIGHT))) {
     const rawCode = match[1].trim();
@@ -104,7 +104,8 @@ function parseParcels(block: string, context: ShipmentContext, label: string, an
         rawCode,
         structuredAgency: context.destination,
         sourceSheet: context.sourceSheet,
-        sourceRow: context.sourceRow
+        sourceRow: context.sourceRow,
+        cohortDefinitions
       }),
       weightKg
     }));
