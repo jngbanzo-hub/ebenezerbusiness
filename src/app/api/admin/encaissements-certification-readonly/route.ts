@@ -46,8 +46,10 @@ export async function GET(request: Request) {
       label: item.label
     }));
 
-    const result = withBilanCohorts(definitions, () => buildReport(manifests, payments));
-    const physical = await readPhysicalIdentities(["AT02326", "AT09826"]);
+    const initial = withBilanCohorts(definitions, () => buildReport(manifests, payments));
+    const verifyCodes = initial.modernManifestAudit.rows.filter((row) => row.state === "À VÉRIFIER").map((row) => row.code);
+    const physical = await readPhysicalIdentities(Array.from(new Set(["AT02326", "AT09826", ...verifyCodes])));
+    const result = withBilanCohorts(definitions, () => buildReport(manifests, payments, physical.matches));
     return NextResponse.json({ ...result, physicalIdentities: physical }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   } catch {
     return jsonError("Certification temporairement indisponible.", 503);
@@ -65,6 +67,7 @@ type PhysicalIdentity = {
   deliveryStatus: string | null;
   paymentRequestId: string | null;
   orchestrationState: string | null;
+  createdAt: string | null;
 };
 
 async function readPhysicalIdentities(codes: readonly string[]) {
@@ -73,7 +76,7 @@ async function readPhysicalIdentities(codes: readonly string[]) {
   if (!url || !key) return { state: "UNAVAILABLE" as const, matches: [] as PhysicalIdentity[] };
   const client = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } }).schema("public");
   const [{ data: parcels, error: parcelsError }, { data: forwardings, error: forwardingsError }, { data: orchestrations, error: orchestrationsError }] = await Promise.all([
-    client.from("stockage_parcels").select("parcel_id,forwarding_id,tracking_code,agency,canonical_weight_kg,delivery_status").in("tracking_code", codes),
+    client.from("stockage_parcels").select("parcel_id,forwarding_id,tracking_code,agency,canonical_weight_kg,delivery_status,created_at,stockage_forwardings(origin_agency,destination_agency)").in("tracking_code", codes),
     client.from("stockage_forwardings").select("forwarding_id,original_tracking_code,origin_agency,destination_agency").in("original_tracking_code", codes),
     client.from("stockage_payment_orchestrations").select("request_id,tracking_code,agency,state,parcel_id,forwarding_id").in("tracking_code", codes)
   ]);
@@ -91,13 +94,14 @@ async function readPhysicalIdentities(codes: readonly string[]) {
       weightKg: Number.isFinite(Number(row.canonical_weight_kg)) ? Number(row.canonical_weight_kg) : null,
       deliveryStatus: row.delivery_status ? String(row.delivery_status) : null,
       paymentRequestId: orchestration?.request_id ? String(orchestration.request_id) : null,
-      orchestrationState: orchestration?.state ? String(orchestration.state) : null
+      orchestrationState: orchestration?.state ? String(orchestration.state) : null,
+      createdAt: row.created_at ? String(row.created_at) : null
     } satisfies PhysicalIdentity;
   });
   return { state: "FOUND" as const, matches };
 }
 
-function buildReport(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[]) {
+function buildReport(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[], physicalMatches: readonly PhysicalIdentity[] = []) {
   const rows = manifests.map((row) => certifyHistoricalRow(row));
   const targets = TARGETS.map(([sheet, code]) => {
     const matches = rows.filter((row) => row.sheet === sheet && row.code === code);
@@ -140,7 +144,7 @@ function buildReport(manifests: readonly ManifestShipperRow[], payments: readonl
     p1Checks,
     modern: buildModernReport(manifests, payments),
     p1ModernAudit: buildP1ModernAudit(manifests, payments),
-    modernManifestAudit: buildModernManifestAudit(manifests, payments),
+    modernManifestAudit: buildModernManifestAudit(manifests, payments, physicalMatches),
     fZeroAudit: buildFZeroAudit(manifests, payments),
     aggregates: byAgency,
     conservation: Object.fromEntries((["FIH", "LSHI", "KLZ"] as const).map((agency) => {
@@ -326,7 +330,7 @@ function isModernManifestRow(row: ManifestShipperRow) {
   return Boolean(date && date >= MODERN_START_DATE && exactCode(row.codeColisRaw));
 }
 
-function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[]) {
+function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[], physicalMatches: readonly PhysicalIdentity[] = []) {
   const modernRows = manifests.filter(isModernManifestRow);
   const byIdentity = new Map<string, ManifestShipperRow[]>();
   modernRows.forEach((row) => {
@@ -336,6 +340,8 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
 
   const allByCode = new Map<string, ReturnType<typeof normalizePayment>[]>();
   payments.forEach((payment) => allByCode.set(payment.code, [...(allByCode.get(payment.code) ?? []), payment]));
+  const physicalByCode = new Map<string, PhysicalIdentity[]>();
+  physicalMatches.forEach((match) => physicalByCode.set(match.trackingCode, [...(physicalByCode.get(match.trackingCode) ?? []), match]));
 
   const rows = Array.from(byIdentity.entries()).map(([key, matches]) => {
     const row = matches[0];
@@ -363,9 +369,10 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
       code, exactPrefix: code.match(/^[A-Z]+/)?.[0] ?? "", sourceSheet: row.sourceSite, date, year: Number.isFinite(year) ? year : null,
       cohort: cohort?.state === "RESOLVED" ? cohort.definition.id : null, weightKg: parseAmount(row.poidsRaw), beneficiary: row.beneficiaireRaw || null,
       manifestF: row.historicalCurrentPriceFieldRaw ?? row.montantAttenduRaw ?? null, manifestFState: fState, manifestG: row.historicalPaymentStatusRaw ?? null,
-      manifestM: row.historicalPaidAmountRaw ?? null, expectedUsd, paidUsd: totalPaidUsd, remainingUsd: expectedUsd === null ? null : round(Math.max(0, expectedUsd - totalPaidUsd)),
+      manifestL: row.historicalRemainingAmountRaw ?? null, manifestM: row.historicalPaidAmountRaw ?? null, expectedUsd, paidUsd: totalPaidUsd, remainingUsd: expectedUsd === null ? null : round(Math.max(0, expectedUsd - totalPaidUsd)),
       state, reason, transactions: transactions.map((payment) => ({ amountUsd: payment.amount, status: payment.status, date: payment.dateKey, collectingAgency: payment.agency, destination: payment.destination, paymentRequestId: payment.paymentRequestId })),
-      lastPaymentDate: finalPayment?.dateKey ?? null, lastCollectingAgency: finalPayment?.agency ?? null
+      lastPaymentDate: finalPayment?.dateKey ?? null, lastCollectingAgency: finalPayment?.agency ?? null,
+      physicalMatches: physicalByCode.get(code) ?? []
     };
   });
 
