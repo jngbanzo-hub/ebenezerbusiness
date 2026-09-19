@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+// @ts-expect-error Node 22 exécute directement ce test TypeScript avec son extension explicite.
 import { filterShipmentStatistics, parseShipmentStatistics } from "./shipment-statistics.ts";
 
 test("ignore les lignes de formules vides et agrège les expéditions", () => {
