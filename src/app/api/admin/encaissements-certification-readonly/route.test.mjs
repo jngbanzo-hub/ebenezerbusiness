@@ -62,3 +62,29 @@ test("F_ZERO classe l'état final selon la dernière transaction chronologique",
   assert.match(route, /else if \(finalIsSettled\) classification = "F_ZERO_P1_SOLDE_CERTIFIE"/);
   assert.match(route, /else if \(finalIsPartial\) classification = "F_ZERO_P1_PARTIEL_CERTIFIE"/);
 });
+
+test("audit inverse moderne part du Manifeste et couvre dynamiquement août 2026 → présent", () => {
+  assert.match(route, /const MODERN_START_DATE = "2026-08-01"/);
+  assert.match(route, /buildModernManifestAudit\(manifests, payments\)/);
+  assert.match(route, /manifests\.filter\(isModernManifestRow\)/);
+  assert.match(route, /const allByCode = new Map/);
+  assert.match(route, /allByCode\.get\(code\) \?\? \[\]/);
+  assert.match(route, /ModernFinancialState = "SOLDÉ" \| "PARTIEL" \| "NON PAYÉ" \| "À VÉRIFIER"/);
+  assert.match(route, /byCohort/);
+  assert.doesNotMatch(route, /isModernManifestRow[\s\S]{0,500}\/\^\(AT\|SE\)/);
+});
+
+test("dettes modernes restent read-only et séparées des cas À VÉRIFIER", () => {
+  assert.match(route, /state === "PARTIEL" \|\| row\.state === "NON PAYÉ"/);
+  assert.match(route, /let state: ModernFinancialState = "À VÉRIFIER"/);
+  assert.doesNotMatch(route, /export async function (?:POST|PUT|PATCH|DELETE)/);
+  assert.doesNotMatch(route, /\.\s*(?:insert|update|delete|upsert|rpc)\s*\(/);
+});
+
+test("expose les identités physiques nécessaires au contrôle AT02326 et AT09826 en lecture seule", () => {
+  assert.match(route, /readPhysicalIdentities\(\["AT02326", "AT09826"\]\)/);
+  assert.match(route, /stockage_forwardings/);
+  assert.match(route, /forwardingId/);
+  assert.match(route, /originAgency/);
+  assert.match(route, /destinationAgency/);
+});

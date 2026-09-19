@@ -12,6 +12,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const HISTORICAL_PREFIXES = new Set(["MR", "AV", "MA", "JN", "JL"]);
+const MODERN_START_DATE = "2026-08-01";
 const TARGETS = [
   ["KLZ", "MA00126"],
   ["KLZ", "JN00126"],
@@ -46,7 +47,7 @@ export async function GET(request: Request) {
     }));
 
     const result = withBilanCohorts(definitions, () => buildReport(manifests, payments));
-    const physical = await readPhysicalIdentities(["AT02326"]);
+    const physical = await readPhysicalIdentities(["AT02326", "AT09826"]);
     return NextResponse.json({ ...result, physicalIdentities: physical }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   } catch {
     return jsonError("Certification temporairement indisponible.", 503);
@@ -139,6 +140,7 @@ function buildReport(manifests: readonly ManifestShipperRow[], payments: readonl
     p1Checks,
     modern: buildModernReport(manifests, payments),
     p1ModernAudit: buildP1ModernAudit(manifests, payments),
+    modernManifestAudit: buildModernManifestAudit(manifests, payments),
     fZeroAudit: buildFZeroAudit(manifests, payments),
     aggregates: byAgency,
     conservation: Object.fromEntries((["FIH", "LSHI", "KLZ"] as const).map((agency) => {
@@ -156,7 +158,7 @@ function isSettledPayment(payment: ReturnType<typeof normalizePayment>) {
 
 function buildFZeroAudit(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[]) {
   const candidates = manifests.map((row) => ({ row, code: exactCode(row.codeColisRaw), year: Number(parseDate(row.dateRaw)?.slice(0, 4) ?? NaN) }))
-    .filter(({ code, year }) => Number.isFinite(year) && year >= 2026 && /^(AT|SE|OT|NV|DC)/.test(code));
+    .filter(({ row }) => isModernManifestRow(row));
   const byCode = new Map<string, typeof candidates>();
   candidates.forEach((item) => byCode.set(`${item.row.sourceSite}:${item.code}`, [...(byCode.get(`${item.row.sourceSite}:${item.code}`) ?? []), item]));
   const paymentIndex = new Map<string, ReturnType<typeof normalizePayment>[]>();
@@ -197,7 +199,7 @@ function buildFZeroAudit(manifests: readonly ManifestShipperRow[], payments: rea
 
 function buildP1ModernAudit(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[]) {
   const modernRows = manifests.map((row) => ({ row, code: exactCode(row.codeColisRaw), year: Number(parseDate(row.dateRaw)?.slice(0, 4) ?? NaN) }))
-    .filter(({ code, year }) => Number.isFinite(year) && year >= 2026 && /^(AT|SE|OT|NV|DC)/.test(code));
+    .filter(({ row }) => isModernManifestRow(row));
   const identity = new Map<string, { valid: boolean; reason: string | null }>();
   modernRows.forEach(({ row, code, year }) => {
     const key = `${row.sourceSite}:${code}`;
@@ -210,7 +212,7 @@ function buildP1ModernAudit(manifests: readonly ManifestShipperRow[], payments: 
     });
   });
   return Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => {
-    const rows = payments.filter((payment) => payment.destination === agency && /^(AT|SE|OT|NV|DC)/.test(payment.code));
+    const rows = payments.filter((payment) => payment.destination === agency && identity.has(`${agency}:${payment.code}`));
     const settled = rows.filter((payment) => !/PENDING|ATTENTE|FAILED|ECHEC|ANNUL/i.test(payment.status));
     const seen = new Set<string>();
     const certified = settled.filter((payment) => {
@@ -225,7 +227,7 @@ function buildP1ModernAudit(manifests: readonly ManifestShipperRow[], payments: 
     manifests.forEach((manifest) => {
       const code = exactCode(manifest.codeColisRaw);
       const year = Number(parseDate(manifest.dateRaw)?.slice(0, 4) ?? NaN);
-      if (!Number.isFinite(year) || year < 2026 || !/^(AT|SE|OT|NV|DC)/.test(code)) return;
+      if (!isModernManifestRow(manifest)) return;
       const key = `${manifest.sourceSite}:${code}`;
       manifestByKey.set(key, [...(manifestByKey.get(key) ?? []), manifest]);
     });
@@ -290,7 +292,7 @@ function buildP1ModernAudit(manifests: readonly ManifestShipperRow[], payments: 
 
 function buildModernReport(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[]) {
   const modern = manifests.map((row) => ({ row, code: exactCode(row.codeColisRaw), year: Number(parseDate(row.dateRaw)?.slice(0, 4) ?? NaN) }))
-    .filter(({ code, year }) => Number.isFinite(year) && year >= 2026 && /^AT|^SE|^OT|^NV|^DC/.test(code));
+    .filter(({ row }) => isModernManifestRow(row));
   const unique = new Map<string, typeof modern>();
   modern.forEach((item) => { const key = `${item.row.sourceSite}:${item.code}`; unique.set(key, [...(unique.get(key) ?? []), item]); });
   const byAgency = Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => {
@@ -315,6 +317,81 @@ function buildModernReport(manifests: readonly ManifestShipperRow[], payments: r
     return [agency, { certifiedExpectedUsd: round(expected), certifiedPaidUsd: round(paid), certifiedRemainingUsd: round(remaining), paidIdentityCount: paidCount, remainingIdentityCount: remainingCount, nonCertifiedCount: nonCertified, insufficientDataCount: insufficient, debts, conservation: round(expected) === round(paid + remaining) ? 'PASS' : 'FAIL' }];
   })) as Record<Agency, unknown>;
   return byAgency;
+}
+
+type ModernFinancialState = "SOLDÉ" | "PARTIEL" | "NON PAYÉ" | "À VÉRIFIER";
+
+function isModernManifestRow(row: ManifestShipperRow) {
+  const date = parseDate(row.dateRaw);
+  return Boolean(date && date >= MODERN_START_DATE && exactCode(row.codeColisRaw));
+}
+
+function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[]) {
+  const modernRows = manifests.filter(isModernManifestRow);
+  const byIdentity = new Map<string, ManifestShipperRow[]>();
+  modernRows.forEach((row) => {
+    const key = `${row.sourceSite}:${exactCode(row.codeColisRaw)}`;
+    byIdentity.set(key, [...(byIdentity.get(key) ?? []), row]);
+  });
+
+  const allByCode = new Map<string, ReturnType<typeof normalizePayment>[]>();
+  payments.forEach((payment) => allByCode.set(payment.code, [...(allByCode.get(payment.code) ?? []), payment]));
+
+  const rows = Array.from(byIdentity.entries()).map(([key, matches]) => {
+    const row = matches[0];
+    const code = exactCode(row.codeColisRaw);
+    const date = parseDate(row.dateRaw);
+    const year = date ? Number(date.slice(0, 4)) : NaN;
+    const cohort = Number.isFinite(year) ? resolveCohort(code, year) : null;
+    const fState = classifyManifestF(row.historicalCurrentPriceFieldRaw ?? row.montantAttenduRaw);
+    const expectedUsd = fState === "F_POSITIF" ? parseAmount(row.historicalCurrentPriceFieldRaw ?? row.montantAttenduRaw) : null;
+    const transactions = deduplicatePayments(allByCode.get(code) ?? []);
+    const totalPaidUsd = round(transactions.reduce((sum, payment) => sum + payment.amount, 0));
+    const chronological = [...transactions].sort((a, b) => `${a.dateKey}:${a.id}`.localeCompare(`${b.dateKey}:${b.id}`));
+    const finalPayment = chronological.at(-1) ?? null;
+    const settled = Boolean(finalPayment && isSettledPayment(finalPayment) && (finalPayment.remainingAmount ?? 0) <= 0);
+    const partial = Boolean(finalPayment && (/PARTIEL/i.test(finalPayment.status) || (finalPayment.remainingAmount ?? 0) > 0));
+    let state: ModernFinancialState = "À VÉRIFIER";
+    let reason = "IDENTITE_OU_MONTANT_NON_CERTIFIABLE";
+    if (matches.length !== 1) reason = "IDENTITE_MANIFESTE_DUPLIQUEE";
+    else if (!cohort || cohort.state !== "RESOLVED") reason = "COHORTE_NON_RESOLUE";
+    else if (settled && (expectedUsd === null || totalPaidUsd >= expectedUsd)) { state = "SOLDÉ"; reason = "DERNIER_P1_SOLDÉ"; }
+    else if (expectedUsd !== null && partial && totalPaidUsd < expectedUsd) { state = "PARTIEL"; reason = "DERNIER_P1_PARTIEL"; }
+    else if (expectedUsd !== null && transactions.length === 0) { state = "NON PAYÉ"; reason = "AUCUNE_TRANSACTION_P1"; }
+    else if (expectedUsd !== null && settled && totalPaidUsd < expectedUsd) { state = "À VÉRIFIER"; reason = "P1_SOLDÉ_INFÉRIEUR_AU_PRIX"; }
+    return {
+      code, exactPrefix: code.match(/^[A-Z]+/)?.[0] ?? "", sourceSheet: row.sourceSite, date, year: Number.isFinite(year) ? year : null,
+      cohort: cohort?.state === "RESOLVED" ? cohort.definition.id : null, weightKg: parseAmount(row.poidsRaw), beneficiary: row.beneficiaireRaw || null,
+      manifestF: row.historicalCurrentPriceFieldRaw ?? row.montantAttenduRaw ?? null, manifestFState: fState, manifestG: row.historicalPaymentStatusRaw ?? null,
+      manifestM: row.historicalPaidAmountRaw ?? null, expectedUsd, paidUsd: totalPaidUsd, remainingUsd: expectedUsd === null ? null : round(Math.max(0, expectedUsd - totalPaidUsd)),
+      state, reason, transactions: transactions.map((payment) => ({ amountUsd: payment.amount, status: payment.status, date: payment.dateKey, collectingAgency: payment.agency, destination: payment.destination, paymentRequestId: payment.paymentRequestId })),
+      lastPaymentDate: finalPayment?.dateKey ?? null, lastCollectingAgency: finalPayment?.agency ?? null
+    };
+  });
+
+  const byAgency = Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => {
+    const agencyRows = rows.filter((row) => row.sourceSheet === agency);
+    const count = (state: ModernFinancialState) => agencyRows.filter((row) => row.state === state).length;
+    const certifiable = agencyRows.filter((row) => row.state === "SOLDÉ" || row.state === "PARTIEL" || row.state === "NON PAYÉ");
+    return [agency, {
+      total: agencyRows.length, settled: count("SOLDÉ"), partial: count("PARTIEL"), unpaidCertified: count("NON PAYÉ"), toVerify: count("À VÉRIFIER"),
+      certifiedPaidUsd: round(certifiable.reduce((sum, row) => sum + row.paidUsd, 0)),
+      certifiedRemainingUsd: certifiable.every((row) => row.remainingUsd !== null) ? round(certifiable.reduce((sum, row) => sum + (row.remainingUsd ?? 0), 0)) : null,
+      debts: agencyRows.filter((row) => row.state === "PARTIEL" || row.state === "NON PAYÉ")
+    }];
+  }));
+  const cohorts = new Map<string, typeof rows>();
+  rows.forEach((row) => { const key = row.cohort ?? `${row.exactPrefix}-${row.year ?? "UNKNOWN"}`; cohorts.set(key, [...(cohorts.get(key) ?? []), row]); });
+  const cohortSummary = Object.fromEntries(Array.from(cohorts.entries()).map(([cohort, cohortRows]) => [cohort, {
+    total: cohortRows.length, settled: cohortRows.filter((row) => row.state === "SOLDÉ").length, partial: cohortRows.filter((row) => row.state === "PARTIEL").length,
+    unpaidCertified: cohortRows.filter((row) => row.state === "NON PAYÉ").length, toVerify: cohortRows.filter((row) => row.state === "À VÉRIFIER").length
+  }]));
+  return { startDate: MODERN_START_DATE, endDate: new Date().toISOString().slice(0, 10), rows, byAgency, byCohort: cohortSummary, conservation: Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => { const item = byAgency[agency] as { total: number; settled: number; partial: number; unpaidCertified: number; toVerify: number }; return [agency, item.total === item.settled + item.partial + item.unpaidCertified + item.toVerify ? "PASS" : "FAIL"]; })) };
+}
+
+function deduplicatePayments(payments: readonly ReturnType<typeof normalizePayment>[]) {
+  const seen = new Set<string>();
+  return payments.filter((payment) => { const key = payment.paymentRequestId ?? payment.id; if (seen.has(key)) return false; seen.add(key); return true; });
 }
 
 function certifyHistoricalRow(row: ManifestShipperRow) {
