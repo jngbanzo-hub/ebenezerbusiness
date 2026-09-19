@@ -1,0 +1,331 @@
+"use client";
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BarChart3, Boxes, ClipboardCheck, LogOut, PackagePlus, PackageX, RefreshCcw, ShieldCheck, Truck } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { GlassPanel } from "@/components/design-system";
+import { signOutAgent } from "@/features/agent/auth";
+import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { formatStockageAnomalies, formatStockageWeight } from "@/features/stockages/presentation";
+import { summarizeArrivalDetails } from "@/features/stockages/arrival-details";
+import { MAX_ARRIVAL_PARCELS } from "@/features/stockages/arrival-capacity";
+import { buildAuditPresentation } from "@/features/stockages/audit-presentation";
+import { getVerifiedAgentWriteToken } from "@/features/stockages/verified-agent-token";
+import { authenticatedRead, readJsonOrThrow } from "@/features/auth/authenticated-fetch";
+
+type Account = { agency: string; status: "SUSPENDED" | "ACTIVE"; current_parcel_count: number; current_weight_kg: number; version: number; opened_business_date: string | null };
+type EventRow = { event_id: string; event_type: string; agency?: string; business_date: string; occurred_at: string; parcel_count_delta: number; weight_kg_delta: number; tracking_code?: string | null; arrival_reference?: string | null; actor_name: string };
+type Activity = { agency: string; business_date: string; actor_name: string; arrivals: number; deliveries: number; arrived_weight_kg: number; delivered_weight_kg: number };
+type StorageParcel = { parcelId: string; trackingCode: string; displayCode?: string; agency: string; weightKg: number; status: string; arrivedAt: string | null; arrivalAgent: string | null };
+type AgentData = { mode: "V2"; account: Account; events: EventRow[]; activity: Activity[]; parcels: StorageParcel[]; actionsEnabled: boolean; forwardingEnabled: boolean };
+type InTransitForwarding = { forwardingId: string; parcelId: string; trackingCode: string; displayCode: string; originAgency: "KLZ" | "LSHI" | "FIH"; destinationAgency: "KLZ" | "LSHI" | "FIH"; weightKg: number; rateUsdPerKg: number; amountExpectedUsd: number; forwardingReference: string; departedAt: string; status: "IN_TRANSIT" };
+type DepartureQuote = { parcelId: string; trackingCode: string; forwardingReference: string; origin: "KLZ" | "LSHI" | "FIH"; destination: "KLZ" | "LSHI" | "FIH"; weightKg: number; rateUsdPerKg: number; amountExpectedUsd: number };
+type AdminData = { mode: "V2"; accounts: Account[]; events: EventRow[]; activity: Activity[]; anomalies: Array<Record<string, unknown>>; audit: Array<Record<string, unknown>> };
+type QueueSectionCode = "TO_COLLECT" | "PARTIAL" | "READY" | "VERIFICATION" | "RECENT";
+type QueueItem = { trackingCode: string; beneficiary: string; destination: string; weightKg: number | null; weightState: string; amountExpected: number | null; amountPaid: number | null; remainingBalance: number | null; paymentSites: string[]; paymentAgents: string[]; paymentLabel: string; deliveryStatus: "TO_COLLECT" | "PARTIAL_PAYMENT_REMAINING" | "READY" | "VERIFICATION_REQUIRED" | "DELIVERED"; financialState: "COMPLETE" | "INCOMPLETE" | "CONFLICT"; anomalies: string[]; deliveredAt: string | null; businessDate: string | null; deliveredBy: string | null; deliveryReference: string | null; canConfirmDelivery: boolean };
+type QueueResponse = { agency: string; accountStatus: string; items: QueueItem[]; pagination: { page: number; pageSize: number; total: number; totalPages: number }; summary: { totalDeduplicated: number; toCollect: number; partialPaymentRemaining: number; readyForDelivery: number; verificationRequired: number; recentlyDelivered: number; weightToVerify: number; unknownAmounts: number; conflicts: number; activeCollectionButtons: number; activeDeliveryButtons: number }; audit?: { rawRows: number; normalizedRows: number; uniqueCodes: number; strictDuplicateCodes: number; divergentDuplicateCodes: number; excludedHistorical: number; excludedWrongAgency: number; invalidCodes: number } };
+
+export function AgentStockagesV2Page() {
+  return <Shell back="/agent" title="Stockages"><div className="grid gap-5 md:grid-cols-3"><ModuleCard href="/agent/stockages/arrivages" title="ARRIVAGES" text="Enregistrer les colis reçus physiquement dans votre agence." icon={<PackagePlus className="h-8 w-8" />} /><ModuleCard href="/agent/stockages/sorties" title="SORTIES" text="Consulter les remises et autres sorties physiques." icon={<PackageX className="h-8 w-8" />} /><ModuleCard href="/agent/stockages/statistiques" title="STATISTIQUES" text="Analyser les volumes physiques et l’activité des Agents." icon={<BarChart3 className="h-8 w-8" />} /></div></Shell>;
+}
+
+export function AgentStockagesArrivalsPage() {
+  const [data, setData] = useState<AgentData | null>(null);
+  const [message, setMessage] = useState("");
+  const load = useCallback(async () => {
+    const startedAt = performance.now();
+    try {
+      setMessage("");
+      const measured = await measuredRead<AgentData>("/api/agent/stockages");
+      setData(measured.data);
+      requestAnimationFrame(() => console.info(JSON.stringify({ type: "operation_performance_ui", operation: "arrivages", agency: measured.data.account.agency, action: "load", totalMs: roundMs(performance.now() - startedAt), serverTiming: measured.serverTiming })));
+    }
+    catch (error) { setMessage(error instanceof Error ? error.message : "Stockages indisponible."); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  if (!data) return <Shell back="/agent/stockages" title="Stockages — Arrivages"><Notice text={message || "Chargement…"} /><Button onClick={() => void load()} variant="outline"><RefreshCcw className="mr-2 h-4 w-4" />Réessayer</Button></Shell>;
+  const arrivals = data.events.filter((event) => event.parcel_count_delta > 0);
+  return <Shell back="/agent/stockages" title={`Arrivages — ${data.account.agency}`}>
+    <AccountCards accounts={[data.account]} />
+    {!data.actionsEnabled && <Notice text="Stockage non ouvert — solde initial requis" />}
+    <div className="grid gap-5">
+      <AgentCommandForm title="Déclarer un arrivage" endpoint="/api/agent/stockages/arrival" disabled={!data.actionsEnabled} fields="arrival" onDone={load} />
+      {data.forwardingEnabled && ["KLZ", "LSHI", "FIH"].includes(data.account.agency) ? <InTransitForwardingsPanel onDone={load} /> : null}
+    </div>
+    <EventTable title="Arrivages récents" rows={arrivals} />
+    {message && <Notice text={message} />}
+  </Shell>;
+}
+
+export function AgentStockagesOutputsPage() { return <AgentPhysicalHistory mode="outputs" />; }
+export function AgentStockagesStatisticsPage() { return <AgentPhysicalHistory mode="statistics" />; }
+
+function AgentPhysicalHistory({ mode }: { mode: "outputs" | "statistics" }) {
+  const [data, setData] = useState<AgentData | null>(null); const [message, setMessage] = useState("");
+  const load = useCallback(async () => { try { setMessage(""); setData(await request<AgentData>("/api/agent/stockages")); } catch (error) { setMessage(error instanceof Error ? error.message : "Stockages indisponible."); } }, []);
+  useEffect(() => { void load(); }, [load]);
+  const title = mode === "outputs" ? "Stockages — Sorties" : "Stockages — Statistiques";
+  if (!data) return <Shell back="/agent/stockages" title={title}><Notice text={message || "Chargement…"} /></Shell>;
+  const outputs = data.events.filter((event) => event.parcel_count_delta < 0);
+  return <Shell back="/agent/stockages" title={`${mode === "outputs" ? "Sorties" : "Statistiques"} — ${data.account.agency}`}><AccountCards accounts={[data.account]} />{mode === "outputs" ? <>{data.forwardingEnabled && (data.account.agency === "KLZ" || data.account.agency === "LSHI" || data.account.agency === "FIH") ? <ForwardingDeparturePanel origin={data.account.agency} onDone={load} /> : null}<FilteredOutputHistory events={outputs} /></> : <AgentStatisticsView data={data} />}{message && <Notice text={message} />}</Shell>;
+}
+
+function ForwardingDeparturePanel({ origin, onDone }: { origin: "KLZ" | "LSHI" | "FIH"; onDone: () => Promise<void> }) {
+  const destinations = origin === "KLZ"
+    ? [{ agency: "LSHI", rate: 13 }, { agency: "FIH", rate: 16 }] as const
+    : origin === "LSHI"
+      ? [{ agency: "KLZ", rate: 11 }, { agency: "FIH", rate: 13 }] as const
+      : [{ agency: "LSHI", rate: 12 }, { agency: "KLZ", rate: 13 }] as const;
+  const [trackingCode,setTrackingCode]=useState(""); const [destination,setDestination]=useState<"KLZ"|"LSHI"|"FIH"|"">(""); const [quote,setQuote]=useState<DepartureQuote|null>(null); const [message,setMessage]=useState(""); const [busy,setBusy]=useState(false); const [requestId,setRequestId]=useState<string|null>(null);
+  async function loadQuote(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!destination)return;setBusy(true);setMessage("");try{const params=new URLSearchParams({trackingCode:trackingCode.trim().toUpperCase(),destinationAgency:destination});const result=await request<{quote:DepartureQuote}>(`/api/agent/stockages/forwardings/departure?${params}`);setQuote(result.quote);setRequestId(null);}catch(error){setQuote(null);setMessage(error instanceof Error?error.message:"Recherche impossible.");}finally{setBusy(false);}}
+  async function confirmDeparture(){if(!quote)return;if(!window.confirm(`Confirmer le départ physique de ${quote.trackingCode} vers ${quote.destination} ?`))return;const id=requestId??crypto.randomUUID();setRequestId(id);setBusy(true);setMessage("");try{const result=await request<{replayed?:boolean}>("/api/agent/stockages/forwardings/departure",{trackingCode:quote.trackingCode,destinationAgency:quote.destination,requestId:id});setMessage(result.replayed?"Ce départ avait déjà été confirmé.":"Départ confirmé — colis en transit.");setTrackingCode("");setDestination("");setQuote(null);setRequestId(null);await onDone();}catch(error){setMessage(error instanceof Error?error.message:"Départ refusé.");}finally{setBusy(false);}}
+  return <Panel title="Acheminer un colis"><form className="grid gap-3 sm:grid-cols-[1fr_220px_auto]" onSubmit={loadQuote}><Input label={`Code colis ${origin}`} value={trackingCode} onChange={(event)=>{setTrackingCode(event.target.value);setQuote(null);}} required/><label className="text-sm">Destination<select value={destination} onChange={(event)=>{setDestination(event.target.value as "KLZ"|"LSHI"|"FIH"|"");setQuote(null);}} required className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2"><option value="">Choisir</option>{destinations.map((item)=><option key={item.agency} value={item.agency}>{item.agency} — {item.rate} USD/kg</option>)}</select></label><Button type="submit" variant="outline" className="self-end" disabled={busy}>Rechercher</Button></form>{quote?<div className="mt-4 rounded-xl border border-lime-400/20 bg-slate-950/60 p-4"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><Metric label="Code" value={quote.trackingCode}/><Metric label="Poids" value={formatStockageWeight(quote.weightKg)}/><Metric label="Destination" value={quote.destination}/><Metric label="Tarif/kg" value={`${quote.rateUsdPerKg} USD`}/><Metric label="Montant" value={`${quote.amountExpectedUsd} USD`}/></div><Button className="mt-4 w-full bg-lime-400 text-slate-950" disabled={busy} onClick={()=>void confirmDeparture()}>CONFIRMER LE DÉPART</Button></div>:null}{message?<Notice text={message}/>:null}</Panel>;
+}
+
+function InTransitForwardingsPanel({ onDone }: { onDone: () => Promise<void> }) {
+  const [items,setItems]=useState<readonly InTransitForwarding[]>([]);const [message,setMessage]=useState("");const [busyId,setBusyId]=useState("");
+  const load=useCallback(async()=>{try{const result=await request<{items:InTransitForwarding[]}>("/api/agent/stockages/forwardings/in-transit");setItems(result.items);setMessage("");}catch(error){setMessage(error instanceof Error?error.message:"Acheminements indisponibles.");}},[]);
+  useEffect(()=>{void load();},[load]);
+  async function confirmArrival(item:InTransitForwarding){if(!window.confirm(`Confirmer l’arrivée physique de ${item.trackingCode} ?`))return;setBusyId(item.forwardingId);try{await request("/api/agent/stockages/forwardings/arrival",{forwardingReference:item.forwardingReference,requestId:crypto.randomUUID(),confirmed:true});await Promise.all([load(),onDone()]);}catch(error){setMessage(error instanceof Error?error.message:"Arrivée refusée.");}finally{setBusyId("");}}
+  return <Panel title="Acheminements en attente de réception">{items.length?<div className="space-y-3">{items.map((item)=><div key={item.forwardingId} className="rounded-xl border border-white/10 bg-slate-950/60 p-4"><div className="grid gap-2 text-sm sm:grid-cols-3"><b>{item.displayCode}</b><span>{formatStockageWeight(item.weightKg)}</span><span>{new Intl.DateTimeFormat("fr-FR",{dateStyle:"short",timeStyle:"short",timeZone:"Africa/Porto-Novo"}).format(new Date(item.departedAt))}</span><span>{item.originAgency} → {item.destinationAgency}</span><span>{item.forwardingReference}</span><span>{item.status}</span></div><Button className="mt-3 w-full bg-lime-400 text-slate-950" disabled={busyId===item.forwardingId} onClick={()=>void confirmArrival(item)}>CONFIRMER L’ARRIVÉE</Button></div>)}</div>:<p className="text-slate-400">Aucun acheminement actuellement en transit vers votre agence.</p>}{message?<Notice text={message}/>:null}</Panel>;
+}
+
+function AgentStatisticsView({ data }: { data: AgentData }) {
+  const [period, setPeriod] = useState("MONTH");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const events = useMemo(() => filterEventsByPeriod(data.events, period, from, to), [data.events, from, period, to]);
+  const entries = useMemo(() => summarizePhysicalMovements(events.filter((event) => event.parcel_count_delta > 0)), [events]);
+  const outputs = useMemo(() => summarizePhysicalMovements(events.filter((event) => event.parcel_count_delta < 0)), [events]);
+  return <>
+    <section className="rounded-2xl border border-lime-400/20 bg-slate-900/70 p-4"><div className="grid items-end gap-3 sm:grid-cols-3"><label className="text-sm">Période<select value={period} onChange={(event) => setPeriod(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2"><option value="DAY">Journalière</option><option value="WEEK">Hebdomadaire</option><option value="MONTH">Mensuelle</option><option value="YEAR">Annuelle</option><option value="CUSTOM">Personnalisée</option></select></label>{period === "CUSTOM" && <><label className="text-sm">Du<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><label className="text-sm">Au<input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label></>}</div><div className="mt-3 grid gap-3 sm:grid-cols-2"><CompactMovementCard label="ENTRÉES" parcels={entries.parcels} weightKg={entries.weightKg} /><CompactMovementCard label="SORTIES" parcels={outputs.parcels} weightKg={outputs.weightKg} /></div></section>
+    <CurrentInventory account={data.account} parcels={data.parcels} />
+    <details className="rounded-2xl border border-white/10 bg-slate-900/60 p-4"><summary className="cursor-pointer font-semibold text-lime-300">Voir l’historique</summary><div className="mt-5 space-y-5"><EventTable title="Historique physique" rows={events} /><ActivityTable rows={data.activity} /></div></details>
+  </>;
+}
+
+function filterEventsByPeriod(events: EventRow[], period: string, from: string, to: string) {
+  const todayKey = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Porto-Novo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const [year, month] = todayKey.split("-");
+  const weekStart = new Date(`${todayKey}T12:00:00Z`); weekStart.setUTCDate(weekStart.getUTCDate() - 6);
+  const inferredStart = period === "DAY" ? todayKey : period === "WEEK" ? weekStart.toISOString().slice(0, 10) : period === "MONTH" ? `${year}-${month}-01` : `${year}-01-01`;
+  const startDate = period === "CUSTOM" ? from : inferredStart; const endDate = period === "CUSTOM" ? to : todayKey;
+  return events.filter((event) => (!startDate || event.business_date >= startDate) && (!endDate || event.business_date <= endDate));
+}
+
+function summarizePhysicalMovements(events: EventRow[]) { return events.reduce((total, event) => ({ parcels: total.parcels + Math.abs(Number(event.parcel_count_delta)), weightKg: total.weightKg + Math.abs(Number(event.weight_kg_delta)) }), { parcels: 0, weightKg: 0 }); }
+function CompactMovementCard({ label, parcels, weightKg }: { label: "ENTRÉES" | "SORTIES"; parcels: number; weightKg: number }) { return <div className="rounded-xl border border-lime-400/20 bg-slate-950/60 px-4 py-3"><p className="text-xs font-semibold tracking-[0.16em] text-lime-300">{label}</p><p className="mt-1 text-lg font-semibold text-white">{parcels} colis · {formatStockageWeight(weightKg)}</p></div>; }
+
+function CurrentInventory({ account, parcels }: { account: Account; parcels: StorageParcel[] }) {
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("ALL");
+  const statuses = useMemo(() => Array.from(new Set(parcels.map((parcel) => parcel.status))).sort(), [parcels]);
+  const filtered = useMemo(() => parcels.filter((parcel) => (!query || parcel.trackingCode.includes(query.trim().toUpperCase())) && (status === "ALL" || parcel.status === status)), [parcels, query, status]);
+  const reset = () => { setQuery(""); setStatus("ALL"); };
+  return <Panel title="INVENTAIRE PHYSIQUE ACTUEL">
+    <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Metric label="Agence" value={account.agency} /><Metric label="Colis présents" value={account.current_parcel_count} /><Metric label="Poids total" value={formatStockageWeight(Number(account.current_weight_kg))} /><Metric label="Statut" value={account.status} /></div>
+    <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_240px_auto]"><label className="text-sm">Rechercher un code<input value={query} onChange={(event) => setQuery(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><label className="text-sm">Statut<select value={status} onChange={(event) => setStatus(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2"><option value="ALL">Tous</option>{statuses.map((value) => <option key={value} value={value}>{storageParcelStatusLabel(value)}</option>)}</select></label><Button type="button" variant="outline" className="self-end" onClick={reset}>Réinitialiser</Button></div>
+    <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead><tr className="text-slate-400"><th className="pb-3">Code colis</th><th className="pb-3">Poids</th><th className="pb-3">Statut</th><th className="pb-3">Date arrivée</th><th className="pb-3">Heure arrivée</th><th className="pb-3">Agent</th></tr></thead><tbody>{filtered.map((parcel) => { const moment = formatStorageArrival(parcel.arrivedAt); return <tr key={parcel.parcelId} className="border-t border-white/10"><td className="py-3 font-semibold text-white">{parcel.displayCode ?? parcel.trackingCode}</td><td>{formatStockageWeight(parcel.weightKg)}</td><td>{storageParcelStatusLabel(parcel.status)}</td><td>{moment.date}</td><td>{moment.time}</td><td>{parcel.arrivalAgent || "Non disponible"}</td></tr>; })}</tbody></table>{filtered.length === 0 && <p className="py-8 text-center text-slate-400">Aucun colis actuellement présent.</p>}</div>
+  </Panel>;
+}
+
+function storageParcelStatusLabel(value: string) { return ({ AVAILABLE: "DISPONIBLE", PRESENT: "PRÉSENT", DELIVERED: "LIVRÉ", RELEASED: "REMIS" } as Record<string, string>)[value] ?? value.replaceAll("_", " "); }
+function formatStorageArrival(value: string | null) { if (!value) return { date: "Non disponible", time: "Non disponible" }; const date = new Date(value); if (Number.isNaN(date.getTime())) return { date: "Non disponible", time: "Non disponible" }; return { date: new Intl.DateTimeFormat("fr-FR", { timeZone: "Africa/Porto-Novo" }).format(date), time: new Intl.DateTimeFormat("fr-FR", { timeZone: "Africa/Porto-Novo", hour: "2-digit", minute: "2-digit", hour12: false }).format(date) }; }
+
+function ModuleCard({ href, title, text, icon }: { href: string; title: string; text: string; icon: React.ReactNode }) { return <GlassPanel className="flex min-h-64 flex-col border-accent/25 p-5 sm:p-6" glow="growth"><div className="grid h-12 w-12 place-items-center rounded-xl border border-accent/30 bg-accent/15 text-accent">{icon}</div><h2 className="mt-6 text-xl font-semibold text-accent">{title}</h2><p className="mt-2 flex-1 text-sm leading-6 text-muted-foreground">{text}</p><Button asChild variant="growth" className="mt-6 w-full"><Link href={href}>Accéder</Link></Button></GlassPanel>; }
+
+function FilteredOutputHistory({ events }: { events: EventRow[] }) { const [query, setQuery] = useState(""); const [agent, setAgent] = useState(""); const [period,setPeriod]=useState("MONTH"); const [from,setFrom]=useState(""); const [to,setTo]=useState(""); const today=new Date(); const start=new Date(today); if(period==="DAY")start.setDate(today.getDate());else if(period==="WEEK")start.setDate(today.getDate()-6);else if(period==="MONTH")start.setMonth(today.getMonth(),1);else if(period==="YEAR")start.setMonth(0,1); const startDate=period==="CUSTOM"?from:start.toISOString().slice(0,10); const endDate=period==="CUSTOM"?to:today.toISOString().slice(0,10); const rows = events.filter((event) => (!query || String(event.tracking_code ?? "").toUpperCase().includes(query.toUpperCase())) && (!agent || event.actor_name.toUpperCase().includes(agent.toUpperCase())) && (!startDate||event.business_date>=startDate)&&(!endDate||event.business_date<=endDate)); return <Panel title="Historique des sorties"><div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><label className="block text-sm">Période<select value={period} onChange={(event)=>setPeriod(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2"><option value="DAY">Aujourd’hui</option><option value="WEEK">Semaine</option><option value="MONTH">Mois</option><option value="YEAR">Année</option><option value="CUSTOM">Personnalisée</option></select></label><label className="block text-sm">Code colis<input value={query} onChange={(event) => setQuery(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><label className="block text-sm">Agent<input value={agent} onChange={(event) => setAgent(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label>{period==="CUSTOM"&&<><label className="block text-sm">Du<input type="date" value={from} onChange={(event)=>setFrom(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><label className="block text-sm">Au<input type="date" value={to} onChange={(event)=>setTo(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label></>}</div><EventTable title="Mouvements physiques de sortie" rows={rows} /></Panel>; }
+
+export function AgentEncaissementQueues() {
+  const [accountActive, setAccountActive] = useState(false);
+  const refresh = useCallback(async () => { const data = await request<AgentData>("/api/agent/stockages"); setAccountActive(data.actionsEnabled); }, []);
+  useEffect(() => { void refresh().catch(() => setAccountActive(false)); }, [refresh]);
+  return <AgentWorkQueues accountActive={accountActive} onDelivery={refresh} />;
+}
+
+function AgentWorkQueues({ accountActive, onDelivery }: { accountActive: boolean; onDelivery: () => Promise<void> }) {
+  return <div className="space-y-5">
+    <QueueSection title="COLIS À ENCAISSER" section="TO_COLLECT" accountActive={accountActive} onDelivery={onDelivery} />
+    <QueueSection title="COLIS AVEC SOLDE RESTANT" section="PARTIAL" accountActive={accountActive} onDelivery={onDelivery} />
+    <QueueSection title="COLIS PRÊTS À REMETTRE" section="READY" accountActive={accountActive} onDelivery={onDelivery} />
+    <QueueSection title="VÉRIFICATION NÉCESSAIRE" section="VERIFICATION" accountActive={accountActive} onDelivery={onDelivery} />
+    <QueueSection title="LIVRAISONS RÉCENTES" section="RECENT" accountActive={accountActive} onDelivery={onDelivery} />
+    <Panel title="RECHERCHER UN AUTRE COLIS"><p className="mb-3 text-sm text-slate-400">Recherche complémentaire pour un colis précis ou un cas particulier.</p><Link className="inline-flex rounded-lg border border-lime-400/40 px-4 py-2 text-lime-300" href="#manual-delivery">Utiliser la recherche manuelle</Link></Panel>
+  </div>;
+}
+
+function QueueSection({ title, section, accountActive, onDelivery }: { title: string; section: QueueSectionCode; accountActive: boolean; onDelivery: () => Promise<void> }) {
+  const [response, setResponse] = useState<QueueResponse | null>(null); const [query, setQuery] = useState(""); const [paymentSite, setPaymentSite] = useState("ALL"); const [page, setPage] = useState(1); const [message, setMessage] = useState(""); const [pendingCode, setPendingCode] = useState("");
+  const load = useCallback(async () => { try { setMessage(""); const params = new URLSearchParams({ section, query, paymentSite, page: String(page), pageSize: "12" }); setResponse(await request<QueueResponse>(`/api/agent/stockages/queues?${params}`)); } catch (error) { setMessage(error instanceof Error ? error.message : "Liste indisponible."); } }, [section, query, paymentSite, page]);
+  useEffect(() => { void load(); }, [load]);
+  async function deliver(code: string) { if (!accountActive || pendingCode || !window.confirm(`Confirmer la remise physique du colis ${code} ?`)) return; setPendingCode(code); try { const result = await request<{ replayed?: boolean }>("/api/agent/stockages/delivery", { trackingCode: code, physicalDeliveryConfirmed: true, requestId: crypto.randomUUID() }); setMessage(result.replayed ? "Livraison déjà confirmée." : "Livraison confirmée avec succès."); await Promise.all([load(), onDelivery()]); } catch (error) { setMessage(error instanceof Error ? error.message : "Livraison refusée."); } finally { setPendingCode(""); } }
+  return <Panel title={title}><div className="mb-4 grid gap-3 sm:grid-cols-2"><label className="text-sm">Code colis<input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><label className="text-sm">Site d’encaissement<select value={paymentSite} onChange={(event) => { setPaymentSite(event.target.value); setPage(1); }} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2"><option value="ALL">Tous</option><option>COO</option><option>FIH</option><option>LSHI</option><option>KLZ</option></select></label></div>
+    {message && <p className="mb-3 rounded-lg bg-amber-400/10 p-3 text-sm">{message}</p>}
+    {!response ? <p className="text-slate-400">Chargement…</p> : response.items.length === 0 ? <p className="text-slate-400">Aucun résultat.</p> : <div className="grid gap-3 lg:grid-cols-2">{response.items.map((item) => <article key={item.trackingCode} className="rounded-xl border border-white/10 bg-slate-950/60 p-4"><div className="flex justify-between gap-3"><b>{item.trackingCode}</b><span className={`text-xs ${item.deliveryStatus === "VERIFICATION_REQUIRED" ? "text-amber-300" : "text-lime-300"}`}>{queueStatusLabel(item.deliveryStatus)}</span></div><p className="mt-2 text-sm">Bénéficiaire : {item.beneficiary}</p><p className="text-sm">Destination : {item.destination} · Poids : {item.weightKg === null ? "Poids à vérifier" : formatStockageWeight(item.weightKg)}</p><p className="text-sm">Attendu : {money(item.amountExpected)} · Payé : {money(item.amountPaid)} · Solde : {money(item.remainingBalance)}</p>{item.paymentSites.length > 0 && <p className="text-xs text-slate-400">Site(s) d’encaissement : {item.paymentSites.join(", ")}</p>}<p className="mt-2 text-xs text-slate-400">{item.paymentLabel}</p>{item.anomalies.length > 0 && <p className="mt-2 text-xs text-amber-300">Anomalie : {formatStockageAnomalies(item.anomalies).join(", ")}</p>}{section === "READY" && <Button disabled={!item.canConfirmDelivery || pendingCode === item.trackingCode} onClick={() => void deliver(item.trackingCode)} className="mt-3 w-full bg-lime-400 text-slate-950 hover:bg-lime-300 focus-visible:ring-lime-300 disabled:bg-slate-800 disabled:text-slate-400">{pendingCode === item.trackingCode ? "Confirmation…" : item.weightState !== "VALID" ? "Poids à vérifier" : accountActive ? "Confirmer la livraison" : "Solde initial requis"}</Button>}{section === "TO_COLLECT" && <CollectionLink item={item} label="Encaisser" />}{section === "PARTIAL" && <CollectionLink item={item} label="Encaisser le solde" />}{section === "VERIFICATION" && <CollectionLink item={item} label="Vérifier dans Encaissements" />}{section === "RECENT" && <p className="mt-3 text-xs text-slate-300">{item.businessDate ?? "—"} · {item.deliveredAt ? new Date(item.deliveredAt).toLocaleString("fr-FR") : "—"} · {item.destination} · {item.deliveredBy ?? "—"} · Référence : {item.deliveryReference ?? "—"}</p>}</article>)}</div>}
+    {response && <div className="mt-4 flex items-center justify-between text-sm"><Button variant="outline" disabled={response.pagination.page <= 1} onClick={() => setPage((value) => value - 1)}>Précédente</Button><span>Page {response.pagination.page}/{response.pagination.totalPages} · {response.pagination.total} résultat(s)</span><Button variant="outline" disabled={response.pagination.page >= response.pagination.totalPages} onClick={() => setPage((value) => value + 1)}>Suivante</Button></div>}
+  </Panel>;
+}
+
+function AdminWorkQueue({ accounts }: { accounts: Account[] }) { const [agency, setAgency] = useState(accounts[0]?.agency ?? "FIH"); const [section, setSection] = useState<QueueSectionCode>("TO_COLLECT"); const [response, setResponse] = useState<QueueResponse | null>(null); const [message, setMessage] = useState(""); useEffect(() => { let active = true; const params = new URLSearchParams({ agency, section, page: "1", pageSize: "12" }); request<QueueResponse>(`/api/admin/stockages/v2/queues?${params}`).then((data) => { if (active) { setResponse(data); setMessage(""); } }).catch((error) => { if (active) setMessage(error instanceof Error ? error.message : "Vue indisponible."); }); return () => { active = false; }; }, [agency, section]); return <Panel title="Vue consultative des colis"><div className="mb-4 flex flex-wrap gap-3"><select value={agency} onChange={(event) => setAgency(event.target.value)} className="rounded-lg border border-white/15 bg-slate-950 p-2">{accounts.map((account) => <option key={account.agency}>{account.agency}</option>)}</select><select value={section} onChange={(event) => setSection(event.target.value as QueueSectionCode)} className="rounded-lg border border-white/15 bg-slate-950 p-2"><option value="TO_COLLECT">Colis à encaisser</option><option value="PARTIAL">Colis avec solde restant</option><option value="READY">Prêts à remettre</option><option value="VERIFICATION">Vérification nécessaire</option><option value="RECENT">Livraisons récentes</option></select></div>{response && <p className="mb-4 text-sm text-slate-300">Total {response.summary.totalDeduplicated} · À encaisser {response.summary.toCollect} · Partiels {response.summary.partialPaymentRemaining} · Prêts {response.summary.readyForDelivery} · Vérifications {response.summary.verificationRequired} · Livrés {response.summary.recentlyDelivered}</p>}{response?.audit && <p className="mb-4 rounded-lg border border-amber-400/20 bg-amber-400/5 p-3 text-xs text-amber-100">Audit source : {response.audit.rawRows} ligne(s), {response.audit.uniqueCodes} code(s) unique(s), {response.audit.excludedHistorical} historique(s) clos exclu(s), {response.audit.excludedWrongAgency} autre(s) agence(s) exclue(s), {response.audit.strictDuplicateCodes} doublon(s) strict(s), {response.audit.divergentDuplicateCodes} doublon(s) divergent(s), {response.audit.invalidCodes} code(s) invalide(s).</p>}{message ? <p>{message}</p> : <DataList rows={(response?.items ?? []).map((item) => `${item.trackingCode} · ${item.paymentLabel} · ${item.deliveryStatus}`)} empty="Aucun colis." />}</Panel>; }
+
+export function AdminStockagesV2Page() {
+  const [data, setData] = useState<AdminData | null>(null);
+  const [message, setMessage] = useState("");
+  const load = useCallback(async () => { try { setMessage(""); setData(await request<AdminData>("/api/admin/stockages/v2")); } catch (error) { setMessage(error instanceof Error ? error.message : "Stockages indisponible."); } }, []);
+  useEffect(() => { void load(); }, [load]);
+  if (!data) return <Shell back="/admin" title="Stockages — Administration"><Notice text={message || "Chargement…"} /></Shell>;
+  return <Shell back="/admin" title="Stockages — Administration">
+    <AccountCards accounts={data.accounts} detailsEnabled />
+    <div className="grid gap-5 xl:grid-cols-2">
+      <AdminCommandForm action="OPENING" title="Solde initial" accounts={data.accounts} onDone={load} />
+      <AdminCommandForm action="ADJUSTMENT" title="Ajustement CREDIT / DEBIT" accounts={data.accounts} onDone={load} />
+      <AdminCommandForm action="CORRECTION" title="Correction compensatoire" accounts={data.accounts} onDone={load} />
+      <AdminCommandForm action="RESOLVE_ANOMALY" title="Résoudre une anomalie" accounts={data.accounts} onDone={load} />
+    </div>
+    <EventTable title="Mouvements consolidés" rows={data.events} />
+    <ActivityTable rows={data.activity} />
+    <PhysicalStatistics events={data.events} />
+    <JsonList title="Anomalies" rows={data.anomalies} />
+    <AuditCards rows={data.audit} />
+    {message && <Notice text={message} />}
+  </Shell>;
+}
+
+function AgentCommandForm({ title, endpoint, disabled, fields, onDone }: { title: string; endpoint: string; disabled: boolean; fields: "arrival" | "delivery"; onDone: () => Promise<void> }) {
+  const [result, setResult] = useState("");
+  const arrivalInFlight = useRef(false);
+  const [arrivalSubmitting, setArrivalSubmitting] = useState(false);
+  const [arrivalDetails, setArrivalDetails] = useState("");
+  const arrivalSummary = useMemo(() => summarizeArrivalDetails(arrivalDetails), [arrivalDetails]);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (fields === "arrival" && (disabled || arrivalInFlight.current)) return;
+    const form = event.currentTarget; const values = new FormData(form);
+    if (!window.confirm(`Confirmer : ${title} ?`)) return;
+    if (fields === "arrival" && (arrivalSummary.error || !arrivalSummary.parcels.length)) { setResult(arrivalSummary.error || "Ajoutez au moins un colis."); return; }
+    const payload = fields === "arrival" ? { parcels: arrivalSummary.parcels, reference: values.get("reference"), observation: values.get("observation"), requestId: crypto.randomUUID() } : { trackingCode: values.get("trackingCode"), physicalDeliveryConfirmed: true, requestId: crypto.randomUUID() };
+    if (fields === "arrival") { arrivalInFlight.current = true; setArrivalSubmitting(true); }
+    try { const response = await request<{ replayed?: boolean }>(endpoint, payload); setResult(response.replayed ? "Commande déjà enregistrée : rejeu idempotent." : "Commande enregistrée avec succès."); form.reset(); setArrivalDetails(""); await onDone(); } catch (error) { setResult(error instanceof Error ? error.message : "Commande refusée."); }
+    finally { if (fields === "arrival") { arrivalInFlight.current = false; setArrivalSubmitting(false); } }
+  }
+  return <Panel title={title}><form className="space-y-3" onSubmit={submit}>
+    {fields === "arrival" && <p className="text-sm text-slate-300">Maximum {MAX_ARRIVAL_PARCELS} codes par arrivage. Un code et son poids par ligne.</p>}
+    {fields === "arrival" ? <><label className="block text-sm">Détails de Codes<textarea name="parcels" required rows={8} value={arrivalDetails} onChange={(event)=>setArrivalDetails(event.target.value)} placeholder={"JL73926:8KGs\nJL96426:5KG"} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><div className="grid gap-3 sm:grid-cols-2"><label className="text-sm">Nombre de Codes Reçus<input readOnly value={arrivalSummary.count} className="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 p-2 text-slate-300" /></label><label className="text-sm">Poids Total Entrés<input readOnly value={formatStockageWeight(arrivalSummary.totalWeightKg)} className="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 p-2 text-slate-300" /></label></div>{arrivalSummary.error&&<p className="text-sm text-red-200">{arrivalSummary.error}</p>}<Input name="reference" label="Référence d’arrivage" /><Input name="observation" label="Observation" /></> : <><Input name="trackingCode" label="Code colis" required /><p className="text-xs text-slate-400">La présence physique et le poids sont contrôlés côté serveur dans le Stockage de l’agence.</p></>}
+    <Button disabled={disabled || (fields === "arrival" && (arrivalSubmitting || Boolean(arrivalSummary.error)))} className="w-full bg-lime-400 text-slate-950 hover:bg-lime-300 focus-visible:ring-lime-300 disabled:bg-slate-800 disabled:text-slate-400">{disabled ? "Solde initial requis" : arrivalSubmitting ? "Enregistrement…" : title}</Button>{result && <p className="text-sm text-slate-300">{result}</p>}
+  </form></Panel>;
+}
+
+function AdminCommandForm({ action, title, accounts, onDone }: { action: string; title: string; accounts: Account[]; onDone: () => Promise<void> }) {
+  const [result, setResult] = useState("");
+  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = event.currentTarget; const values = Object.fromEntries(new FormData(form)); if (!window.confirm(`Confirmation finale : ${title} ?`)) return; try { const body = { ...values, action, requestId: crypto.randomUUID(), confirmed: true, parcelCount: Number(values.parcelCount ?? 0), weightKg: Number(values.weightKg ?? 0), correctedParcelDelta: Number(values.correctedParcelDelta ?? 0), correctedWeightDelta: Number(values.correctedWeightDelta ?? 0) }; const response = await request<{ replayed?: boolean }>("/api/admin/stockages/v2", body); setResult(response.replayed ? "Rejeu idempotent confirmé." : "Commande enregistrée."); form.reset(); await onDone(); } catch (error) { setResult(error instanceof Error ? error.message : "Commande refusée."); } }
+  return <Panel title={title}><form className="space-y-3" onSubmit={submit}>
+    {action !== "CORRECTION" && action !== "RESOLVE_ANOMALY" && <label className="block text-sm">Agence<select name="agency" required className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2">{accounts.map((a) => <option key={a.agency}>{a.agency}</option>)}</select></label>}
+    {action === "OPENING" && <><Input name="parcelCount" type="number" min="0" label="Nombre initial de colis" required /><Input name="weightKg" type="number" min="0" step="0.001" label="Poids initial (kg)" required /><Input name="observation" label="Observation" /></>}
+    {action === "ADJUSTMENT" && <><label className="block text-sm">Direction<select name="direction" className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2"><option>CREDIT</option><option>DEBIT</option></select></label><Input name="parcelCount" type="number" min="0" label="Variation colis" required /><Input name="weightKg" type="number" min="0" step="0.001" label="Variation poids" required /></>}
+    {action === "CORRECTION" && <><Input name="targetEventId" label="Event ID cible" required /><Input name="correctedParcelDelta" type="number" label="Nouvelle variation colis" required /><Input name="correctedWeightDelta" type="number" step="0.001" label="Nouvelle variation poids" required /></>}
+    {action === "RESOLVE_ANOMALY" && <Input name="anomalyId" label="Anomaly ID" required />}
+    {action !== "RESOLVE_ANOMALY" && <Input name="businessDate" type="date" label="Date métier" required />}{action !== "OPENING" && <Input name="reason" label="Motif obligatoire" required />}
+    <Button className="w-full bg-lime-400 text-slate-950 hover:bg-lime-300">{title}</Button>{result && <p className="text-sm text-slate-300">{result}</p>}
+  </form></Panel>;
+}
+
+async function request<T>(url: string, body?: unknown): Promise<T> {
+  const auth = getSupabaseBrowserClient().auth;
+  if (!body) {
+    const response = await authenticatedRead(auth, url);
+    return readJsonOrThrow<T>(response, "Service Stockages indisponible.");
+  }
+  const accessToken = await getVerifiedAgentWriteToken(auth);
+  const response = await fetch(url, { method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store" });
+  return readJsonOrThrow<T>(response, "Service Stockages indisponible.");
+}
+async function measuredRead<T>(url: string): Promise<{ data: T; serverTiming: string }> {
+  const response = await authenticatedRead(getSupabaseBrowserClient().auth, url);
+  return { data: await readJsonOrThrow<T>(response, "Service Stockages indisponible."), serverTiming: response.headers.get("Server-Timing") ?? "" };
+}
+function roundMs(value: number) { return Math.round(value * 10) / 10; }
+function Shell({ back, title, children }: { back: string; title: string; children: React.ReactNode }) {
+  const router = useRouter();
+
+  async function handleSignOut() {
+    await signOutAgent();
+    router.replace("/auth/sign-in");
+    router.refresh();
+  }
+
+  return <main className="min-h-screen bg-slate-950 py-8 text-white"><div className="mx-auto max-w-7xl space-y-6 px-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><Link href={back} className="text-sm text-lime-300">← Retour au tableau de bord</Link><h1 className="mt-2 text-3xl font-bold">{title}</h1></div><Button variant="outline" onClick={handleSignOut}><LogOut className="mr-2 h-4 w-4" />Déconnexion</Button></div>{children}</div></main>;
+}
+function AccountCards({ accounts, detailsEnabled = false }: { accounts: Account[]; detailsEnabled?: boolean }) { return <div className="grid gap-4 md:grid-cols-3">{accounts.map((a) => <div key={a.agency} className="rounded-2xl border border-lime-400/25 bg-slate-900 p-5"><div className="flex justify-between"><h2 className="text-xl font-semibold">{a.agency}</h2><span className={a.status === "ACTIVE" ? "text-lime-300" : "text-amber-300"}>{a.status}</span></div><p className="mt-4 text-3xl font-bold">{a.current_parcel_count} colis</p><p className="text-slate-300">{formatStockageWeight(Number(a.current_weight_kg))}</p>{detailsEnabled && <Link href={`/admin/stockages/${a.agency.toLowerCase()}`} className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-lime-400/30 bg-lime-400/10 px-4 py-2 text-sm font-semibold text-lime-300 transition hover:bg-lime-400/20">Voir les détails →</Link>}</div>)}</div>; }
+function EventTable({ title, rows }: { title: string; rows: EventRow[] }) { return <Panel title={title}><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="text-slate-400"><th>Agence</th><th>Date</th><th>Type</th><th>Colis</th><th>Kg</th><th>Agent</th></tr></thead><tbody>{rows.map((row) => <tr key={row.event_id} className="border-t border-white/10"><td>{row.agency ?? "—"}</td><td>{row.business_date}</td><td>{row.event_type}</td><td>{row.parcel_count_delta}</td><td>{formatStockageWeight(row.weight_kg_delta)}</td><td>{row.actor_name}</td></tr>)}</tbody></table>{!rows.length && <p className="py-5 text-slate-400">Aucun mouvement.</p>}</div></Panel>; }
+function ActivityTable({ rows }: { rows: Activity[] }) { return <Panel title="Activité par Agent"><div className="grid gap-3 md:grid-cols-2">{rows.map((row, index) => <div key={`${row.actor_name}-${row.business_date}-${index}`} className="rounded-xl border border-white/10 p-3"><b>{row.actor_name}</b><p className="text-sm text-slate-300">{row.arrivals} arrivage(s) · {row.deliveries} livraison(s)</p></div>)}{!rows.length && <p className="text-slate-400">Aucune activité.</p>}</div></Panel>; }
+function PhysicalStatistics({ events }: { events: EventRow[] }) {
+  const [period, setPeriod] = useState("MONTH");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const filtered = useMemo(() => {
+    const today = new Date();
+    const start = new Date(today);
+    if (period === "DAY") start.setDate(today.getDate());
+    else if (period === "WEEK") start.setDate(today.getDate() - 6);
+    else if (period === "MONTH") start.setMonth(today.getMonth(), 1);
+    else if (period === "YEAR") start.setMonth(0, 1);
+    const inferredFrom = period === "CUSTOM" ? from : start.toISOString().slice(0, 10);
+    const inferredTo = period === "CUSTOM" ? to : today.toISOString().slice(0, 10);
+    return events.filter((event) => (!inferredFrom || event.business_date >= inferredFrom) && (!inferredTo || event.business_date <= inferredTo));
+  }, [events, from, period, to]);
+  const arrivals = filtered.filter((event) => event.parcel_count_delta > 0);
+  const deliveries = filtered.filter((event) => event.parcel_count_delta < 0);
+  const sum = (rows: EventRow[], field: "parcel_count_delta" | "weight_kg_delta") => rows.reduce((total, row) => total + Math.abs(Number(row[field])), 0);
+  return <Panel title="Statistiques physiques"><div className="grid gap-3 sm:grid-cols-3"><label className="text-sm">Période<select value={period} onChange={(event) => setPeriod(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2"><option value="DAY">Journalière</option><option value="WEEK">Hebdomadaire</option><option value="MONTH">Mensuelle</option><option value="YEAR">Annuelle</option><option value="CUSTOM">Personnalisée</option></select></label>{period === "CUSTOM" && <><label className="text-sm">Du<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label><label className="text-sm">Au<input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label></>}</div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Metric label="Colis entrés" value={sum(arrivals, "parcel_count_delta")} /><Metric label="Kg entrés" value={formatStockageWeight(sum(arrivals, "weight_kg_delta"))} /><Metric label="Colis sortis" value={sum(deliveries, "parcel_count_delta")} /><Metric label="Kg sortis" value={formatStockageWeight(sum(deliveries, "weight_kg_delta"))} /></div></Panel>;
+}
+function Metric({ label, value }: { label: string; value: string | number }) { return <div className="rounded-xl border border-lime-400/20 bg-slate-950/60 p-4"><p className="text-xs uppercase tracking-wide text-slate-400">{label}</p><p className="mt-2 text-2xl font-semibold text-lime-300">{value}</p></div>; }
+function JsonList({ title, rows }: { title: string; rows: Array<Record<string, unknown>> }) { return <Panel title={title}>{rows.length ? <div className="space-y-2">{rows.map((row, i) => <pre key={i} className="overflow-x-auto rounded-lg bg-slate-950 p-3 text-xs">{JSON.stringify(row, null, 2)}</pre>)}</div> : <p className="text-slate-400">Aucune donnée.</p>}</Panel>; }
+function AuditCards({ rows }: { rows: Array<Record<string, unknown>> }) {
+  const [agency, setAgency] = useState("ALL");
+  const [action, setAction] = useState("ALL");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const actions = useMemo(() => Array.from(new Set(rows.map((row) => String(row.action ?? "")).filter(Boolean))).sort(), [rows]);
+  const filtered = useMemo(() => rows.filter((row) => {
+    const view = buildAuditPresentation(row);
+    return (agency === "ALL" || view.agency === agency)
+      && (action === "ALL" || view.actionCode === action)
+      && (!from || view.dateKey >= from)
+      && (!to || view.dateKey <= to);
+  }), [action, agency, from, rows, to]);
+  return <Panel title="Audit immuable">
+    <p className="mb-4 text-sm text-slate-300">Historique administratif en lecture seule. Chaque modification conserve ses états, son motif et son auteur.</p>
+    <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <label className="text-sm">Agence<select value={agency} onChange={(event) => setAgency(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2"><option value="ALL">Toutes</option><option>COO</option><option>FIH</option><option>LSHI</option><option>KLZ</option></select></label>
+      <label className="text-sm">Action<select value={action} onChange={(event) => setAction(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2"><option value="ALL">Toutes</option>{actions.map((code) => <option key={code} value={code}>{buildAuditPresentation({ action: code }).action}</option>)}</select></label>
+      <label className="text-sm">Du<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label>
+      <label className="text-sm">Au<input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label>
+    </div>
+    {filtered.length ? <div className="grid gap-4 lg:grid-cols-2">{filtered.map((row, index) => {
+      const view = buildAuditPresentation(row);
+      return <article key={String(row.audit_id ?? index)} className="rounded-2xl border border-lime-400/20 bg-slate-950/65 p-4 shadow-sm sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs uppercase tracking-[0.16em] text-lime-300">{view.agency}</p><h3 className="mt-1 text-lg font-semibold text-white">{view.action}</h3></div><span className="rounded-full border border-lime-400/20 bg-lime-400/10 px-3 py-1 font-mono text-xs text-lime-200">{view.auditId}</span></div>
+        <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+          <AuditField label="Admin" value={view.admin} />
+          <AuditField label="Date et heure" value={view.occurredAt} />
+          <AuditField label="Ancien état" value={view.oldState} />
+          <AuditField label="Nouvel état" value={view.newState} />
+          {view.adjustment && <AuditField label="Mouvement" value={view.adjustment} accent />}
+          <div className="sm:col-span-2"><AuditField label="Motif" value={view.reason} /></div>
+        </dl>
+        <details className="mt-4 rounded-xl border border-white/10 bg-slate-950/80"><summary className="cursor-pointer px-4 py-3 text-sm font-medium text-lime-300">Voir les détails techniques</summary><pre className="max-h-80 overflow-auto border-t border-white/10 p-4 text-xs text-slate-300">{JSON.stringify(row, null, 2)}</pre></details>
+      </article>;
+    })}</div> : <p className="rounded-xl border border-white/10 p-5 text-slate-400">Aucun audit ne correspond aux filtres sélectionnés.</p>}
+  </Panel>;
+}
+function AuditField({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) { return <div className="rounded-xl border border-white/10 bg-slate-900/70 p-3"><dt className="text-xs uppercase tracking-wide text-slate-400">{label}</dt><dd className={`mt-1 break-words text-sm font-medium ${accent ? "text-lime-300" : "text-slate-100"}`}>{value}</dd></div>; }
+function Panel({ title, children }: { title: string; children: React.ReactNode }) { return <section className="rounded-2xl border border-white/10 bg-slate-900/80 p-5"><h2 className="mb-4 flex items-center gap-2 text-xl font-semibold"><Boxes className="h-5 w-5 text-lime-300" />{title}</h2>{children}</section>; }
+function Notice({ text }: { text: string }) { return <div className="flex items-center gap-3 rounded-xl border border-amber-400/25 bg-amber-400/10 p-4 text-sm"><ShieldCheck className="h-5 w-5" />{text}</div>; }
+function Input({ label, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { label: string }) { return <label className="block text-sm">{label}<input {...props} className="mt-1 w-full rounded-lg border border-white/15 bg-slate-950 p-2" /></label>; }
+function CollectionLink({ item, label }: { item: QueueItem; label: string }) { return <Link href={`/agent/encaissement?code=${encodeURIComponent(item.trackingCode)}`} className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-lime-400 px-4 py-2 font-medium text-slate-950 hover:bg-lime-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300">{label}</Link>; }
+function queueStatusLabel(status: QueueItem["deliveryStatus"]) { return status === "DELIVERED" ? "Livré" : status === "READY" ? "Paiement terminé — colis à remettre" : status === "TO_COLLECT" ? "À encaisser" : status === "PARTIAL_PAYMENT_REMAINING" ? "Solde restant" : "Vérification nécessaire"; }
+function money(value: number | null) { return value === null ? "Non disponible" : `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(value)} $`; }
+function DataList({ rows, empty }: { rows: string[]; empty: string }) { return rows.length ? <div className="space-y-2">{rows.map((row, index) => <p key={`${row}-${index}`} className="rounded-lg border border-white/10 p-3 text-sm">{row}</p>)}</div> : <p className="text-slate-400">{empty}</p>; }

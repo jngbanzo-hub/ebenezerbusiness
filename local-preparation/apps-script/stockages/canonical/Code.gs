@@ -1,0 +1,7954 @@
+'use strict';
+
+/**
+ * STOCKAGES PUBLIC — Eben Ezer Business
+ * Version 1.0.0
+ *
+ * Cette version :
+ * - initialise le classeur STOCKAGES PUBLIC ;
+ * - gère une date d’activation commune ;
+ * - valide et protège les soldes initiaux ;
+ * - active ou désactive le système ;
+ * - recalcule le stock journalier ;
+ * - ne se connecte pas encore à MANIFESTE PUBLIC ;
+ * - ne crée aucun déclencheur installable.
+ */
+
+const STOCKAGES_CONFIG = Object.freeze({
+  version: '1.0.0',
+  timezone: 'Africa/Porto-Novo',
+
+  feuilles: Object.freeze({
+    parametres: 'PARAMETRES',
+    soldeInitial: 'SOLDE INITIAL',
+    historique: 'HISTORIQUE STATUTS',
+    mouvements: 'MOUVEMENTS STOCK',
+    stockJournalier: 'STOCK JOURNALIER',
+    audit: 'AUDIT'
+  }),
+
+  agences: Object.freeze(['COO', 'FIH', 'LSHI', 'KLZ']),
+
+  lignesAgences: Object.freeze({
+    COO: 2,
+    FIH: 3,
+    LSHI: 4,
+    KLZ: 5
+  }),
+
+  statutsColis: Object.freeze([
+    'ENREGISTRÉ',
+    'EN VOL',
+    'EN TRANSIT',
+    'ARRIVÉ',
+    'LIVRÉ'
+  ]),
+
+  typesMouvements: Object.freeze([
+    'ENTREE_COO',
+    'SORTIE_COO',
+    'ENTREE_DESTINATION',
+    'SORTIE_DESTINATION',
+    'AJUSTEMENT_ADMIN'
+  ]),
+
+  statutsSoldeInitial: Object.freeze([
+    'BROUILLON',
+    'VALIDÉ'
+  ]),
+
+  simulation: Object.freeze({
+    feuillePhotographie: 'PHOTOGRAPHIE STATUTS',
+    feuilleRapport: 'SIMULATION SYNCHRONISATION',
+    feuilleExclusions: 'EXCLUSIONS PHOTOGRAPHIE',
+    dureeMaxSimulationMinutes: 30,
+    typesExclusions: Object.freeze([
+      'LIGNE_ABANDONNEE',
+      'OCCURRENCE_DOUBLON_A_EXCLURE',
+      'ANOMALIE_ACCEPTEE_TEMPORAIREMENT'
+    ]),
+    entetesExclusions: Object.freeze([
+      'Exclusion ID',
+      'Feuille source',
+      'Ligne source',
+      'Code normalisé',
+      'Type exclusion',
+      'Motif',
+      'Autorisé par',
+      'Date autorisation',
+      'Actif',
+      'Observation',
+      'Empreinte source autorisée'
+    ]),
+    namespaceUuidV5:
+      '6ba7b811-9dad-11d1-80b4-00c04fd430c8',
+    parametresPhotographie: Object.freeze([
+      'INITIAL_SNAPSHOT_STATUS',
+      'INITIAL_SNAPSHOT_DATE',
+      'INITIAL_SNAPSHOT_VERSION',
+      'INITIAL_SNAPSHOT_HASH'
+    ]),
+    entetesPhotographie: Object.freeze([
+      'Identité colis',
+      'Feuille source',
+      'Code brut',
+      'Code normalisé',
+      'Destination finale',
+      'Poids validé',
+      'Statut de référence normalisé',
+      'Dernier statut observé',
+      'Date d’enregistrement source',
+      'Empreinte de la ligne source',
+      'Version d’observation',
+      'Date de photographie',
+      'Version de photographie',
+      'Dernier Status Event ID',
+      'État',
+      'Anomalie éventuelle'
+    ]),
+    entetesRapport: Object.freeze([
+      'Date simulation',
+      'Identité colis',
+      'Feuille source',
+      'Code colis',
+      'Destination',
+      'Poids',
+      'Statut photographie',
+      'Statut observé',
+      'Version d’observation actuelle',
+      'Version d’observation proposée',
+      'Décision',
+      'Ordre mouvement',
+      'Type de mouvement théorique',
+      'Agence cible',
+      'Variation colis',
+      'Variation kg',
+      'Status Event ID théorique',
+      'Movement ID théorique',
+      'Anomalie',
+      'Commentaire'
+    ])
+  }),
+
+  entetes: Object.freeze({
+    parametres: Object.freeze([
+      'Clé',
+      'Valeur',
+      'Description',
+      'Modifié le',
+      'Modifié par'
+    ]),
+
+    soldeInitial: Object.freeze([
+      'Date et heure d’activation',
+      'Agence',
+      'Nombre initial de colis',
+      'Kilogrammes initiaux',
+      'Observation',
+      'Validé par',
+      'Statut',
+      'Initial Stock ID',
+      'Date de validation'
+    ]),
+
+    historique: Object.freeze([
+      'Date et heure détectée',
+      'Feuille source',
+      'Code colis',
+      'Destination finale',
+      'Poids',
+      'Ancien statut',
+      'Nouveau statut',
+      'Type de mouvement',
+      'Status Event ID',
+      'Date d’enregistrement source',
+      'Traité',
+      'Observation'
+    ]),
+
+    mouvements: Object.freeze([
+      'Date et heure',
+      'Date du mouvement',
+      'Agence',
+      'Code colis',
+      'Destination',
+      'Type de mouvement',
+      'Variation colis',
+      'Variation kg',
+      'Statut déclencheur',
+      'Source',
+      'Movement ID',
+      'Observation',
+      'Créé par',
+      'Annulé',
+      'Référence événement'
+    ]),
+
+    stockJournalier: Object.freeze([
+      'Date',
+      'Agence',
+      'Stock initial colis',
+      'Stock initial kg',
+      'Entrées colis',
+      'Entrées kg',
+      'Sorties colis',
+      'Sorties kg',
+      'Ajustements colis',
+      'Ajustements kg',
+      'Stock final colis',
+      'Stock final kg',
+      'Calculé le',
+      'Version calcul',
+      'Statut'
+    ]),
+
+    audit: Object.freeze([
+      'Date et heure',
+      'Utilisateur',
+      'Action',
+      'Agence',
+      'Référence',
+      'Ancienne valeur',
+      'Nouvelle valeur',
+      'Résultat',
+      'Détails',
+      'Audit ID'
+    ])
+  })
+});
+
+/**
+ * Menu du classeur.
+ *
+ * onOpen est un déclencheur simple réservé de Google Sheets.
+ * Aucun déclencheur installable ou planifié n’est créé.
+ */
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('STOCKAGES EEB')
+    .addItem(
+      'Initialiser le classeur',
+      'initialiserStockagesPublic'
+    )
+    .addItem(
+      'Vérifier la configuration',
+      'verifierConfigurationStockages'
+    )
+    .addItem(
+      'Définir la date d’activation',
+      'definirDateActivationStockages'
+    )
+    .addItem(
+      'Valider un solde initial',
+      'validerSoldeInitial'
+    )
+    .addItem(
+      'Activer le système',
+      'activerSystemeStockages'
+    )
+    .addItem(
+      'Désactiver le système',
+      'desactiverSystemeStockages'
+    )
+    .addItem(
+      'Recalculer le stock journalier',
+      'recalculerStockJournalier'
+    )
+    .addItem(
+  'Afficher le statut du système',
+  'afficherStatutSysteme'
+)
+.addItem(
+  'Auditer MANIFESTE PUBLIC',
+  'auditerManifestePublic'
+)
+.addItem(
+  'Auditer les anomalies du manifeste',
+  'auditerAnomaliesDetailleesManifestePublic'
+)
+.addItem(
+  'Créer la photographie initiale',
+  'creerPhotographieInitialeStockages'
+)
+.addItem(
+  'Vérifier la photographie initiale',
+  'verifierPhotographieInitialeStockages'
+)
+.addItem(
+  'Simuler la synchronisation',
+  'simulerSynchronisationStatutsStockages'
+)
+.addToUi();
+}
+
+  function auditerManifestePublic() {
+  const verrou = LockService.getScriptLock();
+  let classeurStockages = null;
+  let identifiantManifeste = '';
+
+  try {
+    verrou.waitLock(30000);
+
+    classeurStockages = SpreadsheetApp.getActiveSpreadsheet();
+
+    identifiantManifeste = String(
+      lireParametreStockagesBrut_(
+        classeurStockages,
+        'MANIFEST_SPREADSHEET_ID'
+      ) || ''
+    ).trim();
+
+    if (!identifiantManifeste) {
+      throw new Error(
+        'Le paramètre MANIFEST_SPREADSHEET_ID est vide.'
+      );
+    }
+
+    const classeurManifeste = SpreadsheetApp.openById(
+      identifiantManifeste
+    );
+
+    const feuillesAttendues = ['FIH', 'LSHI', 'KLZ'];
+    const feuillesAnalysees = [];
+    const feuillesConformes = [];
+    const anomaliesDetectees = [];
+
+    feuillesAttendues.forEach(function (nomFeuille) {
+      try {
+        const feuille = classeurManifeste.getSheetByName(nomFeuille);
+
+        if (!feuille) {
+          const detailErreur = {
+            feuille: nomFeuille,
+            erreur: 'Feuille introuvable dans MANIFESTE PUBLIC.'
+          };
+
+          ajouterAuditStockages_(classeurStockages, {
+            action: 'AUDIT_MANIFESTE_PUBLIC',
+            agence: nomFeuille,
+            reference: identifiantManifeste,
+            ancienneValeur: '',
+            nouvelleValeur: '',
+            resultat: 'ERREUR',
+            details: JSON.stringify(detailErreur)
+          });
+
+          anomaliesDetectees.push(
+            nomFeuille + ' : feuille introuvable'
+          );
+          return;
+        }
+
+        const resultat = analyserFeuilleManifesteStockages_(
+          feuille
+        );
+
+        feuillesAnalysees.push(nomFeuille);
+
+        const colonnesObligatoiresPresentes =
+          resultat.colonneDate !== null &&
+          resultat.colonneCode !== null &&
+          resultat.colonnePoids !== null &&
+          resultat.colonneStatut !== null;
+
+        let etatAudit = 'SUCCESS';
+
+        if (!colonnesObligatoiresPresentes) {
+          etatAudit = 'ERREUR';
+          anomaliesDetectees.push(
+            nomFeuille +
+              ' : une ou plusieurs colonnes obligatoires sont absentes'
+          );
+        } else if (
+          resultat.codesVides > 0 ||
+          resultat.codesDupliques > 0 ||
+          resultat.poidsInvalides > 0 ||
+          resultat.statutsVides > 0
+        ) {
+          etatAudit = 'AVERTISSEMENT';
+          anomaliesDetectees.push(
+            nomFeuille +
+              ' : codes vides=' + resultat.codesVides +
+              ', doublons=' + resultat.codesDupliques +
+              ', poids invalides=' + resultat.poidsInvalides +
+              ', statuts vides=' + resultat.statutsVides
+          );
+        } else {
+          feuillesConformes.push(nomFeuille);
+        }
+
+        ajouterAuditStockages_(classeurStockages, {
+          action: 'AUDIT_MANIFESTE_PUBLIC',
+          agence: nomFeuille,
+          reference: identifiantManifeste,
+          ancienneValeur: '',
+          nouvelleValeur: '',
+          resultat: etatAudit,
+          details: JSON.stringify(resultat)
+        });
+      } catch (erreurFeuille) {
+        const message = messageErreurStockages_(
+          erreurFeuille
+        );
+
+        ajouterAuditStockages_(classeurStockages, {
+          action: 'AUDIT_MANIFESTE_PUBLIC',
+          agence: nomFeuille,
+          reference: identifiantManifeste,
+          ancienneValeur: '',
+          nouvelleValeur: '',
+          resultat: 'ERREUR',
+          details: JSON.stringify({
+            feuille: nomFeuille,
+            erreur: message
+          })
+        });
+
+        anomaliesDetectees.push(
+          nomFeuille + ' : ' + message
+        );
+      }
+    });
+
+    SpreadsheetApp.getUi().alert(
+      'Audit MANIFESTE PUBLIC terminé',
+      [
+        'Feuilles analysées : ' +
+          (feuillesAnalysees.length
+            ? feuillesAnalysees.join(', ')
+            : 'aucune'),
+        'Feuilles conformes : ' +
+          (feuillesConformes.length
+            ? feuillesConformes.join(', ')
+            : 'aucune'),
+        'Anomalies détectées : ' +
+          anomaliesDetectees.length,
+        '',
+        'Aucune donnée du manifeste n’a été modifiée.'
+      ].join('\n'),
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+  } catch (erreur) {
+    const message = messageErreurStockages_(erreur);
+
+    if (classeurStockages) {
+      try {
+        ajouterAuditStockages_(classeurStockages, {
+          action: 'AUDIT_MANIFESTE_PUBLIC',
+          agence: '',
+          reference: identifiantManifeste || '',
+          ancienneValeur: '',
+          nouvelleValeur: '',
+          resultat: 'ERREUR',
+          details: JSON.stringify({
+            erreur: message
+          })
+        });
+      } catch (erreurAudit) {
+        // L’erreur principale reste prioritaire.
+      }
+    }
+
+    SpreadsheetApp.getUi().alert(
+      'Audit MANIFESTE PUBLIC impossible',
+      message +
+        '\n\nAucune donnée du manifeste n’a été modifiée.',
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+  } finally {
+    if (verrou.hasLock()) {
+      verrou.releaseLock();
+    }
+  }
+}
+
+function analyserFeuilleManifesteStockages_(feuille) {
+  const nombreLignes = feuille.getLastRow();
+  const nombreColonnes = feuille.getLastColumn();
+
+  const valeurs = nombreLignes > 0 && nombreColonnes > 0
+    ? feuille
+        .getRange(1, 1, nombreLignes, nombreColonnes)
+        .getValues()
+    : [];
+
+  const valeursAffichees = nombreLignes > 0 && nombreColonnes > 0
+    ? feuille
+        .getRange(1, 1, nombreLignes, nombreColonnes)
+        .getDisplayValues()
+    : [];
+
+  const entetes = valeursAffichees.length
+    ? valeursAffichees[0].map(function (valeur) {
+        return String(valeur || '').trim();
+      })
+    : [];
+
+  const colonneDate = trouverColonneManifesteStockages_(
+    entetes,
+    ['DATE', 'DATE ET HEURE']
+  );
+  const colonneCode = trouverColonneManifesteStockages_(
+    entetes,
+    ['CODE COLIS', 'CODE DU COLIS', 'CODECOLIS']
+  );
+  const colonnePoids = trouverColonneManifesteStockages_(
+    entetes,
+    [
+      'POIDS',
+      'POIDS KG',
+      'POIDS KGS',
+      'POIDS (KG)',
+      'POIDS (KGS)'
+    ]
+  );
+  const colonneStatut = trouverColonneManifesteStockages_(
+    entetes,
+    ['STATUT', 'STATUS']
+  );
+
+  const premieresLignesNonVides = [];
+  const statuts = {};
+  const codesRencontres = {};
+  const formatsPoids = {};
+
+  let codesVides = 0;
+  let codesDupliques = 0;
+  let poidsInvalides = 0;
+  let statutsVides = 0;
+
+  for (let indexLigne = 1; indexLigne < valeurs.length; indexLigne += 1) {
+    const ligneBrute = valeurs[indexLigne];
+    const ligneAffichee = valeursAffichees[indexLigne];
+
+    const ligneNonVide = ligneAffichee.some(function (valeur) {
+      return String(valeur || '').trim() !== '';
+    });
+
+    if (!ligneNonVide) {
+      continue;
+    }
+
+    if (premieresLignesNonVides.length < 5) {
+      premieresLignesNonVides.push({
+        ligne: indexLigne + 1,
+        valeurs: ligneAffichee.map(function (valeur) {
+          return String(valeur || '').trim();
+        })
+      });
+    }
+
+    if (colonneCode !== null) {
+      const code = String(
+        ligneAffichee[colonneCode - 1] || ''
+      ).trim();
+
+      if (!code) {
+        codesVides += 1;
+      } else {
+        const codeNormalise = code.toUpperCase();
+
+        if (codesRencontres[codeNormalise]) {
+          codesDupliques += 1;
+        } else {
+          codesRencontres[codeNormalise] = true;
+        }
+      }
+    }
+
+    if (colonnePoids !== null) {
+      const valeurBrute = ligneBrute[colonnePoids - 1];
+      const valeurAffichee = String(
+        ligneAffichee[colonnePoids - 1] || ''
+      ).trim();
+
+      const analysePoids = analyserFormatPoidsManifesteStockages_(
+        valeurBrute,
+        valeurAffichee
+      );
+
+      formatsPoids[analysePoids.format] =
+        (formatsPoids[analysePoids.format] || 0) + 1;
+
+      if (!analysePoids.interpretable) {
+        poidsInvalides += 1;
+      }
+    }
+
+    if (colonneStatut !== null) {
+      const statut = String(
+        ligneAffichee[colonneStatut - 1] || ''
+      ).trim();
+
+      if (!statut) {
+        statutsVides += 1;
+      } else {
+        statuts[statut] = true;
+      }
+    }
+  }
+
+  return {
+    feuille: feuille.getName(),
+    nombreLignes: nombreLignes,
+    nombreColonnes: nombreColonnes,
+    entetes: entetes,
+    colonneDate: colonneDate,
+    colonneCode: colonneCode,
+    colonnePoids: colonnePoids,
+    colonneStatut: colonneStatut,
+    premieresLignesNonVides: premieresLignesNonVides,
+    statutsTrouves: Object.keys(statuts).sort(),
+    formatsPoidsTrouves: formatsPoids,
+    codesVides: codesVides,
+    codesDupliques: codesDupliques,
+    poidsInvalides: poidsInvalides,
+    statutsVides: statutsVides
+  };
+}
+
+function trouverColonneManifesteStockages_(entetes, nomsAcceptes) {
+  const nomsNormalises = nomsAcceptes.map(function (nom) {
+    return normaliserEnteteManifesteStockages_(nom);
+  });
+
+  for (let index = 0; index < entetes.length; index += 1) {
+    const enteteNormalisee =
+      normaliserEnteteManifesteStockages_(entetes[index]);
+
+    if (nomsNormalises.indexOf(enteteNormalisee) !== -1) {
+      return index + 1;
+    }
+  }
+
+  return null;
+}
+
+function normaliserEnteteManifesteStockages_(valeur) {
+  return String(valeur || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+}
+
+function analyserFormatPoidsManifesteStockages_(
+  valeurBrute,
+  valeurAffichee
+) {
+  if (
+    typeof valeurBrute === 'number' &&
+    Number.isFinite(valeurBrute)
+  ) {
+    return {
+      interpretable: true,
+      format: Number.isInteger(valeurBrute)
+        ? 'NOMBRE_GOOGLE_SHEETS_ENTIER'
+        : 'NOMBRE_GOOGLE_SHEETS_DECIMAL'
+    };
+  }
+
+  const texte = String(valeurAffichee || '').trim();
+
+  if (!texte) {
+    return {
+      interpretable: false,
+      format: 'VIDE'
+    };
+  }
+
+  const correspondance = texte.match(
+    /^([+-]?\d+(?:[.,]\d+)?)\s*(kg|kgs)?$/i
+  );
+
+  if (!correspondance) {
+    return {
+      interpretable: false,
+      format: 'NON_INTERPRETABLE'
+    };
+  }
+
+  const nombreTexte = correspondance[1];
+  const suffixe = correspondance[2]
+    ? correspondance[2].toUpperCase()
+    : '';
+
+  let formatNombre = 'ENTIER_TEXTE';
+
+  if (nombreTexte.indexOf(',') !== -1) {
+    formatNombre = 'DECIMAL_VIRGULE';
+  } else if (nombreTexte.indexOf('.') !== -1) {
+    formatNombre = 'DECIMAL_POINT';
+  }
+
+  return {
+    interpretable: true,
+    format: suffixe
+      ? formatNombre + '_AVEC_' + suffixe
+      : formatNombre
+  };
+}
+
+/**
+ * Produit un rapport détaillé des anomalies de MANIFESTE PUBLIC.
+ *
+ * MANIFESTE PUBLIC est ouvert uniquement en lecture. Les seules écritures
+ * effectuées par cette fonction concernent ANOMALIES MANIFESTE et AUDIT
+ * dans le classeur STOCKAGES PUBLIC.
+ */
+function auditerAnomaliesDetailleesManifestePublic() {
+  const verrou = LockService.getScriptLock();
+  let classeurStockages = null;
+  let identifiantManifeste = '';
+
+  try {
+    verrou.waitLock(30000);
+
+    classeurStockages = SpreadsheetApp.getActiveSpreadsheet();
+    identifiantManifeste = String(
+      lireParametreStockagesBrut_(
+        classeurStockages,
+        'MANIFEST_SPREADSHEET_ID'
+      ) || ''
+    ).trim();
+
+    if (!identifiantManifeste) {
+      throw new Error(
+        'Le paramètre MANIFEST_SPREADSHEET_ID est vide.'
+      );
+    }
+
+    const classeurManifeste = SpreadsheetApp.openById(
+      identifiantManifeste
+    );
+    const nomsFeuilles = ['FIH', 'LSHI', 'KLZ'];
+    const dateAudit = new Date();
+    const anomalies = [];
+    const occurrencesParCode = {};
+    const feuillesAnalysees = [];
+    let nombreLignesAnalysees = 0;
+    let nombreLignesVidesIgnorees = 0;
+    let nombreLignesEntetesIgnorees = 0;
+    let nombrePoidsNonInterpretables = 0;
+    let nombreStatutsInconnus = 0;
+
+    nomsFeuilles.forEach(function (nomFeuille) {
+      const feuille = classeurManifeste.getSheetByName(
+        nomFeuille
+      );
+
+      if (!feuille) {
+        throw new Error(
+          'La feuille ' + nomFeuille +
+            ' est introuvable dans MANIFESTE PUBLIC.'
+        );
+      }
+
+      const nombreLignes = feuille.getLastRow();
+      const nombreColonnes = feuille.getLastColumn();
+
+      if (nombreLignes < 1 || nombreColonnes < 1) {
+        throw new Error(
+          'La feuille ' + nomFeuille + ' est vide.'
+        );
+      }
+
+      const valeurs = feuille
+        .getRange(1, 1, nombreLignes, nombreColonnes)
+        .getValues();
+      const valeursAffichees = feuille
+        .getRange(1, 1, nombreLignes, nombreColonnes)
+        .getDisplayValues();
+      const colonnes = detecterColonnesDetailManifesteStockages_(
+        valeursAffichees[0],
+        nomFeuille
+      );
+
+      feuillesAnalysees.push(nomFeuille);
+
+      for (
+        let indexLigne = 1;
+        indexLigne < valeurs.length;
+        indexLigne += 1
+      ) {
+        if (
+          estLigneEnteteManifesteStockages_(
+            valeursAffichees[indexLigne]
+          )
+        ) {
+          nombreLignesEntetesIgnorees += 1;
+          continue;
+        }
+
+        const analyse = analyserLigneManifesteDetaillee_({
+          dateAudit: dateAudit,
+          feuille: nomFeuille,
+          numeroLigne: indexLigne + 1,
+          valeurs: valeurs[indexLigne],
+          valeursAffichees: valeursAffichees[indexLigne],
+          colonnes: colonnes
+        });
+
+        if (analyse.ligneVide) {
+          nombreLignesVidesIgnorees += 1;
+          continue;
+        }
+
+        nombreLignesAnalysees += 1;
+
+        analyse.anomalies.forEach(function (anomalie) {
+          anomalies.push(anomalie);
+
+          if (
+            anomalie[11] === 'POIDS_NON_INTERPRETABLE'
+          ) {
+            nombrePoidsNonInterpretables += 1;
+          }
+
+          if (anomalie[11] === 'STATUT_INCONNU') {
+            nombreStatutsInconnus += 1;
+          }
+        });
+
+        if (analyse.occurrence.codeNormalise) {
+          const cleDoublon =
+            nomFeuille +
+            '|' +
+            analyse.occurrence.codeNormalise;
+
+          if (
+            !occurrencesParCode[cleDoublon]
+          ) {
+            occurrencesParCode[cleDoublon] = [];
+          }
+
+          occurrencesParCode[cleDoublon].push(
+            analyse.occurrence
+          );
+        }
+      }
+    });
+
+    const resultatDoublons =
+      classifierDoublonsManifesteStockages_(
+        occurrencesParCode,
+        dateAudit
+      );
+
+    resultatDoublons.anomalies.forEach(function (anomalie) {
+      anomalies.push(anomalie);
+    });
+
+    const feuilleAnomalies =
+      creerOuVerifierFeuilleAnomaliesManifeste_(
+        classeurStockages
+      );
+
+    const derniereLigne = feuilleAnomalies.getLastRow();
+
+    if (derniereLigne > 1) {
+      feuilleAnomalies
+        .getRange(
+          2,
+          1,
+          derniereLigne - 1,
+          15
+        )
+        .clearContent();
+    }
+
+    if (anomalies.length > 0) {
+      feuilleAnomalies
+        .getRange(2, 1, anomalies.length, 15)
+        .setValues(anomalies);
+    }
+
+    const compteursGravite = {
+      INFO: 0,
+      AVERTISSEMENT: 0,
+      BLOQUANT: 0
+    };
+
+    anomalies.forEach(function (anomalie) {
+      const gravite = anomalie[12];
+
+      if (
+        Object.prototype.hasOwnProperty.call(
+          compteursGravite,
+          gravite
+        )
+      ) {
+        compteursGravite[gravite] += 1;
+      }
+    });
+
+    const resume = {
+      feuillesAnalysees: feuillesAnalysees,
+      nombreLignesAnalysees: nombreLignesAnalysees,
+      nombreLignesEntierementVidesIgnorees:
+        nombreLignesVidesIgnorees,
+      nombreLignesEntetesIgnorees:
+        nombreLignesEntetesIgnorees,
+      nombreAnomaliesInfo: compteursGravite.INFO,
+      nombreAnomaliesAvertissement:
+        compteursGravite.AVERTISSEMENT,
+      nombreAnomaliesBloquant:
+        compteursGravite.BLOQUANT,
+      nombreCodesDupliques:
+        resultatDoublons.nombreCodesDupliques,
+      nombrePoidsNonInterpretables:
+        nombrePoidsNonInterpretables,
+      nombreStatutsInconnus: nombreStatutsInconnus
+    };
+
+    ajouterAuditStockages_(classeurStockages, {
+      action: 'AUDIT_ANOMALIES_MANIFESTE_PUBLIC',
+      agence: '',
+      reference: identifiantManifeste,
+      ancienneValeur: '',
+      nouvelleValeur: '',
+      resultat:
+        compteursGravite.BLOQUANT > 0
+          ? 'AVERTISSEMENT'
+          : 'SUCCESS',
+      details: JSON.stringify(resume)
+    });
+
+    SpreadsheetApp.getUi().alert(
+      'Audit détaillé du manifeste terminé',
+      [
+        'Feuilles analysées : ' +
+          feuillesAnalysees.join(', '),
+        'Lignes analysées : ' +
+          nombreLignesAnalysees,
+        'Lignes entièrement vides ignorées : ' +
+          nombreLignesVidesIgnorees,
+        'Lignes d’en-têtes ignorées : ' +
+          nombreLignesEntetesIgnorees,
+        'Anomalies INFO : ' +
+          compteursGravite.INFO,
+        'Anomalies AVERTISSEMENT : ' +
+          compteursGravite.AVERTISSEMENT,
+        'Anomalies BLOQUANT : ' +
+          compteursGravite.BLOQUANT,
+        'Codes dupliqués : ' +
+          resultatDoublons.nombreCodesDupliques,
+        '',
+        'Aucune donnée de MANIFESTE PUBLIC n’a été modifiée.'
+      ].join('\n'),
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+  } catch (erreur) {
+    const message = messageErreurStockages_(erreur);
+
+    if (classeurStockages) {
+      try {
+        ajouterAuditStockages_(classeurStockages, {
+          action: 'AUDIT_ANOMALIES_MANIFESTE_PUBLIC',
+          agence: '',
+          reference: identifiantManifeste || '',
+          ancienneValeur: '',
+          nouvelleValeur: '',
+          resultat: 'ERREUR',
+          details: JSON.stringify({
+            erreur: message
+          })
+        });
+      } catch (erreurAudit) {
+        // L’erreur d’origine reste prioritaire.
+      }
+    }
+
+    SpreadsheetApp.getUi().alert(
+      'Audit détaillé du manifeste impossible',
+      message +
+        '\n\nAucune donnée de MANIFESTE PUBLIC n’a été modifiée.',
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+  } finally {
+    if (verrou.hasLock()) {
+      verrou.releaseLock();
+    }
+  }
+}
+
+function creerOuVerifierFeuilleAnomaliesManifeste_(
+  classeur
+) {
+  const nomFeuille = 'ANOMALIES MANIFESTE';
+  const entetes = [
+    'Date audit',
+    'Feuille source',
+    'Ligne source',
+    'Code brut',
+    'Code normalisé',
+    'Date colis',
+    'Poids brut',
+    'Type Google Sheets du poids',
+    'Poids interprété',
+    'Statut brut',
+    'Statut normalisé',
+    'Type anomalie',
+    'Gravité',
+    'Décision proposée',
+    'Commentaire'
+  ];
+  let feuille = classeur.getSheetByName(nomFeuille);
+
+  if (!feuille) {
+    feuille = classeur.insertSheet(nomFeuille);
+    feuille
+      .getRange(1, 1, 1, entetes.length)
+      .setValues([entetes]);
+    feuille.setFrozenRows(1);
+    feuille
+      .getRange(1, 1, 1, entetes.length)
+      .setFontWeight('bold');
+    return feuille;
+  }
+
+  if (feuille.getMaxColumns() < entetes.length) {
+    feuille.insertColumnsAfter(
+      feuille.getMaxColumns(),
+      entetes.length - feuille.getMaxColumns()
+    );
+  }
+
+  const entetesActuelles = feuille
+    .getRange(1, 1, 1, entetes.length)
+    .getDisplayValues()[0];
+  const ligneEntetesVide = entetesActuelles.every(
+    function (valeur) {
+      return String(valeur || '').trim() === '';
+    }
+  );
+
+  if (ligneEntetesVide) {
+    feuille
+      .getRange(1, 1, 1, entetes.length)
+      .setValues([entetes]);
+  } else {
+    const entetesCompatibles = entetes.every(
+      function (entete, index) {
+        return entetesActuelles[index] === entete;
+      }
+    );
+
+    if (!entetesCompatibles) {
+      throw new Error(
+        'Les en-têtes existants de la feuille ' +
+          nomFeuille +
+          ' ne correspondent pas au rapport attendu.'
+      );
+    }
+  }
+
+  return feuille;
+}
+
+function analyserLigneManifesteDetaillee_(contexte) {
+  const brut = contexte.valeurs;
+  const affiche = contexte.valeursAffichees;
+  const colonnes = contexte.colonnes;
+
+  const dateBrute = brut[colonnes.date - 1];
+  const dateAffichee = String(
+    affiche[colonnes.date - 1] || ''
+  ).trim();
+  const codeBrut = String(
+    affiche[colonnes.code - 1] || ''
+  ).trim();
+  const poidsBrut = brut[colonnes.poids - 1];
+  const poidsAffiche = String(
+    affiche[colonnes.poids - 1] || ''
+  ).trim();
+  const statutBrut = String(
+    affiche[colonnes.statut - 1] || ''
+  ).trim();
+  const codeNormalise =
+    normaliserCodeColisManifesteStockages_(codeBrut);
+  const statutNormalise =
+    normaliserStatutManifesteStockages_(statutBrut);
+  const poids = interpreterPoidsManifesteStockages_(
+    poidsBrut,
+    poidsAffiche
+  );
+
+  const ligneVide =
+    estValeurAuditManifesteVide_(
+      dateBrute,
+      dateAffichee
+    ) &&
+    estValeurAuditManifesteVide_(codeBrut, codeBrut) &&
+    estValeurAuditManifesteVide_(
+      poidsBrut,
+      poidsAffiche
+    ) &&
+    estValeurAuditManifesteVide_(
+      statutBrut,
+      statutBrut
+    );
+
+  if (ligneVide) {
+    return {
+      ligneVide: true,
+      anomalies: [],
+      occurrence: {
+        codeNormalise: ''
+      }
+    };
+  }
+
+  const expediteur = colonnes.expediteur
+    ? String(
+        affiche[colonnes.expediteur - 1] || ''
+      ).trim()
+    : '';
+  const beneficiaire = colonnes.beneficiaire
+    ? String(
+        affiche[colonnes.beneficiaire - 1] || ''
+      ).trim()
+    : '';
+  const base = {
+    dateAudit: contexte.dateAudit,
+    feuille: contexte.feuille,
+    numeroLigne: contexte.numeroLigne,
+    codeBrut: codeBrut,
+    codeNormalise: codeNormalise,
+    dateColis: dateAffichee,
+    poidsBrut: poidsAffiche,
+    typePoids: poids.type,
+    poidsInterprete: poids.valide ? poids.valeur : '',
+    statutBrut: statutBrut,
+    statutNormalise: statutNormalise
+  };
+  const anomalies = [];
+
+  if (!codeNormalise) {
+    anomalies.push(
+      construireAnomalieManifesteStockages_(
+        base,
+        'CODE_COLIS_MANQUANT',
+        'BLOQUANT',
+        'CORRIGER',
+        'Le code colis est vide.'
+      )
+    );
+  }
+
+  if (poids.type === 'VIDE') {
+    anomalies.push(
+      construireAnomalieManifesteStockages_(
+        base,
+        'POIDS_MANQUANT',
+        'BLOQUANT',
+        'CORRIGER',
+        'Le poids est vide.'
+      )
+    );
+  } else if (poids.type === 'NON_INTERPRETABLE') {
+    anomalies.push(
+      construireAnomalieManifesteStockages_(
+        base,
+        'POIDS_NON_INTERPRETABLE',
+        'BLOQUANT',
+        'CORRIGER',
+        'Le poids ne correspond à aucun format métier certain.'
+      )
+    );
+  } else if (!poids.valide) {
+    anomalies.push(
+      construireAnomalieManifesteStockages_(
+        base,
+        'POIDS_NUL_OU_NEGATIF',
+        'BLOQUANT',
+        'CORRIGER',
+        'Le poids doit être strictement supérieur à zéro.'
+      )
+    );
+  }
+
+  if (!statutBrut) {
+    anomalies.push(
+      construireAnomalieManifesteStockages_(
+        base,
+        'STATUT_MANQUANT',
+        'BLOQUANT',
+        'CORRIGER',
+        'Le statut est vide.'
+      )
+    );
+  } else if (!statutNormalise) {
+    anomalies.push(
+      construireAnomalieManifesteStockages_(
+        base,
+        'STATUT_INCONNU',
+        'BLOQUANT',
+        'VERIFIER',
+        'Le statut ne correspond à aucune valeur reconnue.'
+      )
+    );
+  }
+
+  return {
+    ligneVide: false,
+    anomalies: anomalies,
+    occurrence: {
+      base: base,
+      feuille: contexte.feuille,
+      numeroLigne: contexte.numeroLigne,
+      codeNormalise: codeNormalise,
+      dateColis: dateAffichee,
+      poidsValide: poids.valide,
+      poidsInterprete: poids.valide ? poids.valeur : null,
+      statutBrut: statutBrut,
+      statutNormalise: statutNormalise,
+      expediteur: expediteur,
+      expediteurNormalise:
+        normaliserIdentiteManifesteStockages_(
+          expediteur
+        ),
+      beneficiaire: beneficiaire,
+      beneficiaireNormalise:
+        normaliserIdentiteManifesteStockages_(
+          beneficiaire
+        )
+    }
+  };
+}
+
+function normaliserStatutManifesteStockages_(valeur) {
+  const statut = normaliserTexteAuditManifesteStockages_(
+    valeur
+  );
+  const correspondances = {
+    'EN ATTENTE': 'ENREGISTRE',
+    ENREGISTRE: 'ENREGISTRE',
+    DEPOSE: 'ENREGISTRE',
+    'EN VOL': 'EN_VOL',
+    'EN TRANSIT': 'EN_TRANSIT',
+    ARRIVE: 'ARRIVE',
+    LIVRE: 'LIVRE'
+  };
+
+  return correspondances[statut] || '';
+}
+
+function normaliserCodeColisManifesteStockages_(valeur) {
+  return String(valeur || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '');
+}
+
+function interpreterPoidsManifesteStockages_(
+  valeurBrute,
+  valeurAffichee
+) {
+  if (
+    typeof valeurBrute === 'number' &&
+    Number.isFinite(valeurBrute)
+  ) {
+    return {
+      valide: valeurBrute > 0,
+      valeur: valeurBrute,
+      type: Number.isInteger(valeurBrute)
+        ? 'NOMBRE_GOOGLE_SHEETS_ENTIER'
+        : 'NOMBRE_GOOGLE_SHEETS_DECIMAL'
+    };
+  }
+
+  const texte = String(valeurAffichee || '').trim();
+
+  if (!texte) {
+    return {
+      valide: false,
+      valeur: null,
+      type: 'VIDE'
+    };
+  }
+
+  const correspondance = texte.match(
+    /^([+-]?\d+(?:[.,]\d+)?)\s*(kg|kgs)?$/i
+  );
+
+  if (!correspondance) {
+    return {
+      valide: false,
+      valeur: null,
+      type: 'NON_INTERPRETABLE'
+    };
+  }
+
+  const nombre = Number(
+    correspondance[1].replace(',', '.')
+  );
+
+  if (!Number.isFinite(nombre)) {
+    return {
+      valide: false,
+      valeur: null,
+      type: 'NON_INTERPRETABLE'
+    };
+  }
+
+  const suffixe = correspondance[2]
+    ? correspondance[2].toUpperCase()
+    : '';
+  const separateur = correspondance[1].indexOf(',') !== -1
+    ? 'DECIMAL_VIRGULE'
+    : correspondance[1].indexOf('.') !== -1
+      ? 'DECIMAL_POINT'
+      : 'ENTIER_TEXTE';
+
+  return {
+    valide: nombre > 0,
+    valeur: nombre,
+    type: suffixe
+      ? separateur + '_AVEC_' + suffixe
+      : separateur
+  };
+}
+
+function classifierDoublonsManifesteStockages_(
+  occurrencesParCode,
+  dateAudit
+) {
+  const anomalies = [];
+  let nombreCodesDupliques = 0;
+
+  Object.keys(occurrencesParCode).forEach(
+    function (cleDoublon) {
+      const occurrences =
+        occurrencesParCode[cleDoublon];
+
+      if (occurrences.length < 2) {
+        return;
+      }
+
+      const codeNormalise =
+        occurrences[0].codeNormalise;
+
+      nombreCodesDupliques += 1;
+
+      const poidsDistincts =
+        valeursDistinctesAuditManifeste_(
+          occurrences,
+          function (occurrence) {
+            return occurrence.poidsValide
+              ? String(occurrence.poidsInterprete)
+              : '';
+          }
+        );
+      const expediteursDistincts =
+        valeursDistinctesAuditManifeste_(
+          occurrences,
+          function (occurrence) {
+            return occurrence.expediteurNormalise;
+          }
+        );
+      const beneficiairesDistincts =
+        valeursDistinctesAuditManifeste_(
+          occurrences,
+          function (occurrence) {
+            return occurrence.beneficiaireNormalise;
+          }
+        );
+      const statutsDistincts =
+        valeursDistinctesAuditManifeste_(
+          occurrences,
+          function (occurrence) {
+            return occurrence.statutNormalise;
+          }
+        );
+      const datesDistinctes =
+        valeursDistinctesAuditManifeste_(
+          occurrences,
+          function (occurrence) {
+            return occurrence.dateColis;
+          }
+        );
+
+      let typeAnomalie = 'CODE_DUPLIQUE_STRICT';
+      let gravite = 'AVERTISSEMENT';
+      let decision = 'VERIFIER';
+      const differences = [];
+
+      if (poidsDistincts.length > 1) {
+        typeAnomalie =
+          'CODE_DUPLIQUE_POIDS_INCOHERENT';
+        gravite = 'BLOQUANT';
+        decision = 'CORRIGER';
+        differences.push('poids différents');
+      } else if (
+        expediteursDistincts.length > 1 ||
+        beneficiairesDistincts.length > 1
+      ) {
+        typeAnomalie = 'CODE_REUTILISE';
+        gravite = 'BLOQUANT';
+        decision = 'CORRIGER';
+
+        if (expediteursDistincts.length > 1) {
+          differences.push('expéditeurs différents');
+        }
+
+        if (beneficiairesDistincts.length > 1) {
+          differences.push('bénéficiaires différents');
+        }
+      } else if (statutsDistincts.length > 1) {
+        typeAnomalie =
+          'CODE_DUPLIQUE_STATUT_INCOHERENT';
+        gravite = 'BLOQUANT';
+        decision = 'VERIFIER';
+        differences.push(
+          'statuts métier normalisés différents'
+        );
+      } else {
+        differences.push(
+          'aucune incohérence matérielle forte détectée'
+        );
+      }
+
+      if (datesDistinctes.length > 1) {
+        differences.push(
+          'dates différentes : ' +
+            datesDistinctes.join(', ')
+        );
+      }
+
+      const commentaire =
+        'Code ' +
+        codeNormalise +
+        ' présent ' +
+        occurrences.length +
+        ' fois dans la feuille ' +
+        occurrences[0].feuille +
+        '. ' +
+        differences.join(' ; ') +
+        '. Occurrences : ' +
+        occurrences
+          .map(function (occurrence) {
+            return (
+              occurrence.feuille +
+              ' ligne ' +
+              occurrence.numeroLigne
+            );
+          })
+          .join(', ') +
+        '.';
+
+      occurrences.forEach(function (occurrence) {
+        const base = Object.assign(
+          {},
+          occurrence.base,
+          {
+            dateAudit: dateAudit
+          }
+        );
+
+        anomalies.push(
+          construireAnomalieManifesteStockages_(
+            base,
+            typeAnomalie,
+            gravite,
+            decision,
+            commentaire
+          )
+        );
+      });
+    }
+  );
+
+  return {
+    anomalies: anomalies,
+    nombreCodesDupliques: nombreCodesDupliques
+  };
+}
+
+function construireAnomalieManifesteStockages_(
+  base,
+  typeAnomalie,
+  gravite,
+  decision,
+  commentaire
+) {
+  return [
+    base.dateAudit,
+    base.feuille,
+    base.numeroLigne,
+    base.codeBrut,
+    base.codeNormalise,
+    base.dateColis,
+    base.poidsBrut,
+    base.typePoids,
+    base.poidsInterprete,
+    base.statutBrut,
+    base.statutNormalise,
+    typeAnomalie,
+    gravite,
+    decision,
+    commentaire
+  ];
+}
+
+function detecterColonnesDetailManifesteStockages_(
+  entetes,
+  nomFeuille
+) {
+  const colonnes = {
+    date: trouverColonneManifesteStockages_(
+      entetes,
+      ['DATE', 'DATE ET HEURE']
+    ),
+    code: trouverColonneManifesteStockages_(
+      entetes,
+      ['CODE COLIS', 'CODE DU COLIS', 'CODECOLIS']
+    ),
+    poids: trouverColonneManifesteStockages_(
+      entetes,
+      [
+        'POIDS',
+        'POIDS KG',
+        'POIDS KGS',
+        'POIDS (KG)',
+        'POIDS (KGS)'
+      ]
+    ),
+    statut: trouverColonneManifesteStockages_(
+      entetes,
+      ['STATUT', 'STATUS']
+    ),
+    expediteur: trouverColonneManifesteStockages_(
+      entetes,
+      [
+        'NOM ET NUMERO EXPEDITEUR',
+        'NOM ET NUMÉRO EXPÉDITEUR',
+        'EXPEDITEUR',
+        'EXPÉDITEUR'
+      ]
+    ),
+    beneficiaire: trouverColonneManifesteStockages_(
+      entetes,
+      [
+        'NOM ET NUMERO BENEFICIAIRE',
+        'NOM ET NUMÉRO BÉNÉFICIAIRE',
+        'BENEFICIAIRE',
+        'BÉNÉFICIAIRE'
+      ]
+    )
+  };
+
+  if (
+    colonnes.date === null ||
+    colonnes.code === null ||
+    colonnes.poids === null ||
+    colonnes.statut === null
+  ) {
+    throw new Error(
+      'Colonnes Date, Code colis, Poids ou Statut ' +
+        'introuvables dans la feuille ' +
+        nomFeuille +
+        '.'
+    );
+  }
+
+  return colonnes;
+}
+
+function normaliserTexteAuditManifesteStockages_(valeur) {
+  return String(valeur || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function estLigneEnteteManifesteStockages_(
+  valeursAffichees
+) {
+  const libelles = valeursAffichees.map(function (valeur) {
+    return normaliserTexteAuditManifesteStockages_(
+      valeur
+    );
+  });
+  const contientDate = libelles.some(function (libelle) {
+    return (
+      libelle === 'DATE' ||
+      libelle === 'DATE ET HEURE'
+    );
+  });
+  const contientCode = libelles.some(function (libelle) {
+    return (
+      libelle === 'CODE COLIS' ||
+      libelle === 'CODE DU COLIS' ||
+      libelle === 'CODECOLIS'
+    );
+  });
+  const contientPoids = libelles.some(function (libelle) {
+    return (
+      libelle === 'POIDS' ||
+      libelle === 'POIDS KG' ||
+      libelle === 'POIDS KGS'
+    );
+  });
+  const contientStatut = libelles.some(function (libelle) {
+    return (
+      libelle === 'STATUT' ||
+      libelle === 'STATUS' ||
+      libelle.indexOf('STATUT ') === 0 ||
+      libelle.indexOf('STATUS ') === 0
+    );
+  });
+
+  return (
+    contientDate &&
+    contientCode &&
+    contientPoids &&
+    contientStatut
+  );
+}
+
+function normaliserIdentiteManifesteStockages_(valeur) {
+  return normaliserTexteAuditManifesteStockages_(
+    valeur
+  );
+}
+
+function estValeurAuditManifesteVide_(
+  valeurBrute,
+  valeurAffichee
+) {
+  const bruteVide =
+    valeurBrute === null ||
+    typeof valeurBrute === 'undefined' ||
+    (typeof valeurBrute === 'string' &&
+      valeurBrute.trim() === '');
+  const afficheeVide =
+    String(valeurAffichee || '').trim() === '';
+
+  return bruteVide && afficheeVide;
+}
+
+function valeursDistinctesAuditManifeste_(
+  occurrences,
+  selecteur
+) {
+  const valeurs = {};
+
+  occurrences.forEach(function (occurrence) {
+    const valeur = String(
+      selecteur(occurrence) || ''
+    ).trim();
+
+    if (valeur) {
+      valeurs[valeur] = true;
+    }
+  });
+
+  return Object.keys(valeurs).sort();
+}
+
+/**
+ * Crée la photographie officielle sans produire d’événement ni mouvement.
+ */
+function creerPhotographieInitialeStockages() {
+  const verrou = LockService.getScriptLock();
+
+  try {
+    verrou.waitLock(30000);
+
+    const classeur = SpreadsheetApp.getActiveSpreadsheet();
+    exigerConfigurationValide_(classeur);
+
+    const conditions =
+      verifierConditionsPhotographieInitiale_(classeur);
+    const identifiantManifeste = String(
+      lireParametreStockagesBrut_(
+        classeur,
+        'MANIFEST_SPREADSHEET_ID'
+      ) || ''
+    ).trim();
+    const classeurManifeste = SpreadsheetApp.openById(
+      identifiantManifeste
+    );
+    const manifeste =
+      lireManifestePourSimulationStockages_(
+        classeurManifeste
+      );
+    const exclusions =
+      chargerExclusionsPhotographieStockages_(classeur);
+    const applicationExclusions =
+      appliquerExclusionsPhotographieStockages_(
+        manifeste.occurrences,
+        exclusions.actives
+      );
+
+    tracerCycleVieExclusionsPhotographieStockages_(
+      classeur,
+      exclusions.toutes
+    );
+    auditerApplicationExclusionsPhotographieStockages_(
+      classeur,
+      applicationExclusions,
+      'PHOTOGRAPHIE'
+    );
+
+    if (
+      applicationExclusions.invalides.length > 0 ||
+      applicationExclusions.nonTrouvees.length > 0
+    ) {
+      throw new Error(
+        'La photographie officielle est refusée : ' +
+          applicationExclusions.invalides.length +
+          ' exclusion(s) active(s) invalide(s) et ' +
+          applicationExclusions.nonTrouvees.length +
+          ' exclusion(s) active(s) non retrouvée(s).'
+      );
+    }
+
+    const resolution =
+      resoudreDoublonsAvecExclusionsStockages_(
+        manifeste.occurrences,
+        applicationExclusions.appliquees
+      );
+
+    manifeste.lignes = resolution.lignes;
+    manifeste.nombreBloques = resolution.nombreBloques;
+    manifeste.exclusionsAppliquees =
+      applicationExclusions.appliquees;
+
+    if (manifeste.nombreBloques > 0) {
+      throw new Error(
+        'La photographie officielle est refusée : ' +
+          manifeste.nombreBloques +
+          ' identité(s) ou ligne(s) présentent une anomalie bloquante.'
+      );
+    }
+
+    if (manifeste.lignes.length === 0) {
+      throw new Error(
+        'Aucune référence valide ne peut être photographiée.'
+      );
+    }
+
+    const interfaceUtilisateur = SpreadsheetApp.getUi();
+    const confirmation = interfaceUtilisateur.alert(
+      'Créer la photographie initiale',
+      [
+        'Cette opération établira la référence officielle sans rétroactivité.',
+        '',
+        'Références valides : ' +
+          manifeste.lignes.length,
+        'Date d’activation : ' +
+          formaterDateHeureStockages_(
+            conditions.dateActivation
+          ),
+        'Lignes d’en-têtes ignorées : ' +
+          manifeste.nombreEntetesIgnorees,
+        'Lignes vides ignorées : ' +
+          manifeste.nombreLignesVidesIgnorees,
+        'Exclusions actives : ' +
+          exclusions.actives.length,
+        'Exclusions appliquées : ' +
+          applicationExclusions.appliquees.length,
+        'Exclusions invalides : ' +
+          applicationExclusions.invalides.length,
+        'Exclusions non trouvées : ' +
+          applicationExclusions.nonTrouvees.length,
+        'Lignes bloquantes restantes : ' +
+          manifeste.nombreBloques,
+        '',
+        'Aucun historique et aucun mouvement ne seront créés.',
+        'Confirmer la création ?'
+      ].join('\n'),
+      interfaceUtilisateur.ButtonSet.YES_NO
+    );
+
+    if (confirmation !== interfaceUtilisateur.Button.YES) {
+      return;
+    }
+
+    const datePhotographie = new Date();
+    const versionPhotographie = 1;
+    const photographie =
+      construirePhotographieInitialeStockages_(
+        manifeste.lignes,
+        datePhotographie,
+        versionPhotographie
+      );
+    const hash = calculerHashPhotographieStockages_(
+      photographie.objets
+    );
+    const feuille =
+      creerOuVerifierFeuillePhotographieStockages_(
+        classeur
+      );
+
+    if (feuille.getLastRow() > 1) {
+      throw new Error(
+        'PHOTOGRAPHIE STATUTS contient déjà des données. Aucune donnée existante ne sera remplacée.'
+      );
+    }
+
+    assurerParametresPhotographieStockages_(classeur);
+
+    feuille
+      .getRange(
+        2,
+        1,
+        photographie.valeurs.length,
+        STOCKAGES_CONFIG.simulation
+          .entetesPhotographie.length
+      )
+      .setValues(photographie.valeurs);
+
+    ecrireParametreStockages_(
+      classeur,
+      'INITIAL_SNAPSHOT_DATE',
+      datePhotographie,
+      'Date technique de création de la photographie initiale.'
+    );
+    ecrireParametreStockages_(
+      classeur,
+      'INITIAL_SNAPSHOT_VERSION',
+      versionPhotographie,
+      'Version de la photographie initiale.'
+    );
+    ecrireParametreStockages_(
+      classeur,
+      'INITIAL_SNAPSHOT_HASH',
+      hash,
+      'Empreinte SHA-256 du contenu canonique de la photographie.'
+    );
+    ecrireParametreStockages_(
+      classeur,
+      'INITIAL_SNAPSHOT_STATUS',
+      'VALIDE',
+      'État de la photographie initiale.'
+    );
+
+    ajouterAuditStockages_(classeur, {
+      action: 'CREATION_PHOTOGRAPHIE_INITIALE',
+      agence: '',
+      reference: hash,
+      ancienneValeur: 'ABSENT',
+      nouvelleValeur: 'VALIDE',
+      resultat: 'SUCCESS',
+      details: JSON.stringify({
+        nombreReferences: photographie.valeurs.length,
+        versionPhotographie: versionPhotographie,
+        exclusionsActives: exclusions.actives.length,
+        exclusionsAppliquees:
+          applicationExclusions.appliquees.length,
+        exclusionsInvalides:
+          applicationExclusions.invalides.length,
+        exclusionsNonTrouvees:
+          applicationExclusions.nonTrouvees.length,
+        aucunHistoriqueCree: true,
+        aucunMouvementCree: true
+      })
+    });
+
+    interfaceUtilisateur.alert(
+      'Photographie initiale créée',
+      [
+        'Références : ' + photographie.valeurs.length,
+        'Exclusions appliquées : ' +
+          applicationExclusions.appliquees.length,
+        'Version : ' + versionPhotographie,
+        'Intégrité : vérifiée',
+        '',
+        'Aucun historique et aucun mouvement n’ont été créés.',
+        'Le système reste en BROUILLON.'
+      ].join('\n'),
+      interfaceUtilisateur.ButtonSet.OK
+    );
+  } catch (erreur) {
+    journaliserErreurStockages_(
+      'CREATION_PHOTOGRAPHIE_INITIALE',
+      erreur
+    );
+    SpreadsheetApp.getUi().alert(
+      'Photographie initiale impossible',
+      messageErreurStockages_(erreur),
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+    throw erreur;
+  } finally {
+    if (verrou.hasLock()) {
+      verrou.releaseLock();
+    }
+  }
+}
+
+/**
+ * Vérifie le schéma, l’unicité et l’empreinte de la photographie.
+ */
+function verifierPhotographieInitialeStockages() {
+  const verrou = LockService.getScriptLock();
+
+  try {
+    verrou.waitLock(30000);
+
+    const classeur = SpreadsheetApp.getActiveSpreadsheet();
+    const resultat =
+      verifierIntegritePhotographieStockages_(classeur);
+
+    ajouterAuditStockages_(classeur, {
+      action: 'VERIFICATION_PHOTOGRAPHIE_INITIALE',
+      agence: '',
+      reference: resultat.hashCalcule,
+      ancienneValeur: resultat.hashEnregistre,
+      nouvelleValeur: resultat.hashCalcule,
+      resultat: resultat.valide ? 'SUCCESS' : 'ERREUR',
+      details: JSON.stringify({
+        nombreReferences: resultat.nombreReferences,
+        versionPhotographie:
+          resultat.versionPhotographie,
+        erreurs: resultat.erreurs
+      })
+    });
+
+    SpreadsheetApp.getUi().alert(
+      resultat.valide
+        ? 'Photographie initiale valide'
+        : 'Photographie initiale invalide',
+      [
+        'Références : ' + resultat.nombreReferences,
+        'Version : ' + resultat.versionPhotographie,
+        'Empreinte conforme : ' +
+          (resultat.hashConforme ? 'OUI' : 'NON'),
+        resultat.erreurs.length
+          ? 'Erreurs :\n- ' +
+            resultat.erreurs.join('\n- ')
+          : 'Aucune anomalie détectée.'
+      ].join('\n'),
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+  } catch (erreur) {
+    journaliserErreurStockages_(
+      'VERIFICATION_PHOTOGRAPHIE_INITIALE',
+      erreur
+    );
+    throw erreur;
+  } finally {
+    if (verrou.hasLock()) {
+      verrou.releaseLock();
+    }
+  }
+}
+
+/**
+ * Calcule un rapport théorique sans modifier la photographie,
+ * HISTORIQUE STATUTS, MOUVEMENTS STOCK ou STOCK JOURNALIER.
+ */
+function simulerSynchronisationStatutsStockages() {
+  const verrou = LockService.getScriptLock();
+
+  try {
+    verrou.waitLock(30000);
+
+    const classeur = SpreadsheetApp.getActiveSpreadsheet();
+    const statutSysteme = lireParametreStockages_(
+      classeur,
+      'SYSTEM_STATUS'
+    );
+
+    if (
+      ['BROUILLON', 'ACTIF'].indexOf(
+        statutSysteme
+      ) === -1
+    ) {
+      throw new Error(
+        'La simulation est autorisée uniquement lorsque SYSTEM_STATUS = BROUILLON ou ACTIF.'
+      );
+    }
+
+    const integrite =
+      verifierIntegritePhotographieStockages_(classeur);
+
+    if (!integrite.valide) {
+      throw new Error(
+        'La photographie initiale est invalide : ' +
+          integrite.erreurs.join(' ; ')
+      );
+    }
+
+    const identifiantManifeste = String(
+      lireParametreStockagesBrut_(
+        classeur,
+        'MANIFEST_SPREADSHEET_ID'
+      ) || ''
+    ).trim();
+    const classeurManifeste = SpreadsheetApp.openById(
+      identifiantManifeste
+    );
+    const manifeste =
+      lireManifestePourSimulationStockages_(
+        classeurManifeste
+      );
+    const exclusions =
+      chargerExclusionsPhotographieStockages_(classeur);
+    const applicationExclusions =
+      appliquerExclusionsPhotographieStockages_(
+        manifeste.occurrences,
+        exclusions.actives
+      );
+
+    tracerCycleVieExclusionsPhotographieStockages_(
+      classeur,
+      exclusions.toutes
+    );
+    auditerApplicationExclusionsPhotographieStockages_(
+      classeur,
+      applicationExclusions,
+      'SIMULATION'
+    );
+
+    if (
+      applicationExclusions.invalides.length > 0 ||
+      applicationExclusions.nonTrouvees.length > 0
+    ) {
+      throw new Error(
+        'La simulation est refusée : ' +
+          applicationExclusions.invalides.length +
+          ' exclusion(s) active(s) invalide(s) et ' +
+          applicationExclusions.nonTrouvees.length +
+          ' exclusion(s) active(s) non retrouvée(s).'
+      );
+    }
+
+    const resolution =
+      resoudreDoublonsAvecExclusionsStockages_(
+        manifeste.occurrences,
+        applicationExclusions.appliquees
+      );
+
+    manifeste.lignes = resolution.lignes;
+    manifeste.nombreBloques = resolution.nombreBloques;
+    manifeste.exclusionsAppliquees =
+      applicationExclusions.appliquees;
+    const photographie =
+      chargerPhotographieStatutsStockages_(classeur);
+    const dateTechniqueDetection = new Date();
+    const rapport =
+      comparerManifesteAvecPhotographieStockages_({
+        photographie: photographie,
+        manifeste: manifeste,
+        dateTechniqueDetection: dateTechniqueDetection
+      });
+    const feuilleRapport =
+      creerOuVerifierFeuilleSimulationStockages_(
+        classeur
+      );
+    const derniereLigne = feuilleRapport.getLastRow();
+    const nombreColonnes =
+      STOCKAGES_CONFIG.simulation.entetesRapport.length;
+
+    if (derniereLigne > 1) {
+      feuilleRapport
+        .getRange(
+          2,
+          1,
+          derniereLigne - 1,
+          nombreColonnes
+        )
+        .clearContent();
+    }
+
+    if (rapport.lignes.length > 0) {
+      feuilleRapport
+        .getRange(
+          2,
+          1,
+          rapport.lignes.length,
+          nombreColonnes
+        )
+        .setValues(rapport.lignes);
+    }
+
+    ajouterAuditStockages_(classeur, {
+      action: 'SIMULATION_SYNCHRONISATION_STATUTS',
+      agence: '',
+      reference: integrite.hashCalcule,
+      ancienneValeur: '',
+      nouvelleValeur: '',
+      resultat:
+        rapport.compteurs.BLOQUEE > 0
+          ? 'AVERTISSEMENT'
+          : 'SUCCESS',
+      details: JSON.stringify({
+        dateTechniqueDetection:
+          canoniserDateTechniqueStockages_(
+            dateTechniqueDetection
+          ),
+        compteurs: rapport.compteurs,
+        nombreEntetesIgnorees:
+          manifeste.nombreEntetesIgnorees,
+        nombreLignesVidesIgnorees:
+          manifeste.nombreLignesVidesIgnorees,
+        exclusionsActives: exclusions.actives.length,
+        exclusionsAppliquees:
+          applicationExclusions.appliquees.length,
+        exclusionsInvalides:
+          applicationExclusions.invalides.length,
+        exclusionsNonTrouvees:
+          applicationExclusions.nonTrouvees.length,
+        photographieInchangee: true,
+        aucunHistoriqueCree: true,
+        aucunMouvementCree: true
+      })
+    });
+
+    SpreadsheetApp.getUi().alert(
+      'Simulation terminée',
+      [
+        'Lignes du rapport : ' + rapport.lignes.length,
+        'Ignorées : ' + rapport.compteurs.IGNOREE,
+        'Exclusions administratives appliquées : ' +
+          applicationExclusions.appliquees.length,
+        'Bloquées : ' + rapport.compteurs.BLOQUEE,
+        'Inchangées : ' + rapport.compteurs.INCHANGEE,
+        'Sans mouvement : ' +
+          rapport.compteurs.SANS_MOUVEMENT,
+        'Mouvements simulés : ' +
+          rapport.compteurs.MOUVEMENT_SIMULE,
+        'Mouvements exceptionnels KLZ : ' +
+          rapport.compteurs
+            .MOUVEMENT_SIMULE_EXCEPTIONNEL,
+        '',
+        'Aucun historique et aucun mouvement réel n’ont été créés.',
+        'La photographie est inchangée.'
+      ].join('\n'),
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+  } catch (erreur) {
+    journaliserErreurStockages_(
+      'SIMULATION_SYNCHRONISATION_STATUTS',
+      erreur
+    );
+    SpreadsheetApp.getUi().alert(
+      'Simulation impossible',
+      messageErreurStockages_(erreur),
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+    throw erreur;
+  } finally {
+    if (verrou.hasLock()) {
+      verrou.releaseLock();
+    }
+  }
+}
+
+function synchroniserStatutsStockages() {
+  const verrou = LockService.getScriptLock();
+  let sauvegardePhotographie = null;
+  let photographieModifiee = false;
+
+  try {
+    verrou.waitLock(30000);
+
+    const classeur = SpreadsheetApp.getActiveSpreadsheet();
+    const contexte =
+      verifierConditionsSynchronisationReelleStockages_(
+        classeur
+      );
+    const operations =
+      preparerOperationsSynchronisationStockages_(
+        contexte.photographie,
+        contexte.manifeste
+      );
+
+    verifierSimulationRecenteConformeStockages_(
+      classeur,
+      contexte.integrite,
+      contexte.rapport
+    );
+
+    const indexHistorique =
+      chargerIndexHistoriqueStockages_(classeur);
+    const indexMouvements =
+      chargerIndexMouvementsStockages_(classeur);
+
+    operations.forEach(function (operation) {
+      const evenement =
+        inscrireOuReprendreEvenementStockages_(
+          classeur,
+          operation,
+          indexHistorique
+        );
+
+      const mouvementsComplets =
+        creerMouvementsSynchronisationStockages_(
+        classeur,
+        operation,
+        evenement,
+        indexMouvements
+      );
+
+      if (!mouvementsComplets) {
+        throw new Error(
+          'Mouvements incomplets pour la référence événement : ' +
+            operation.statusEventId
+        );
+      }
+
+      if (!evenement.traite) {
+        marquerEvenementTraiteStockages_(
+          classeur,
+          evenement
+        );
+        evenement.traite = true;
+      }
+    });
+
+    sauvegardePhotographie =
+      capturerSauvegardePhotographieStockages_(
+        classeur,
+        contexte.integrite.hashCalcule
+      );
+
+    photographieModifiee = true;
+    const miseAJour =
+      mettreAJourPhotographieApresSynchronisationStockages_(
+        classeur,
+        contexte.photographie,
+        operations
+      );
+
+    ecrireParametreStockages_(
+      classeur,
+      'INITIAL_SNAPSHOT_HASH',
+      miseAJour.hash,
+      'Empreinte SHA-256 de l’état courant de la photographie.'
+    );
+
+    ajouterAuditStockages_(classeur, {
+      action: 'SYNCHRONISATION_REELLE_STATUTS',
+      agence: '',
+      reference: miseAJour.hash,
+      ancienneValeur:
+        contexte.integrite.hashCalcule,
+      nouvelleValeur: miseAJour.hash,
+      resultat: 'SUCCESS',
+      details: JSON.stringify({
+        nombreTransitions: operations.length,
+        nombreMouvements: operations.reduce(
+          function (total, operation) {
+            return total + operation.mouvements.length;
+          },
+          0
+        ),
+        exclusionsAppliquees:
+          compterExclusionsAppliqueesStockages_(
+            contexte.manifeste.exclusionsAppliquees
+          ),
+        photographieMiseAJour: true,
+        stockJournalierRecalcule: false
+      })
+    });
+
+    SpreadsheetApp.getUi().alert(
+      'Synchronisation terminée',
+      [
+        'Transitions traitées : ' + operations.length,
+        'Mouvements créés ou repris : ' +
+          operations.reduce(
+            function (total, operation) {
+              return total +
+                operation.mouvements.length;
+            },
+            0
+          ),
+        'Exclusions appliquées : ' +
+          contexte.manifeste.exclusionsAppliquees.length,
+        '',
+        'La photographie a avancé uniquement après les écritures requises.',
+        'Aucun recalcul automatique du stock journalier n’a été lancé.'
+      ].join('\n'),
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+  } catch (erreur) {
+    if (
+      photographieModifiee &&
+      sauvegardePhotographie
+    ) {
+      try {
+        restaurerPhotographieStockages_(
+          sauvegardePhotographie
+        );
+      } catch (erreurRestauration) {
+        console.error(
+          'Restauration de la photographie impossible : ' +
+            messageErreurStockages_(
+              erreurRestauration
+            )
+        );
+      }
+    }
+
+    journaliserErreurStockages_(
+      'SYNCHRONISATION_REELLE_STATUTS',
+      erreur
+    );
+    throw erreur;
+  } finally {
+    if (verrou.hasLock()) {
+      verrou.releaseLock();
+    }
+  }
+}
+
+function verifierConditionsSynchronisationReelleStockages_(
+  classeur
+) {
+  const statutSysteme = lireParametreStockages_(
+    classeur,
+    'SYSTEM_STATUS'
+  );
+
+  if (statutSysteme !== 'ACTIF') {
+    throw new Error(
+      'La synchronisation réelle exige SYSTEM_STATUS = ACTIF.'
+    );
+  }
+
+  const dateActivation = lireParametreStockagesBrut_(
+    classeur,
+    'DATE_ACTIVATION'
+  );
+
+  if (!estDateValideStockages_(dateActivation)) {
+    throw new Error(
+      'La date d’activation commune est absente ou invalide.'
+    );
+  }
+
+  const soldes = lireSoldesInitiauxValides_(classeur);
+
+  if (soldes.length !== STOCKAGES_CONFIG.agences.length) {
+    throw new Error(
+      'Les quatre soldes initiaux doivent être VALIDÉS.'
+    );
+  }
+
+  soldes.forEach(function (solde) {
+    if (
+      !estDateValideStockages_(solde.dateActivation) ||
+      solde.dateActivation.getTime() !==
+        dateActivation.getTime()
+    ) {
+      throw new Error(
+        'Le solde initial de ' +
+          solde.agence +
+          ' ne correspond pas à la date d’activation commune.'
+      );
+    }
+  });
+
+  const integrite =
+    verifierIntegritePhotographieStockages_(classeur);
+
+  if (!integrite.valide) {
+    throw new Error(
+      'La photographie initiale est absente ou invalide : ' +
+        integrite.erreurs.join(' ; ')
+    );
+  }
+
+  const identifiantManifeste = String(
+    lireParametreStockagesBrut_(
+      classeur,
+      'MANIFEST_SPREADSHEET_ID'
+    ) || ''
+  ).trim();
+
+  if (!identifiantManifeste) {
+    throw new Error(
+      'MANIFEST_SPREADSHEET_ID est vide.'
+    );
+  }
+
+  const classeurManifeste = SpreadsheetApp.openById(
+    identifiantManifeste
+  );
+  const manifeste =
+    lireManifestePourSimulationStockages_(
+      classeurManifeste
+    );
+  const exclusions =
+    chargerExclusionsPhotographieStockages_(classeur);
+  const applicationExclusions =
+    appliquerExclusionsPhotographieStockages_(
+      manifeste.occurrences,
+      exclusions.actives
+    );
+
+  if (
+    applicationExclusions.invalides.length > 0 ||
+    applicationExclusions.nonTrouvees.length > 0
+  ) {
+    throw new Error(
+      'Exclusions actives non conformes : ' +
+        applicationExclusions.invalides.length +
+        ' invalide(s), ' +
+        applicationExclusions.nonTrouvees.length +
+        ' non retrouvée(s).'
+    );
+  }
+
+  const resolution =
+    resoudreDoublonsAvecExclusionsStockages_(
+      manifeste.occurrences,
+      applicationExclusions.appliquees
+    );
+
+  manifeste.lignes = resolution.lignes;
+  manifeste.nombreBloques = resolution.nombreBloques;
+  manifeste.exclusionsAppliquees =
+    applicationExclusions.appliquees;
+
+  if (manifeste.nombreBloques > 0) {
+    throw new Error(
+      manifeste.nombreBloques +
+        ' anomalie(s) bloquante(s) non exclue(s) subsistent.'
+    );
+  }
+
+  const photographie =
+    chargerPhotographieStatutsStockages_(classeur);
+  const rapport =
+    comparerManifesteAvecPhotographieStockages_({
+      photographie: photographie,
+      manifeste: manifeste,
+      dateTechniqueDetection: new Date()
+    });
+
+  if (rapport.compteurs.BLOQUEE > 0) {
+    throw new Error(
+      rapport.compteurs.BLOQUEE +
+        ' transition(s) sont bloquées. Aucune écriture réelle n’est autorisée.'
+    );
+  }
+
+  return {
+    integrite: integrite,
+    photographie: photographie,
+    manifeste: manifeste,
+    rapport: rapport
+  };
+}
+
+function verifierSimulationRecenteConformeStockages_(
+  classeur,
+  integrite,
+  rapportAttendu
+) {
+  const feuilleAudit = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.audit
+  );
+  let auditSimulation = null;
+
+  if (feuilleAudit.getLastRow() >= 2) {
+    const lignesAudit = feuilleAudit
+      .getRange(
+        2,
+        1,
+        feuilleAudit.getLastRow() - 1,
+        10
+      )
+      .getValues();
+
+    for (
+      let index = lignesAudit.length - 1;
+      index >= 0;
+      index -= 1
+    ) {
+      if (
+        String(lignesAudit[index][2] || '') ===
+          'SIMULATION_SYNCHRONISATION_STATUTS'
+      ) {
+        auditSimulation = lignesAudit[index];
+        break;
+      }
+    }
+  }
+
+  if (!auditSimulation) {
+    throw new Error(
+      'Aucune simulation récente n’est disponible.'
+    );
+  }
+
+  const dateAudit = auditSimulation[0];
+  const resultat = normaliserTexteStockages_(
+    auditSimulation[7]
+  );
+  const reference = String(
+    auditSimulation[4] || ''
+  ).trim();
+  const ageMinutes = estDateValideStockages_(dateAudit)
+    ? (Date.now() - dateAudit.getTime()) / 60000
+    : Number.POSITIVE_INFINITY;
+
+  if (
+    resultat !== 'SUCCESS' ||
+    reference !== integrite.hashCalcule ||
+    ageMinutes < 0 ||
+    ageMinutes >
+      STOCKAGES_CONFIG.simulation
+        .dureeMaxSimulationMinutes
+  ) {
+    throw new Error(
+      'La dernière simulation n’est pas récente, réussie ou rattachée à la photographie courante.'
+    );
+  }
+
+  let details = {};
+
+  try {
+    details = JSON.parse(
+      String(auditSimulation[8] || '{}')
+    );
+  } catch (erreur) {
+    throw new Error(
+      'Le détail de la dernière simulation est illisible.'
+    );
+  }
+
+  if (
+    !details.compteurs ||
+    Number(details.compteurs.BLOQUEE) !== 0 ||
+    details.photographieInchangee !== true
+  ) {
+    throw new Error(
+      'La dernière simulation ne confirme pas un état sans blocage.'
+    );
+  }
+
+  const feuilleRapport = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.simulation.feuilleRapport
+  );
+  const nombreColonnes =
+    STOCKAGES_CONFIG.simulation.entetesRapport.length;
+  const lignesExistantes = feuilleRapport.getLastRow() >= 2
+    ? feuilleRapport
+        .getRange(
+          2,
+          1,
+          feuilleRapport.getLastRow() - 1,
+          nombreColonnes
+        )
+        .getValues()
+    : [];
+  const representationExistante =
+    construireRepresentationCanoniqueRapportStockages_(
+      lignesExistantes
+    );
+  const representationAttendue =
+    construireRepresentationCanoniqueRapportStockages_(
+      rapportAttendu.lignes
+    );
+
+  if (
+    representationExistante !==
+      representationAttendue
+  ) {
+    throw new Error(
+      'Le rapport de simulation ne correspond plus au manifeste courant.'
+    );
+  }
+}
+
+function construireRepresentationCanoniqueRapportStockages_(
+  lignes
+) {
+  return JSON.stringify(
+    lignes
+      .map(function (ligne) {
+        return ligne
+          .slice(1)
+          .map(function (valeur) {
+            if (
+              valeur === '' ||
+              valeur === null ||
+              typeof valeur === 'undefined'
+            ) {
+              return '';
+            }
+
+            if (typeof valeur === 'number') {
+              return canoniserNombreStockages_(valeur);
+            }
+
+            if (typeof valeur === 'boolean') {
+              return valeur ? 'TRUE' : 'FALSE';
+            }
+
+            if (estDateValideStockages_(valeur)) {
+              return canoniserDateTechniqueStockages_(
+                valeur
+              );
+            }
+
+            return String(valeur);
+          });
+      })
+      .sort(function (a, b) {
+        return comparerChainesCanoniquesStockages_(
+          JSON.stringify(a),
+          JSON.stringify(b)
+        );
+      })
+  );
+}
+
+function preparerOperationsSynchronisationStockages_(
+  photographie,
+  manifeste
+) {
+  const photographieParIdentite = {};
+  const operations = [];
+  const erreurs = [];
+
+  photographie.forEach(function (reference) {
+    photographieParIdentite[reference.identite] =
+      reference;
+  });
+
+  manifeste.lignes.forEach(function (observee) {
+    const reference = observee.identite
+      ? photographieParIdentite[observee.identite] || null
+      : null;
+
+    if (
+      !observee.identite ||
+      observee.anomalies.length > 0
+    ) {
+      erreurs.push(
+        (observee.identite || 'LIGNE_SANS_IDENTITE') +
+          ' : anomalie bloquante.'
+      );
+      return;
+    }
+
+    if (
+      reference &&
+      reference.etat !== 'REFERENCE'
+    ) {
+      erreurs.push(
+        observee.identite +
+          ' : référence photographique bloquée.'
+      );
+      return;
+    }
+
+    if (
+      reference &&
+      Number(reference.poids) !== Number(observee.poids)
+    ) {
+      erreurs.push(
+        observee.identite +
+          ' : poids différent de la photographie.'
+      );
+      return;
+    }
+
+    if (
+      observee.destination !== observee.feuille ||
+      (
+        reference &&
+        reference.destination !== observee.feuille
+      )
+    ) {
+      erreurs.push(
+        observee.identite +
+          ' : destination incohérente.'
+      );
+      return;
+    }
+
+    const ancienStatut = reference
+      ? reference.statutReference
+      : 'ABSENT';
+    const versionActuelle = reference
+      ? Number(reference.versionObservation)
+      : 0;
+    const versionProposee = versionActuelle + 1;
+    const transition =
+      determinerTransitionSimulationStockages_({
+        feuille: observee.feuille,
+        ancienStatut: ancienStatut,
+        nouveauStatut: observee.statutNormalise,
+        poids: observee.poids
+      });
+
+    if (transition.decision === 'BLOQUEE') {
+      erreurs.push(
+        observee.identite +
+          ' : ' +
+          transition.anomalie
+      );
+      return;
+    }
+
+    if (transition.decision === 'INCHANGEE') {
+      return;
+    }
+
+    if (
+      [
+        'MOUVEMENT_SIMULE',
+        'MOUVEMENT_SIMULE_EXCEPTIONNEL',
+        'SANS_MOUVEMENT'
+      ].indexOf(transition.decision) === -1
+    ) {
+      erreurs.push(
+        observee.identite +
+          ' : décision non applicable en synchronisation réelle.'
+      );
+      return;
+    }
+
+    const statusEventId =
+      genererStatusEventIdTheoriqueStockages_({
+        identite: observee.identite,
+        ancienStatut: ancienStatut,
+        nouveauStatut: observee.statutNormalise,
+        dateSourceCanonique:
+          observee.dateSourceCanonique,
+        versionObservation: versionProposee
+      });
+    const mouvements = transition.mouvements.map(
+      function (mouvement) {
+        return Object.assign({}, mouvement, {
+          movementId:
+            genererMovementIdTheoriqueStockages_({
+              statusEventId: statusEventId,
+              typeMouvement: mouvement.type,
+              agenceCible: mouvement.agence,
+              ordreMouvement: mouvement.ordre
+            })
+        });
+      }
+    );
+
+    operations.push({
+      dateTechniqueDetection: new Date(),
+      observee: observee,
+      reference: reference,
+      ancienStatut: ancienStatut,
+      nouveauStatut: observee.statutNormalise,
+      versionActuelle: versionActuelle,
+      versionProposee: versionProposee,
+      transition: transition,
+      statusEventId: statusEventId,
+      mouvements: mouvements
+    });
+  });
+
+  if (erreurs.length > 0) {
+    throw new Error(
+      'Synchronisation refusée : ' +
+        erreurs.join(' ; ')
+    );
+  }
+
+  return operations;
+}
+
+function chargerIndexHistoriqueStockages_(classeur) {
+  const feuille = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.historique
+  );
+  const index = {};
+
+  if (feuille.getLastRow() < 2) {
+    return {
+      feuille: feuille,
+      parId: index
+    };
+  }
+
+  feuille
+    .getRange(
+      2,
+      1,
+      feuille.getLastRow() - 1,
+      STOCKAGES_CONFIG.entetes.historique.length
+    )
+    .getValues()
+    .forEach(function (ligne, position) {
+      const identifiant = String(ligne[8] || '').trim();
+
+      if (!identifiant) {
+        return;
+      }
+
+      if (!index[identifiant]) {
+        index[identifiant] = [];
+      }
+
+      index[identifiant].push({
+        numeroLigne: position + 2,
+        valeurs: ligne,
+        traite: ligne[10] === true
+      });
+    });
+
+  return {
+    feuille: feuille,
+    parId: index
+  };
+}
+
+function chargerIndexMouvementsStockages_(classeur) {
+  const feuille = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.mouvements
+  );
+  const parId = {};
+  const parEvenement = {};
+
+  if (feuille.getLastRow() >= 2) {
+    feuille
+      .getRange(
+        2,
+        1,
+        feuille.getLastRow() - 1,
+        STOCKAGES_CONFIG.entetes.mouvements.length
+      )
+      .getValues()
+      .forEach(function (ligne, position) {
+        const movementId = String(
+          ligne[10] || ''
+        ).trim();
+        const statusEventId = String(
+          ligne[14] || ''
+        ).trim();
+        const element = {
+          numeroLigne: position + 2,
+          valeurs: ligne
+        };
+
+        if (movementId) {
+          if (!parId[movementId]) {
+            parId[movementId] = [];
+          }
+          parId[movementId].push(element);
+        }
+
+        if (statusEventId) {
+          if (!parEvenement[statusEventId]) {
+            parEvenement[statusEventId] = [];
+          }
+          parEvenement[statusEventId].push(element);
+        }
+      });
+  }
+
+  return {
+    feuille: feuille,
+    parId: parId,
+    parEvenement: parEvenement
+  };
+}
+
+function inscrireOuReprendreEvenementStockages_(
+  classeur,
+  operation,
+  indexHistorique
+) {
+  const existants =
+    indexHistorique.parId[operation.statusEventId] || [];
+
+  if (existants.length > 1) {
+    throw new Error(
+      'Status Event ID dupliqué : ' +
+        operation.statusEventId
+    );
+  }
+
+  if (existants.length === 1) {
+    const existant = existants[0];
+    const valeurs = existant.valeurs;
+
+    if (
+      !estDateValideStockages_(valeurs[0]) ||
+      String(valeurs[1] || '') !==
+        operation.observee.feuille ||
+      normaliserCodeColisManifesteStockages_(
+        valeurs[2]
+      ) !== operation.observee.codeNormalise ||
+      (
+        normaliserTexteStockages_(valeurs[5]) ===
+          'ABSENT'
+          ? 'ABSENT'
+          : normaliserStatutManifesteStockages_(
+              valeurs[5]
+            )
+      ) !== operation.ancienStatut ||
+      normaliserStatutManifesteStockages_(
+        valeurs[6]
+      ) !== operation.nouveauStatut
+    ) {
+      throw new Error(
+        'Collision de Status Event ID : ' +
+          operation.statusEventId
+      );
+    }
+
+    return {
+      numeroLigne: existant.numeroLigne,
+      traite: existant.traite,
+      dateDetection: valeurs[0]
+    };
+  }
+
+  const typesMouvements = operation.mouvements
+    .map(function (mouvement) {
+      return mouvement.type;
+    })
+    .join(' + ');
+  const ligne = [
+    operation.dateTechniqueDetection,
+    operation.observee.feuille,
+    operation.observee.codeBrut,
+    operation.observee.destination,
+    operation.observee.poids,
+    operation.ancienStatut,
+    operation.nouveauStatut,
+    typesMouvements || 'SANS_MOUVEMENT',
+    operation.statusEventId,
+    operation.observee.dateSourceCanonique,
+    false,
+    operation.transition.commentaire
+  ];
+  const numeroLigne =
+    indexHistorique.feuille.getLastRow() + 1;
+
+  indexHistorique.feuille
+    .getRange(
+      numeroLigne,
+      1,
+      1,
+      ligne.length
+    )
+    .setValues([ligne]);
+
+  const evenement = {
+    numeroLigne: numeroLigne,
+    valeurs: ligne,
+    traite: false,
+    dateDetection:
+      operation.dateTechniqueDetection
+  };
+  indexHistorique.parId[operation.statusEventId] = [
+    evenement
+  ];
+
+  return evenement;
+}
+
+function creerMouvementsSynchronisationStockages_(
+  classeur,
+  operation,
+  evenement,
+  indexMouvements
+) {
+  const existantsParEvenement =
+    indexMouvements.parEvenement[
+      operation.statusEventId
+    ] || [];
+  const idsAttendus = {};
+
+  operation.mouvements.forEach(function (mouvement) {
+    idsAttendus[mouvement.movementId] = true;
+  });
+
+  existantsParEvenement.forEach(function (element) {
+    const identifiant = String(
+      element.valeurs[10] || ''
+    ).trim();
+
+    if (!idsAttendus[identifiant]) {
+      throw new Error(
+        'Mouvement inattendu pour la référence événement : ' +
+          operation.statusEventId
+      );
+    }
+  });
+
+  const lignesManquantes = [];
+
+  operation.mouvements.forEach(function (mouvement) {
+    const existants =
+      indexMouvements.parId[mouvement.movementId] || [];
+
+    if (existants.length > 1) {
+      throw new Error(
+        'Movement ID dupliqué : ' +
+          mouvement.movementId
+      );
+    }
+
+    if (existants.length === 1) {
+      const valeurs = existants[0].valeurs;
+
+      if (
+        String(valeurs[14] || '') !==
+          operation.statusEventId ||
+        String(valeurs[2] || '') !== mouvement.agence ||
+        String(valeurs[5] || '') !== mouvement.type ||
+        Number(valeurs[6]) !==
+          Number(mouvement.variationColis) ||
+        Number(valeurs[7]) !==
+          Number(mouvement.variationKg)
+      ) {
+        throw new Error(
+          'Collision de Movement ID : ' +
+            mouvement.movementId
+        );
+      }
+      return;
+    }
+
+    lignesManquantes.push([
+      evenement.dateDetection,
+      evenement.dateDetection,
+      mouvement.agence,
+      operation.observee.codeBrut,
+      operation.observee.destination,
+      mouvement.type,
+      mouvement.variationColis,
+      mouvement.variationKg,
+      operation.nouveauStatut,
+      'MANIFESTE PUBLIC',
+      mouvement.movementId,
+      mouvement.commentaire,
+      utilisateurCourantStockages_(),
+      false,
+      operation.statusEventId
+    ]);
+  });
+
+  if (
+    evenement.traite &&
+    lignesManquantes.length > 0
+  ) {
+    throw new Error(
+      'Événement marqué traité avec mouvement manquant : ' +
+        operation.statusEventId
+    );
+  }
+
+  if (lignesManquantes.length > 0) {
+    const premiereLigne =
+      indexMouvements.feuille.getLastRow() + 1;
+
+    indexMouvements.feuille
+      .getRange(
+        premiereLigne,
+        1,
+        lignesManquantes.length,
+        STOCKAGES_CONFIG.entetes.mouvements.length
+      )
+      .setValues(lignesManquantes);
+
+    lignesManquantes.forEach(function (ligne, index) {
+      const element = {
+        numeroLigne: premiereLigne + index,
+        valeurs: ligne
+      };
+      const movementId = String(ligne[10]);
+
+      indexMouvements.parId[movementId] = [element];
+
+      if (
+        !indexMouvements.parEvenement[
+          operation.statusEventId
+        ]
+      ) {
+        indexMouvements.parEvenement[
+          operation.statusEventId
+        ] = [];
+      }
+
+      indexMouvements.parEvenement[
+        operation.statusEventId
+      ].push(element);
+    });
+  }
+
+  operation.mouvements.forEach(function (mouvement) {
+    const existants =
+      indexMouvements.parId[mouvement.movementId] || [];
+
+    if (
+      existants.length !== 1 ||
+      String(existants[0].valeurs[14] || '') !==
+        operation.statusEventId
+    ) {
+      throw new Error(
+        'Mouvement attendu absent ou dupliqué : ' +
+          mouvement.movementId
+      );
+    }
+  });
+
+  return true;
+}
+
+function marquerEvenementTraiteStockages_(
+  classeur,
+  evenement
+) {
+  const feuille = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.historique
+  );
+
+  feuille
+    .getRange(evenement.numeroLigne, 11)
+    .setValue(true);
+}
+
+function capturerSauvegardePhotographieStockages_(
+  classeur,
+  hash
+) {
+  const feuille = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.simulation.feuillePhotographie
+  );
+  const nombreColonnes =
+    STOCKAGES_CONFIG.simulation
+      .entetesPhotographie.length;
+  const nombreLignes = Math.max(
+    feuille.getLastRow() - 1,
+    0
+  );
+
+  return {
+    classeur: classeur,
+    feuille: feuille,
+    nombreLignes: nombreLignes,
+    nombreColonnes: nombreColonnes,
+    valeurs: nombreLignes > 0
+      ? feuille
+          .getRange(
+            2,
+            1,
+            nombreLignes,
+            nombreColonnes
+          )
+          .getValues()
+      : [],
+    hash: hash
+  };
+}
+
+function mettreAJourPhotographieApresSynchronisationStockages_(
+  classeur,
+  photographie,
+  operations
+) {
+  const objets = photographie.map(function (ligne) {
+    return Object.assign({}, ligne);
+  });
+  const parIdentite = {};
+
+  objets.forEach(function (ligne) {
+    parIdentite[ligne.identite] = ligne;
+  });
+
+  const datePhotographie =
+    lireParametreOptionnelStockages_(
+      classeur,
+      'INITIAL_SNAPSHOT_DATE'
+    );
+  const versionPhotographie = Number(
+    lireParametreOptionnelStockages_(
+      classeur,
+      'INITIAL_SNAPSHOT_VERSION'
+    )
+  );
+
+  operations.forEach(function (operation) {
+    let ligne = parIdentite[
+      operation.observee.identite
+    ];
+
+    if (!ligne) {
+      ligne = {
+        identite: operation.observee.identite,
+        feuille: operation.observee.feuille,
+        codeBrut: operation.observee.codeBrut,
+        codeNormalise:
+          operation.observee.codeNormalise,
+        destination: operation.observee.destination,
+        poids: operation.observee.poids,
+        statutReference: operation.nouveauStatut,
+        dernierStatutObserve:
+          operation.nouveauStatut,
+        dateSource:
+          operation.observee.dateSourceCanonique,
+        empreinteSource:
+          operation.observee.empreinteSource,
+        versionObservation:
+          operation.versionProposee,
+        datePhotographie: datePhotographie,
+        versionPhotographie:
+          versionPhotographie,
+        dernierStatusEventId:
+          operation.statusEventId,
+        etat: 'REFERENCE',
+        anomalie: ''
+      };
+      objets.push(ligne);
+      parIdentite[ligne.identite] = ligne;
+      return;
+    }
+
+    ligne.codeBrut = operation.observee.codeBrut;
+    ligne.poids = operation.observee.poids;
+    ligne.statutReference = operation.nouveauStatut;
+    ligne.dernierStatutObserve =
+      operation.nouveauStatut;
+    ligne.dateSource =
+      operation.observee.dateSourceCanonique;
+    ligne.empreinteSource =
+      operation.observee.empreinteSource;
+    ligne.versionObservation =
+      operation.versionProposee;
+    ligne.dernierStatusEventId =
+      operation.statusEventId;
+  });
+
+  objets.sort(function (a, b) {
+    return comparerChainesCanoniquesStockages_(
+      a.identite,
+      b.identite
+    );
+  });
+
+  const valeurs = objets.map(
+    convertirObjetPhotographieEnLigne_
+  );
+  const feuille = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.simulation.feuillePhotographie
+  );
+
+  if (valeurs.length > 0) {
+    feuille
+      .getRange(
+        2,
+        1,
+        valeurs.length,
+        STOCKAGES_CONFIG.simulation
+          .entetesPhotographie.length
+      )
+      .setValues(valeurs);
+  }
+
+  return {
+    objets: objets,
+    hash: calculerHashPhotographieStockages_(
+      objets
+    )
+  };
+}
+
+function restaurerPhotographieStockages_(sauvegarde) {
+  const derniereLigneCourante =
+    sauvegarde.feuille.getLastRow();
+
+  if (sauvegarde.nombreLignes > 0) {
+    sauvegarde.feuille
+      .getRange(
+        2,
+        1,
+        sauvegarde.nombreLignes,
+        sauvegarde.nombreColonnes
+      )
+      .setValues(sauvegarde.valeurs);
+  }
+
+  if (
+    derniereLigneCourante >
+      sauvegarde.nombreLignes + 1
+  ) {
+    sauvegarde.feuille
+      .getRange(
+        sauvegarde.nombreLignes + 2,
+        1,
+        derniereLigneCourante -
+          sauvegarde.nombreLignes -
+          1,
+        sauvegarde.nombreColonnes
+      )
+      .clearContent();
+  }
+
+  ecrireParametreStockages_(
+    sauvegarde.classeur,
+    'INITIAL_SNAPSHOT_HASH',
+    sauvegarde.hash,
+    'Empreinte SHA-256 restaurée après échec de synchronisation.'
+  );
+}
+
+function creerOuVerifierFeuillePhotographieStockages_(
+  classeur
+) {
+  return creerOuVerifierFeuilleTechniqueSimulation_(
+    classeur,
+    STOCKAGES_CONFIG.simulation.feuillePhotographie,
+    STOCKAGES_CONFIG.simulation.entetesPhotographie
+  );
+}
+
+function creerOuVerifierFeuilleSimulationStockages_(
+  classeur
+) {
+  return creerOuVerifierFeuilleTechniqueSimulation_(
+    classeur,
+    STOCKAGES_CONFIG.simulation.feuilleRapport,
+    STOCKAGES_CONFIG.simulation.entetesRapport
+  );
+}
+
+function creerOuVerifierFeuilleExclusionsPhotographieStockages_(
+  classeur
+) {
+  const configuration = STOCKAGES_CONFIG.simulation;
+  const feuille =
+    creerOuVerifierFeuilleTechniqueSimulation_(
+      classeur,
+      configuration.feuilleExclusions,
+      configuration.entetesExclusions
+    );
+  const nombreLignes = Math.max(
+    feuille.getMaxRows() - 1,
+    1
+  );
+  const validationType = SpreadsheetApp
+    .newDataValidation()
+    .requireValueInList(
+      configuration.typesExclusions.slice(),
+      true
+    )
+    .setAllowInvalid(false)
+    .setHelpText(
+      'Sélectionnez un type d’exclusion autorisé.'
+    )
+    .build();
+  const validationActif = SpreadsheetApp
+    .newDataValidation()
+    .requireCheckbox()
+    .setAllowInvalid(false)
+    .setHelpText(
+      'Une exclusion reste inactive tant que cette case n’est pas cochée explicitement.'
+    )
+    .build();
+
+  feuille
+    .getRange(2, 5, nombreLignes, 1)
+    .setDataValidation(validationType);
+  feuille
+    .getRange(2, 9, nombreLignes, 1)
+    .setDataValidation(validationActif);
+  feuille
+    .getRange(2, 8, nombreLignes, 1)
+    .setNumberFormat('dd/MM/yyyy HH:mm:ss');
+
+  protegerFeuilleTechniqueStockages_(
+    feuille,
+    'STOCKAGES EEB - Feuille protégée - ' +
+      configuration.feuilleExclusions
+  );
+
+  return feuille;
+}
+
+function creerOuVerifierFeuilleTechniqueSimulation_(
+  classeur,
+  nomFeuille,
+  entetes
+) {
+  let feuille = classeur.getSheetByName(nomFeuille);
+
+  if (!feuille) {
+    feuille = classeur.insertSheet(nomFeuille);
+    feuille
+      .getRange(1, 1, 1, entetes.length)
+      .setValues([entetes.slice()]);
+    feuille.setFrozenRows(1);
+    feuille
+      .getRange(1, 1, 1, entetes.length)
+      .setFontWeight('bold');
+    return feuille;
+  }
+
+  if (feuille.getMaxColumns() < entetes.length) {
+    feuille.insertColumnsAfter(
+      feuille.getMaxColumns(),
+      entetes.length - feuille.getMaxColumns()
+    );
+  }
+
+  const existantes = feuille
+    .getRange(1, 1, 1, entetes.length)
+    .getDisplayValues()[0];
+  const vides = existantes.every(function (valeur) {
+    return String(valeur || '').trim() === '';
+  });
+
+  if (vides) {
+    feuille
+      .getRange(1, 1, 1, entetes.length)
+      .setValues([entetes.slice()]);
+  } else {
+    entetes.forEach(function (entete, index) {
+      if (existantes[index] !== entete) {
+        throw new Error(
+          nomFeuille +
+            ' : en-tête incompatible en colonne ' +
+            (index + 1) +
+            '.'
+        );
+      }
+    });
+  }
+
+  return feuille;
+}
+
+function verifierConditionsPhotographieInitiale_(classeur) {
+  const statutSysteme = lireParametreStockages_(
+    classeur,
+    'SYSTEM_STATUS'
+  );
+
+  if (statutSysteme !== 'BROUILLON') {
+    throw new Error(
+      'La photographie initiale peut être créée uniquement lorsque SYSTEM_STATUS = BROUILLON.'
+    );
+  }
+
+  const dateActivation = lireParametreStockagesBrut_(
+    classeur,
+    'DATE_ACTIVATION'
+  );
+
+  if (!estDateValideStockages_(dateActivation)) {
+    throw new Error(
+      'La date d’activation commune doit être définie.'
+    );
+  }
+
+  const soldes = lireSoldesInitiauxValides_(classeur);
+
+  if (soldes.length !== STOCKAGES_CONFIG.agences.length) {
+    throw new Error(
+      'Les quatre soldes initiaux doivent être VALIDÉS.'
+    );
+  }
+
+  soldes.forEach(function (solde) {
+    if (
+      !estDateValideStockages_(solde.dateActivation) ||
+      solde.dateActivation.getTime() !==
+        dateActivation.getTime()
+    ) {
+      throw new Error(
+        'Le solde initial de ' +
+          solde.agence +
+          ' ne correspond pas à la date d’activation commune.'
+      );
+    }
+  });
+
+  verifierAuditDetailleRecentStockages_(classeur);
+
+  const statutPhotographie =
+    normaliserTexteStockages_(
+      lireParametreOptionnelStockages_(
+        classeur,
+        'INITIAL_SNAPSHOT_STATUS'
+      )
+    );
+  const feuilleExistante = classeur.getSheetByName(
+    STOCKAGES_CONFIG.simulation.feuillePhotographie
+  );
+
+  if (
+    statutPhotographie === 'VALIDE' ||
+    (feuilleExistante &&
+      feuilleExistante.getLastRow() > 1)
+  ) {
+    throw new Error(
+      'Une photographie initiale existe déjà. Elle ne sera pas remplacée.'
+    );
+  }
+
+  return {
+    dateActivation: dateActivation
+  };
+}
+
+function verifierAuditDetailleRecentStockages_(classeur) {
+  const feuille = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.audit
+  );
+
+  if (feuille.getLastRow() < 2) {
+    throw new Error(
+      'Aucun audit détaillé terminé n’a été trouvé.'
+    );
+  }
+
+  const valeurs = feuille
+    .getRange(2, 1, feuille.getLastRow() - 1, 10)
+    .getValues();
+
+  for (
+    let index = valeurs.length - 1;
+    index >= 0;
+    index -= 1
+  ) {
+    const action = String(valeurs[index][2] || '').trim();
+    const resultat = normaliserTexteStockages_(
+      valeurs[index][7]
+    );
+
+    if (
+      action === 'AUDIT_ANOMALIES_MANIFESTE_PUBLIC'
+    ) {
+      if (
+        resultat === 'SUCCESS' ||
+        resultat === 'AVERTISSEMENT'
+      ) {
+        return;
+      }
+
+      throw new Error(
+        'Le dernier audit détaillé du manifeste est en erreur.'
+      );
+    }
+  }
+
+  throw new Error(
+    'Aucun audit détaillé terminé n’a été trouvé.'
+  );
+}
+
+function assurerParametresPhotographieStockages_(classeur) {
+  const feuille = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.parametres
+  );
+  const derniereLigne = feuille.getLastRow();
+  const existantes = derniereLigne >= 2
+    ? feuille
+        .getRange(2, 1, derniereLigne - 1, 1)
+        .getDisplayValues()
+        .map(function (ligne) {
+          return String(ligne[0] || '').trim();
+        })
+    : [];
+  const maintenant = new Date();
+  const utilisateur = utilisateurCourantStockages_();
+  const descriptions = {
+    INITIAL_SNAPSHOT_STATUS:
+      'État de la photographie initiale.',
+    INITIAL_SNAPSHOT_DATE:
+      'Date technique de création de la photographie initiale.',
+    INITIAL_SNAPSHOT_VERSION:
+      'Version de la photographie initiale.',
+    INITIAL_SNAPSHOT_HASH:
+      'Empreinte SHA-256 de la photographie initiale.'
+  };
+  const nouvelles = [];
+
+  STOCKAGES_CONFIG.simulation
+    .parametresPhotographie
+    .forEach(function (cle) {
+      if (existantes.indexOf(cle) === -1) {
+        nouvelles.push([
+          cle,
+          cle === 'INITIAL_SNAPSHOT_STATUS'
+            ? 'ABSENT'
+            : '',
+          descriptions[cle],
+          maintenant,
+          utilisateur
+        ]);
+      }
+    });
+
+  if (nouvelles.length > 0) {
+    feuille
+      .getRange(
+        feuille.getLastRow() + 1,
+        1,
+        nouvelles.length,
+        5
+      )
+      .setValues(nouvelles);
+  }
+}
+
+function lireParametreOptionnelStockages_(classeur, cle) {
+  const feuille = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.parametres
+  );
+
+  if (feuille.getLastRow() < 2) {
+    return '';
+  }
+
+  const valeurs = feuille
+    .getRange(2, 1, feuille.getLastRow() - 1, 2)
+    .getValues();
+  const correspondances = valeurs.filter(
+    function (ligne) {
+      return String(ligne[0] || '').trim() === cle;
+    }
+  );
+
+  if (correspondances.length > 1) {
+    throw new Error(
+      'Paramètre dupliqué dans PARAMETRES : ' + cle
+    );
+  }
+
+  return correspondances.length
+    ? correspondances[0][1]
+    : '';
+}
+
+function construirePhotographieInitialeStockages_(
+  lignes,
+  datePhotographie,
+  versionPhotographie
+) {
+  const objets = lignes
+    .map(function (ligne) {
+      return {
+        identite: ligne.identite,
+        feuille: ligne.feuille,
+        codeBrut: ligne.codeBrut,
+        codeNormalise: ligne.codeNormalise,
+        destination: ligne.destination,
+        poids: ligne.poids,
+        statutReference: ligne.statutNormalise,
+        dernierStatutObserve: ligne.statutNormalise,
+        dateSource: ligne.dateSourceCanonique,
+        empreinteSource: ligne.empreinteSource,
+        versionObservation: 0,
+        datePhotographie: datePhotographie,
+        versionPhotographie: versionPhotographie,
+        dernierStatusEventId: '',
+        etat: 'REFERENCE',
+        anomalie: ''
+      };
+    })
+    .sort(function (a, b) {
+      return comparerChainesCanoniquesStockages_(
+        a.identite,
+        b.identite
+      );
+    });
+  const valeurs = objets.map(
+    convertirObjetPhotographieEnLigne_
+  );
+
+  return {
+    objets: objets,
+    valeurs: valeurs
+  };
+}
+
+function convertirObjetPhotographieEnLigne_(objet) {
+  return [
+    objet.identite,
+    objet.feuille,
+    objet.codeBrut,
+    objet.codeNormalise,
+    objet.destination,
+    objet.poids,
+    objet.statutReference,
+    objet.dernierStatutObserve,
+    objet.dateSource,
+    objet.empreinteSource,
+    objet.versionObservation,
+    objet.datePhotographie,
+    objet.versionPhotographie,
+    objet.dernierStatusEventId,
+    objet.etat,
+    objet.anomalie
+  ];
+}
+
+function chargerPhotographieStatutsStockages_(classeur) {
+  const feuille = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.simulation.feuillePhotographie
+  );
+
+  if (feuille.getLastRow() < 2) {
+    throw new Error(
+      'PHOTOGRAPHIE STATUTS ne contient aucune référence.'
+    );
+  }
+
+  const lignes = feuille
+    .getRange(
+      2,
+      1,
+      feuille.getLastRow() - 1,
+      STOCKAGES_CONFIG.simulation
+        .entetesPhotographie.length
+    )
+    .getValues();
+
+  return lignes
+    .filter(function (ligne) {
+      return ligne.some(function (valeur) {
+        return valeur !== '' && valeur !== null;
+      });
+    })
+    .map(function (ligne) {
+      return {
+        identite: String(ligne[0] || '').trim(),
+        feuille: String(ligne[1] || '').trim(),
+        codeBrut: String(ligne[2] || '').trim(),
+        codeNormalise: String(ligne[3] || '').trim(),
+        destination: String(ligne[4] || '').trim(),
+        poids: Number(ligne[5]),
+        statutReference: String(ligne[6] || '').trim(),
+        dernierStatutObserve:
+          String(ligne[7] || '').trim(),
+        dateSource: String(ligne[8] || '').trim(),
+        empreinteSource: String(ligne[9] || '').trim(),
+        versionObservation: Number(ligne[10]),
+        datePhotographie: ligne[11],
+        versionPhotographie: Number(ligne[12]),
+        dernierStatusEventId:
+          String(ligne[13] || '').trim(),
+        etat: String(ligne[14] || '').trim(),
+        anomalie: String(ligne[15] || '').trim()
+      };
+    });
+}
+
+function verifierIntegritePhotographieStockages_(
+  classeur
+) {
+  const erreurs = [];
+  const statut = normaliserTexteStockages_(
+    lireParametreOptionnelStockages_(
+      classeur,
+      'INITIAL_SNAPSHOT_STATUS'
+    )
+  );
+  const hashEnregistre = String(
+    lireParametreOptionnelStockages_(
+      classeur,
+      'INITIAL_SNAPSHOT_HASH'
+    ) || ''
+  ).trim();
+  const versionPhotographie = Number(
+    lireParametreOptionnelStockages_(
+      classeur,
+      'INITIAL_SNAPSHOT_VERSION'
+    )
+  );
+  const datePhotographieEnregistree =
+    lireParametreOptionnelStockages_(
+      classeur,
+      'INITIAL_SNAPSHOT_DATE'
+    );
+  let photographie = [];
+
+  if (statut !== 'VALIDE') {
+    erreurs.push(
+      'INITIAL_SNAPSHOT_STATUS doit être VALIDE.'
+    );
+  }
+
+  if (
+    !Number.isInteger(versionPhotographie) ||
+    versionPhotographie < 1
+  ) {
+    erreurs.push(
+      'INITIAL_SNAPSHOT_VERSION doit être un entier positif.'
+    );
+  }
+
+  if (
+    !estDateValideStockages_(
+      datePhotographieEnregistree
+    )
+  ) {
+    erreurs.push(
+      'INITIAL_SNAPSHOT_DATE doit être une date valide.'
+    );
+  }
+
+  try {
+    photographie =
+      chargerPhotographieStatutsStockages_(classeur);
+  } catch (erreur) {
+    erreurs.push(messageErreurStockages_(erreur));
+  }
+
+  const identites = {};
+  const datePhotographieCanonique =
+    canoniserDateTechniqueStockages_(
+      datePhotographieEnregistree
+    );
+
+  photographie.forEach(function (ligne) {
+    if (!ligne.identite) {
+      erreurs.push('Une identité colis est vide.');
+      return;
+    }
+
+    if (identites[ligne.identite]) {
+      erreurs.push(
+        'Identité dupliquée dans la photographie : ' +
+          ligne.identite
+      );
+    }
+
+    identites[ligne.identite] = true;
+
+    if (
+      ligne.etat === 'REFERENCE' &&
+      (
+        !ligne.codeNormalise ||
+        !Number.isFinite(ligne.poids) ||
+        ligne.poids <= 0 ||
+        !ligne.statutReference ||
+        !ligne.dateSource
+      )
+    ) {
+      erreurs.push(
+        'Référence incomplète : ' + ligne.identite
+      );
+    }
+
+    if (
+      ligne.versionPhotographie !==
+      versionPhotographie
+    ) {
+      erreurs.push(
+        'Version incohérente pour : ' +
+        ligne.identite
+      );
+    }
+
+    if (
+      canoniserDateTechniqueStockages_(
+        ligne.datePhotographie
+      ) !== datePhotographieCanonique
+    ) {
+      erreurs.push(
+        'Date de photographie incohérente pour : ' +
+          ligne.identite
+      );
+    }
+
+    if (
+      ligne.etat !== 'REFERENCE' &&
+      ligne.etat !== 'BLOQUE'
+    ) {
+      erreurs.push(
+        'État de photographie inconnu pour : ' +
+          ligne.identite
+      );
+    }
+  });
+
+  const hashCalcule = photographie.length
+    ? calculerHashPhotographieStockages_(
+        photographie
+      )
+    : '';
+  const hashConforme =
+    Boolean(hashEnregistre) &&
+    hashEnregistre === hashCalcule;
+
+  if (!hashConforme) {
+    erreurs.push(
+      'L’empreinte de la photographie ne correspond pas.'
+    );
+  }
+
+  return {
+    valide: erreurs.length === 0,
+    erreurs: erreurs,
+    hashEnregistre: hashEnregistre,
+    hashCalcule: hashCalcule,
+    hashConforme: hashConforme,
+    nombreReferences: photographie.length,
+    versionPhotographie: versionPhotographie
+  };
+}
+
+function calculerHashPhotographieStockages_(photographie) {
+  return calculerSha256HexStockages_(
+    construireRepresentationCanoniquePhotographie_(
+      photographie
+    )
+  );
+}
+
+function construireRepresentationCanoniquePhotographie_(
+  photographie
+) {
+  return JSON.stringify(
+    photographie
+      .slice()
+      .sort(function (a, b) {
+        return comparerChainesCanoniquesStockages_(
+          a.identite,
+          b.identite
+        );
+      })
+      .map(function (ligne) {
+        return [
+          ligne.identite,
+          ligne.feuille,
+          ligne.codeBrut,
+          ligne.codeNormalise,
+          ligne.destination,
+          canoniserNombreStockages_(ligne.poids),
+          ligne.statutReference,
+          ligne.dernierStatutObserve,
+          String(ligne.dateSource || ''),
+          ligne.empreinteSource,
+          Number(ligne.versionObservation),
+          canoniserDateTechniqueStockages_(
+            ligne.datePhotographie
+          ),
+          Number(ligne.versionPhotographie),
+          ligne.dernierStatusEventId,
+          ligne.etat,
+          ligne.anomalie
+        ];
+      })
+  );
+}
+
+function lireManifestePourSimulationStockages_(
+  classeurManifeste
+) {
+  const nomsFeuilles = ['FIH', 'LSHI', 'KLZ'];
+  const toutesLesLignes = [];
+  let nombreEntetesIgnorees = 0;
+  let nombreLignesVidesIgnorees = 0;
+
+  nomsFeuilles.forEach(function (nomFeuille) {
+    const feuille = classeurManifeste.getSheetByName(
+      nomFeuille
+    );
+
+    if (!feuille) {
+      throw new Error(
+        'Feuille absente dans MANIFESTE PUBLIC : ' +
+          nomFeuille
+      );
+    }
+
+    const nombreLignes = feuille.getLastRow();
+    const nombreColonnes = feuille.getLastColumn();
+
+    if (nombreLignes < 1 || nombreColonnes < 1) {
+      throw new Error(
+        'Feuille vide dans MANIFESTE PUBLIC : ' +
+          nomFeuille
+      );
+    }
+
+    const valeurs = feuille
+      .getRange(1, 1, nombreLignes, nombreColonnes)
+      .getValues();
+    const affichees = feuille
+      .getRange(1, 1, nombreLignes, nombreColonnes)
+      .getDisplayValues();
+    const colonnes = detecterColonnesDetailManifesteStockages_(
+      affichees[0],
+      nomFeuille
+    );
+
+    for (
+      let index = 1;
+      index < valeurs.length;
+      index += 1
+    ) {
+      if (
+        estLigneEnteteManifesteStockages_(
+          affichees[index]
+        )
+      ) {
+        nombreEntetesIgnorees += 1;
+        continue;
+      }
+
+      const analyse = analyserLigneManifesteDetaillee_({
+        dateAudit: new Date(0),
+        feuille: nomFeuille,
+        numeroLigne: index + 1,
+        valeurs: valeurs[index],
+        valeursAffichees: affichees[index],
+        colonnes: colonnes
+      });
+
+      if (analyse.ligneVide) {
+        nombreLignesVidesIgnorees += 1;
+        continue;
+      }
+
+      const anomalies = analyse.anomalies.map(
+        function (anomalie) {
+          return anomalie[11];
+        }
+      );
+      const dateSourceCanonique =
+        canoniserDateSourceStockages_(
+          valeurs[index][colonnes.date - 1],
+          affichees[index][colonnes.date - 1]
+        );
+
+      if (!dateSourceCanonique) {
+        anomalies.push('DATE_SOURCE_INVALIDE');
+      }
+
+      const occurrence = analyse.occurrence;
+      const identite = occurrence.codeNormalise
+        ? nomFeuille + '|' + occurrence.codeNormalise
+        : '';
+      const ligne = {
+        identite: identite,
+        feuille: nomFeuille,
+        numeroLigne: index + 1,
+        codeBrut: analyse.occurrence.base.codeBrut,
+        codeNormalise: occurrence.codeNormalise,
+        destination: nomFeuille,
+        poids: occurrence.poidsValide
+          ? occurrence.poidsInterprete
+          : null,
+        statutBrut: occurrence.statutBrut,
+        statutNormalise: occurrence.statutNormalise,
+        dateSourceCanonique: dateSourceCanonique,
+        expediteurNormalise:
+          occurrence.expediteurNormalise,
+        beneficiaireNormalise:
+          occurrence.beneficiaireNormalise,
+        anomalies: Array.from(new Set(anomalies)),
+        commentaire: '',
+        empreinteExclusionSource:
+          calculerSha256HexStockages_(
+            JSON.stringify(
+              affichees[index].map(function (valeur) {
+                return String(valeur || '');
+              })
+            )
+          )
+      };
+
+      ligne.empreinteSource =
+        calculerEmpreinteObservationStockages_(ligne);
+      toutesLesLignes.push(ligne);
+    }
+  });
+
+  const resultatDoublons =
+    consoliderLignesManifesteSimulationStockages_(
+      toutesLesLignes
+    );
+
+  return {
+    lignes: resultatDoublons.lignes,
+    occurrences: toutesLesLignes,
+    nombreBloques: resultatDoublons.lignes.filter(
+      function (ligne) {
+        return ligne.anomalies.length > 0;
+      }
+    ).length,
+    nombreEntetesIgnorees: nombreEntetesIgnorees,
+    nombreLignesVidesIgnorees:
+      nombreLignesVidesIgnorees
+  };
+}
+
+function consoliderLignesManifesteSimulationStockages_(
+  lignes
+) {
+  const groupes = {};
+  const sansIdentite = [];
+
+  lignes.forEach(function (ligne) {
+    if (!ligne.identite) {
+      sansIdentite.push(ligne);
+      return;
+    }
+
+    if (!groupes[ligne.identite]) {
+      groupes[ligne.identite] = [];
+    }
+
+    groupes[ligne.identite].push(ligne);
+  });
+
+  const consolidees = sansIdentite.slice();
+
+  Object.keys(groupes)
+    .sort()
+    .forEach(function (identite) {
+      const occurrences = groupes[identite].slice().sort(
+        function (a, b) {
+          const comparaisonDate =
+            comparerChainesCanoniquesStockages_(
+              String(a.dateSourceCanonique),
+              String(b.dateSourceCanonique)
+            );
+
+          return comparaisonDate ||
+            a.numeroLigne - b.numeroLigne;
+        }
+      );
+      const reference = occurrences[0];
+      const anomalies = {};
+
+      occurrences.forEach(function (occurrence) {
+        occurrence.anomalies.forEach(function (anomalie) {
+          anomalies[anomalie] = true;
+        });
+      });
+
+      if (occurrences.length > 1) {
+        const poids = valeursDistinctesAuditManifeste_(
+          occurrences,
+          function (occurrence) {
+            return Number.isFinite(occurrence.poids)
+              ? canoniserNombreStockages_(occurrence.poids)
+              : '';
+          }
+        );
+        const statuts = valeursDistinctesAuditManifeste_(
+          occurrences,
+          function (occurrence) {
+            return occurrence.statutNormalise;
+          }
+        );
+        const expediteurs =
+          valeursDistinctesAuditManifeste_(
+            occurrences,
+            function (occurrence) {
+              return occurrence.expediteurNormalise;
+            }
+          );
+        const beneficiaires =
+          valeursDistinctesAuditManifeste_(
+            occurrences,
+            function (occurrence) {
+              return occurrence.beneficiaireNormalise;
+            }
+          );
+
+        if (poids.length > 1) {
+          anomalies.CODE_DUPLIQUE_POIDS_INCOHERENT = true;
+        } else if (
+          expediteurs.length > 1 ||
+          beneficiaires.length > 1
+        ) {
+          anomalies.CODE_REUTILISE = true;
+        } else if (statuts.length > 1) {
+          anomalies.CODE_DUPLIQUE_STATUT_INCOHERENT = true;
+        } else {
+          reference.commentaire =
+            'CODE_DUPLIQUE_STRICT : ' +
+            occurrences.length +
+            ' occurrences équivalentes consolidées.';
+        }
+      }
+
+      reference.anomalies = Object.keys(anomalies).sort();
+      consolidees.push(reference);
+    });
+
+  return {
+    lignes: consolidees
+  };
+}
+
+function chargerExclusionsPhotographieStockages_(
+  classeur
+) {
+  const feuille =
+    creerOuVerifierFeuilleExclusionsPhotographieStockages_(
+      classeur
+    );
+
+  if (feuille.getLastRow() < 2) {
+    return {
+      toutes: [],
+      actives: []
+    };
+  }
+
+  const valeurs = feuille
+    .getRange(
+      2,
+      1,
+      feuille.getLastRow() - 1,
+      STOCKAGES_CONFIG.simulation
+        .entetesExclusions.length
+    )
+    .getValues();
+  const toutes = valeurs
+    .map(function (ligne, index) {
+      return {
+        numeroLigneFeuille: index + 2,
+        exclusionId: String(ligne[0] || '').trim(),
+        feuilleSource: normaliserTexteStockages_(
+          ligne[1]
+        ),
+        ligneSource: Number(ligne[2]),
+        codeNormalise:
+          normaliserCodeColisManifesteStockages_(
+            ligne[3]
+          ),
+        typeExclusion: normaliserTexteStockages_(
+          ligne[4]
+        ),
+        motif: String(ligne[5] || '').trim(),
+        autorisePar: String(ligne[6] || '').trim(),
+        dateAutorisation: ligne[7],
+        actif: ligne[8] === true,
+        observation: String(ligne[9] || '').trim(),
+        empreinteSourceAutorisee:
+          String(ligne[10] || '').trim()
+      };
+    })
+    .filter(function (exclusion) {
+      return (
+        exclusion.exclusionId ||
+        exclusion.feuilleSource ||
+        Number.isFinite(exclusion.ligneSource) ||
+        exclusion.codeNormalise ||
+        exclusion.typeExclusion ||
+        exclusion.motif ||
+        exclusion.autorisePar ||
+        exclusion.dateAutorisation ||
+        exclusion.actif ||
+        exclusion.observation ||
+        exclusion.empreinteSourceAutorisee
+      );
+    });
+
+  return {
+    toutes: toutes,
+    actives: toutes.filter(function (exclusion) {
+      return exclusion.actif;
+    })
+  };
+}
+
+function validerExclusionPhotographieStockages_(
+  exclusion,
+  occurrence
+) {
+  const erreurs = [];
+
+  if (!exclusion.exclusionId) {
+    erreurs.push('EXCLUSION_ID_MANQUANT');
+  }
+
+  if (
+    ['FIH', 'LSHI', 'KLZ'].indexOf(
+      exclusion.feuilleSource
+    ) === -1
+  ) {
+    erreurs.push('FEUILLE_SOURCE_INVALIDE');
+  }
+
+  if (
+    !Number.isInteger(exclusion.ligneSource) ||
+    exclusion.ligneSource < 2
+  ) {
+    erreurs.push('LIGNE_SOURCE_INVALIDE');
+  }
+
+  if (
+    STOCKAGES_CONFIG.simulation.typesExclusions
+      .indexOf(exclusion.typeExclusion) === -1
+  ) {
+    erreurs.push('TYPE_EXCLUSION_INVALIDE');
+  }
+
+  if (!exclusion.motif) {
+    erreurs.push('MOTIF_MANQUANT');
+  }
+
+  if (!exclusion.autorisePar) {
+    erreurs.push('AUTEUR_MANQUANT');
+  }
+
+  if (
+    !estDateValideStockages_(
+      exclusion.dateAutorisation
+    )
+  ) {
+    erreurs.push('DATE_AUTORISATION_INVALIDE');
+  }
+
+  if (!exclusion.empreinteSourceAutorisee) {
+    erreurs.push('EMPREINTE_SOURCE_MANQUANTE');
+  }
+
+  if (occurrence) {
+    if (
+      occurrence.feuille !== exclusion.feuilleSource ||
+      occurrence.numeroLigne !== exclusion.ligneSource
+    ) {
+      erreurs.push('CIBLE_SOURCE_INCOHERENTE');
+    }
+
+    if (
+      occurrence.codeNormalise &&
+      occurrence.codeNormalise !==
+        exclusion.codeNormalise
+    ) {
+      erreurs.push('CODE_NORMALISE_DIFFERENT');
+    }
+
+    if (
+      !occurrence.codeNormalise &&
+      exclusion.codeNormalise
+    ) {
+      erreurs.push(
+        'CODE_NORMALISE_INTERDIT_POUR_LIGNE_SANS_CODE'
+      );
+    }
+
+    if (
+      occurrence.empreinteExclusionSource !==
+        exclusion.empreinteSourceAutorisee
+    ) {
+      erreurs.push('EMPREINTE_SOURCE_DIFFERENTE');
+    }
+  }
+
+  return {
+    valide: erreurs.length === 0,
+    erreurs: erreurs
+  };
+}
+
+function construireCleExclusionPhotographieStockages_(
+  valeur
+) {
+  return [
+    normaliserTexteStockages_(
+      valeur.feuilleSource || valeur.feuille
+    ),
+    Number(
+      valeur.ligneSource || valeur.numeroLigne
+    )
+  ].join('|');
+}
+
+function indexerExclusionsActivesPhotographieStockages_(
+  exclusions
+) {
+  const index = {};
+  const dupliquees = {};
+  const ids = {};
+  const idsDupliques = {};
+
+  exclusions.forEach(function (exclusion) {
+    const cle =
+      construireCleExclusionPhotographieStockages_(
+        exclusion
+      );
+
+    if (exclusion.exclusionId) {
+      if (ids[exclusion.exclusionId]) {
+        idsDupliques[exclusion.exclusionId] = true;
+      }
+      ids[exclusion.exclusionId] = true;
+    }
+
+    if (index[cle]) {
+      dupliquees[cle] = true;
+      return;
+    }
+
+    index[cle] = exclusion;
+  });
+
+  return {
+    index: index,
+    clesDupliquees: dupliquees,
+    idsDupliques: idsDupliques
+  };
+}
+
+function appliquerExclusionsPhotographieStockages_(
+  occurrences,
+  exclusionsActives
+) {
+  const occurrencesParCle = {};
+  const appliquees = [];
+  const invalides = [];
+  const nonTrouvees = [];
+  const indexation =
+    indexerExclusionsActivesPhotographieStockages_(
+      exclusionsActives
+    );
+
+  occurrences.forEach(function (occurrence) {
+    occurrencesParCle[
+      construireCleExclusionPhotographieStockages_(
+        occurrence
+      )
+    ] = occurrence;
+  });
+
+  exclusionsActives.forEach(function (exclusion) {
+    const cle =
+      construireCleExclusionPhotographieStockages_(
+        exclusion
+      );
+    const occurrence = occurrencesParCle[cle] || null;
+    const validation =
+      validerExclusionPhotographieStockages_(
+        exclusion,
+        occurrence
+      );
+
+    if (indexation.clesDupliquees[cle]) {
+      validation.erreurs.push(
+        'PLUSIEURS_EXCLUSIONS_ACTIVES_POUR_LA_MEME_LIGNE'
+      );
+      validation.valide = false;
+    }
+
+    if (
+      indexation.idsDupliques[
+        exclusion.exclusionId
+      ]
+    ) {
+      validation.erreurs.push(
+        'EXCLUSION_ID_DUPLIQUE'
+      );
+      validation.valide = false;
+    }
+
+    if (!occurrence && validation.valide) {
+      nonTrouvees.push({
+        exclusion: exclusion,
+        erreurs: ['LIGNE_SOURCE_NON_RETROUVEE']
+      });
+      return;
+    }
+
+    if (!validation.valide) {
+      invalides.push({
+        exclusion: exclusion,
+        erreurs: Array.from(
+          new Set(validation.erreurs)
+        )
+      });
+      return;
+    }
+
+    appliquees.push({
+      exclusion: exclusion,
+      occurrence: occurrence
+    });
+  });
+
+  return {
+    appliquees: appliquees,
+    invalides: invalides,
+    nonTrouvees: nonTrouvees
+  };
+}
+
+function resoudreDoublonsAvecExclusionsStockages_(
+  occurrences,
+  exclusionsAppliquees
+) {
+  const clesExclues = {};
+  const groupes = {};
+  const sansCode = [];
+  const lignes = [];
+
+  exclusionsAppliquees.forEach(function (application) {
+    clesExclues[
+      construireCleExclusionPhotographieStockages_(
+        application.occurrence
+      )
+    ] = true;
+  });
+
+  occurrences.forEach(function (occurrence) {
+    if (!occurrence.identite) {
+      sansCode.push(occurrence);
+      return;
+    }
+
+    if (!groupes[occurrence.identite]) {
+      groupes[occurrence.identite] = [];
+    }
+
+    groupes[occurrence.identite].push(occurrence);
+  });
+
+  sansCode.forEach(function (occurrence) {
+    const cle =
+      construireCleExclusionPhotographieStockages_(
+        occurrence
+      );
+
+    if (!clesExclues[cle]) {
+      lignes.push(occurrence);
+    }
+  });
+
+  Object.keys(groupes)
+    .sort()
+    .forEach(function (identite) {
+      const originales = groupes[identite];
+      const restantes = originales.filter(
+        function (occurrence) {
+          return !clesExclues[
+            construireCleExclusionPhotographieStockages_(
+              occurrence
+            )
+          ];
+        }
+      );
+
+      if (originales.length === 1) {
+        if (restantes.length === 1) {
+          lignes.push(restantes[0]);
+        }
+        return;
+      }
+
+      if (restantes.length === 1) {
+        lignes.push(restantes[0]);
+        return;
+      }
+
+      const representative =
+        restantes[0] || originales[0];
+      const copie = Object.assign({}, representative);
+      copie.anomalies = Array.from(
+        new Set(
+          (representative.anomalies || []).concat([
+            'DOUBLON_REFERENCE_NON_RESOLU'
+          ])
+        )
+      );
+      copie.commentaire =
+        'Le groupe ' +
+        identite +
+        ' contient ' +
+        originales.length +
+        ' occurrence(s), dont ' +
+        restantes.length +
+        ' non exclue(s). Une seule occurrence officielle doit rester.';
+      lignes.push(copie);
+    });
+
+  return {
+    lignes: lignes,
+    nombreBloques: lignes.filter(function (ligne) {
+      return ligne.anomalies.length > 0;
+    }).length
+  };
+}
+
+function construireLigneSimulationExclueStockages_(
+  contexte
+) {
+  const application = contexte.application;
+  const exclusion = application.exclusion;
+  const occurrence = application.occurrence;
+  const reference = occurrence.identite
+    ? contexte.photographieParIdentite[
+        occurrence.identite
+      ] || null
+    : null;
+
+  return construireLigneRapportSimulation_({
+    dateTechniqueDetection:
+      contexte.dateTechniqueDetection,
+    observee: occurrence,
+    reference: reference,
+    versionActuelle: reference
+      ? Number(reference.versionObservation)
+      : 0,
+    versionProposee: reference
+      ? Number(reference.versionObservation)
+      : 0,
+    decision: 'IGNOREE',
+    anomalie: 'EXCLUSION_ADMINISTRATIVE',
+    commentaire: [
+      'Exclusion ID=' + exclusion.exclusionId,
+      'Type=' + exclusion.typeExclusion,
+      'Motif=' + exclusion.motif,
+      'Source=' +
+        exclusion.feuilleSource +
+        ' ligne ' +
+        exclusion.ligneSource,
+      'Aucun mouvement théorique.'
+    ].join(' | ')
+  });
+}
+
+function compterExclusionsAppliqueesStockages_(
+  applications
+) {
+  return applications.length;
+}
+
+function calculerEmpreinteEtatExclusionStockages_(
+  exclusion,
+  inclureActif
+) {
+  const valeurs = [
+    exclusion.exclusionId,
+    exclusion.feuilleSource,
+    exclusion.ligneSource,
+    exclusion.codeNormalise,
+    exclusion.typeExclusion,
+    exclusion.motif,
+    exclusion.autorisePar,
+    canoniserDateTechniqueStockages_(
+      exclusion.dateAutorisation
+    ),
+    exclusion.observation,
+    exclusion.empreinteSourceAutorisee
+  ];
+
+  if (inclureActif) {
+    valeurs.push(exclusion.actif);
+  }
+
+  return calculerSha256HexStockages_(
+    JSON.stringify(valeurs)
+  );
+}
+
+function tracerCycleVieExclusionsPhotographieStockages_(
+  classeur,
+  exclusions
+) {
+  const feuilleAudit = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.audit
+  );
+  const derniersEtats = {};
+
+  if (feuilleAudit.getLastRow() >= 2) {
+    feuilleAudit
+      .getRange(
+        2,
+        1,
+        feuilleAudit.getLastRow() - 1,
+        10
+      )
+      .getValues()
+      .forEach(function (ligne) {
+        const action = String(ligne[2] || '');
+        const reference = String(ligne[4] || '');
+
+        if (
+          [
+            'CREATION_EXCLUSION_PHOTOGRAPHIE',
+            'MODIFICATION_EXCLUSION_PHOTOGRAPHIE',
+            'ACTIVATION_EXCLUSION_PHOTOGRAPHIE',
+            'DESACTIVATION_EXCLUSION_PHOTOGRAPHIE'
+          ].indexOf(action) === -1 ||
+          !reference
+        ) {
+          return;
+        }
+
+        try {
+          const details = JSON.parse(
+            String(ligne[8] || '{}')
+          );
+          derniersEtats[reference] = details.etat;
+        } catch (erreur) {
+          derniersEtats[reference] = null;
+        }
+      });
+  }
+
+  exclusions.forEach(function (exclusion) {
+    if (!exclusion.exclusionId) {
+      return;
+    }
+
+    const etat = {
+      actif: exclusion.actif,
+      empreinteContenu:
+        calculerEmpreinteEtatExclusionStockages_(
+          exclusion,
+          false
+        ),
+      empreinteComplete:
+        calculerEmpreinteEtatExclusionStockages_(
+          exclusion,
+          true
+        ),
+      ligneFeuille:
+        exclusion.numeroLigneFeuille
+    };
+    const precedent =
+      derniersEtats[exclusion.exclusionId] || null;
+
+    if (!precedent) {
+      ajouterAuditStockages_(classeur, {
+        action: 'CREATION_EXCLUSION_PHOTOGRAPHIE',
+        agence: exclusion.feuilleSource,
+        reference: exclusion.exclusionId,
+        ancienneValeur: '',
+        nouvelleValeur: exclusion.typeExclusion,
+        resultat: 'SUCCESS',
+        details: JSON.stringify({ etat: etat })
+      });
+
+      if (exclusion.actif) {
+        ajouterAuditStockages_(classeur, {
+          action: 'ACTIVATION_EXCLUSION_PHOTOGRAPHIE',
+          agence: exclusion.feuilleSource,
+          reference: exclusion.exclusionId,
+          ancienneValeur: 'INACTIVE',
+          nouvelleValeur: 'ACTIVE',
+          resultat: 'SUCCESS',
+          details: JSON.stringify({ etat: etat })
+        });
+      }
+      return;
+    }
+
+    if (
+      precedent.empreinteContenu !==
+        etat.empreinteContenu
+    ) {
+      ajouterAuditStockages_(classeur, {
+        action: 'MODIFICATION_EXCLUSION_PHOTOGRAPHIE',
+        agence: exclusion.feuilleSource,
+        reference: exclusion.exclusionId,
+        ancienneValeur:
+          precedent.empreinteContenu || '',
+        nouvelleValeur: etat.empreinteContenu,
+        resultat: 'SUCCESS',
+        details: JSON.stringify({ etat: etat })
+      });
+    }
+
+    if (Boolean(precedent.actif) !== exclusion.actif) {
+      ajouterAuditStockages_(classeur, {
+        action: exclusion.actif
+          ? 'ACTIVATION_EXCLUSION_PHOTOGRAPHIE'
+          : 'DESACTIVATION_EXCLUSION_PHOTOGRAPHIE',
+        agence: exclusion.feuilleSource,
+        reference: exclusion.exclusionId,
+        ancienneValeur: precedent.actif
+          ? 'ACTIVE'
+          : 'INACTIVE',
+        nouvelleValeur: exclusion.actif
+          ? 'ACTIVE'
+          : 'INACTIVE',
+        resultat: 'SUCCESS',
+        details: JSON.stringify({ etat: etat })
+      });
+    }
+  });
+}
+
+function auditerApplicationExclusionsPhotographieStockages_(
+  classeur,
+  resultat,
+  contexte
+) {
+  resultat.appliquees.forEach(function (application) {
+    ajouterAuditStockages_(classeur, {
+      action:
+        'EXCLUSION_APPLIQUEE_' + contexte,
+      agence: application.exclusion.feuilleSource,
+      reference:
+        application.exclusion.exclusionId,
+      ancienneValeur: '',
+      nouvelleValeur:
+        application.exclusion.typeExclusion,
+      resultat: 'SUCCESS',
+      details: JSON.stringify({
+        ligneSource:
+          application.exclusion.ligneSource,
+        codeNormalise:
+          application.exclusion.codeNormalise,
+        motif: application.exclusion.motif
+      })
+    });
+  });
+
+  resultat.invalides.forEach(function (element) {
+    ajouterAuditStockages_(classeur, {
+      action: 'EXCLUSION_INVALIDE',
+      agence: element.exclusion.feuilleSource,
+      reference: element.exclusion.exclusionId,
+      ancienneValeur: '',
+      nouvelleValeur: '',
+      resultat: 'ERREUR',
+      details: JSON.stringify({
+        contexte: contexte,
+        erreurs: element.erreurs
+      })
+    });
+  });
+
+  resultat.nonTrouvees.forEach(function (element) {
+    ajouterAuditStockages_(classeur, {
+      action: 'EXCLUSION_NON_RETROUVEE',
+      agence: element.exclusion.feuilleSource,
+      reference: element.exclusion.exclusionId,
+      ancienneValeur: '',
+      nouvelleValeur: '',
+      resultat: 'ERREUR',
+      details: JSON.stringify({
+        contexte: contexte,
+        ligneSource:
+          element.exclusion.ligneSource
+      })
+    });
+  });
+}
+
+function comparerManifesteAvecPhotographieStockages_(
+  contexte
+) {
+  const photographieParIdentite = {};
+  const manifesteParIdentite = {};
+  const lignesRapport = [];
+  const compteurs = {
+    IGNOREE: 0,
+    BLOQUEE: 0,
+    INCHANGEE: 0,
+    SANS_MOUVEMENT: 0,
+    MOUVEMENT_SIMULE: 0,
+    MOUVEMENT_SIMULE_EXCEPTIONNEL: 0
+  };
+
+  contexte.photographie.forEach(function (ligne) {
+    photographieParIdentite[ligne.identite] = ligne;
+  });
+
+  (contexte.manifeste.exclusionsAppliquees || [])
+    .forEach(function (application) {
+      if (application.occurrence.identite) {
+        manifesteParIdentite[
+          application.occurrence.identite
+        ] = true;
+      }
+
+      lignesRapport.push(
+        construireLigneSimulationExclueStockages_({
+          application: application,
+          photographieParIdentite:
+            photographieParIdentite,
+          dateTechniqueDetection:
+            contexte.dateTechniqueDetection
+        })
+      );
+      compteurs.IGNOREE += 1;
+    });
+
+  contexte.manifeste.lignes.forEach(function (observee) {
+    if (observee.identite) {
+      manifesteParIdentite[observee.identite] = true;
+    }
+
+    const reference = observee.identite
+      ? photographieParIdentite[observee.identite]
+      : null;
+    const versionActuelle = reference
+      ? Number(reference.versionObservation)
+      : 0;
+    const versionProposee = versionActuelle + 1;
+
+    if (observee.anomalies.length > 0) {
+      const ligne = construireLigneRapportSimulation_({
+        dateTechniqueDetection:
+          contexte.dateTechniqueDetection,
+        observee: observee,
+        reference: reference,
+        versionActuelle: versionActuelle,
+        versionProposee: versionProposee,
+        decision: 'BLOQUEE',
+        anomalie: observee.anomalies.join(' | '),
+        commentaire:
+          'Ligne exclue : anomalie bloquante recalculée depuis le manifeste courant.'
+      });
+      lignesRapport.push(ligne);
+      compteurs.BLOQUEE += 1;
+      return;
+    }
+
+    if (reference && reference.etat !== 'REFERENCE') {
+      lignesRapport.push(
+        construireLigneRapportSimulation_({
+          dateTechniqueDetection:
+            contexte.dateTechniqueDetection,
+          observee: observee,
+          reference: reference,
+          versionActuelle: versionActuelle,
+          versionProposee: versionProposee,
+          decision: 'BLOQUEE',
+          anomalie: 'PHOTOGRAPHIE_REFERENCE_BLOQUEE',
+          commentaire:
+            'L’identité photographiée n’est pas dans l’état REFERENCE.'
+        })
+      );
+      compteurs.BLOQUEE += 1;
+      return;
+    }
+
+    if (
+      reference &&
+      Number(reference.poids) !== Number(observee.poids)
+    ) {
+      lignesRapport.push(
+        construireLigneRapportSimulation_({
+          dateTechniqueDetection:
+            contexte.dateTechniqueDetection,
+          observee: observee,
+          reference: reference,
+          versionActuelle: versionActuelle,
+          versionProposee: versionProposee,
+          decision: 'BLOQUEE',
+          anomalie: 'POIDS_DIFFERENT_DE_LA_REFERENCE',
+          commentaire:
+            'Le poids observé diffère du poids photographié.'
+        })
+      );
+      compteurs.BLOQUEE += 1;
+      return;
+    }
+
+    if (
+      observee.destination !== observee.feuille ||
+      (
+        reference &&
+        reference.destination !== observee.feuille
+      )
+    ) {
+      lignesRapport.push(
+        construireLigneRapportSimulation_({
+          dateTechniqueDetection:
+            contexte.dateTechniqueDetection,
+          observee: observee,
+          reference: reference,
+          versionActuelle: versionActuelle,
+          versionProposee: versionProposee,
+          decision: 'BLOQUEE',
+          anomalie: 'DESTINATION_INCOHERENTE',
+          commentaire:
+            'La destination finale ne correspond pas à la feuille source.'
+        })
+      );
+      compteurs.BLOQUEE += 1;
+      return;
+    }
+
+    const ancienStatut = reference
+      ? reference.statutReference
+      : 'ABSENT';
+    const transition =
+      determinerTransitionSimulationStockages_({
+        feuille: observee.feuille,
+        ancienStatut: ancienStatut,
+        nouveauStatut: observee.statutNormalise,
+        poids: observee.poids
+      });
+    const statusEventId =
+      (
+        transition.decision === 'MOUVEMENT_SIMULE' ||
+        transition.decision ===
+          'MOUVEMENT_SIMULE_EXCEPTIONNEL' ||
+        transition.decision === 'SANS_MOUVEMENT'
+      )
+        ? genererStatusEventIdTheoriqueStockages_({
+            identite: observee.identite,
+            ancienStatut: ancienStatut,
+            nouveauStatut: observee.statutNormalise,
+            dateSourceCanonique:
+              observee.dateSourceCanonique,
+            versionObservation: versionProposee
+          })
+        : '';
+
+    const nouvellesLignes =
+      construireLignesSimulationStockages_({
+        dateTechniqueDetection:
+          contexte.dateTechniqueDetection,
+        observee: observee,
+        reference: reference,
+        versionActuelle: versionActuelle,
+        versionProposee: versionProposee,
+        transition: transition,
+        statusEventId: statusEventId
+      });
+
+    nouvellesLignes.forEach(function (ligne) {
+      lignesRapport.push(ligne);
+      compteurs[transition.decision] += 1;
+    });
+  });
+
+  contexte.photographie.forEach(function (reference) {
+    if (!manifesteParIdentite[reference.identite]) {
+      lignesRapport.push(
+        construireLigneRapportSimulation_({
+          dateTechniqueDetection:
+            contexte.dateTechniqueDetection,
+          observee: {
+            identite: reference.identite,
+            feuille: reference.feuille,
+            codeBrut: reference.codeBrut,
+            destination: reference.destination,
+            poids: reference.poids,
+            statutNormalise: ''
+          },
+          reference: reference,
+          versionActuelle:
+            Number(reference.versionObservation),
+          versionProposee:
+            Number(reference.versionObservation),
+          decision: 'IGNOREE',
+          anomalie: 'IDENTITE_ABSENTE_DU_MANIFESTE',
+          commentaire:
+            'Identité photographiée absente du manifeste courant. Aucun mouvement théorique.'
+        })
+      );
+      compteurs.IGNOREE += 1;
+    }
+  });
+
+  return {
+    lignes: lignesRapport,
+    compteurs: compteurs
+  };
+}
+
+function determinerTransitionSimulationStockages_(
+  contexte
+) {
+  const ancien = contexte.ancienStatut;
+  const nouveau = contexte.nouveauStatut;
+  const feuille = contexte.feuille;
+  const poids = contexte.poids;
+  const niveaux = {
+    ENREGISTRE: 1,
+    EN_VOL: 2,
+    EN_TRANSIT: 3,
+    ARRIVE: 4,
+    LIVRE: 5
+  };
+
+  if (ancien === nouveau) {
+    return {
+      decision: 'INCHANGEE',
+      anomalie: '',
+      commentaire: 'Statut inchangé.',
+      mouvements: []
+    };
+  }
+
+  if (ancien === 'ABSENT') {
+    if (nouveau === 'ENREGISTRE') {
+      return {
+        decision: 'MOUVEMENT_SIMULE',
+        anomalie: '',
+        commentaire:
+          'NOUVEAU_COLIS_ENREGISTRE_APRES_PHOTOGRAPHIE',
+        mouvements: [
+          creerMouvementTheoriqueStockages_(
+            1,
+            'ENTREE_COO',
+            'COO',
+            1,
+            poids,
+            'NOUVEAU_COLIS_ENREGISTRE_APRES_PHOTOGRAPHIE'
+          )
+        ]
+      };
+    }
+
+    return transitionBloqueeStockages_(
+      'HISTORIQUE_ANTERIEUR_MANQUANT',
+      'Un colis absent de la photographie doit apparaître initialement avec ENREGISTRE.'
+    );
+  }
+
+  if (
+    niveaux[nouveau] &&
+    niveaux[ancien] &&
+    niveaux[nouveau] < niveaux[ancien]
+  ) {
+    return transitionBloqueeStockages_(
+      'TRANSITION_ARRIERE_INTERDITE',
+      'Un statut ne peut pas revenir automatiquement vers un niveau antérieur.'
+    );
+  }
+
+  if (
+    ancien === 'ENREGISTRE' &&
+    nouveau === 'EN_VOL'
+  ) {
+    return {
+      decision: 'MOUVEMENT_SIMULE',
+      anomalie: '',
+      commentaire: 'SORTIE_COO_APRES_MISE_EN_VOL',
+      mouvements: [
+        creerMouvementTheoriqueStockages_(
+          1,
+          'SORTIE_COO',
+          'COO',
+          -1,
+          -poids,
+          'SORTIE_COO_APRES_MISE_EN_VOL'
+        )
+      ]
+    };
+  }
+
+  if (
+    ancien === 'ENREGISTRE' &&
+    (
+      nouveau === 'EN_TRANSIT' ||
+      nouveau === 'ARRIVE'
+    )
+  ) {
+    return transitionBloqueeStockages_(
+      'SORTIE_COO_MANQUANTE',
+      'La transition contourne le mouvement obligatoire ENREGISTRE vers EN_VOL.'
+    );
+  }
+
+  if (
+    ancien === 'ENREGISTRE' &&
+    nouveau === 'LIVRE'
+  ) {
+    return transitionBloqueeStockages_(
+      'SORTIE_COO_ET_ENTREE_DESTINATION_MANQUANTES',
+      'La sortie COO et l’entrée destination ne sont pas prouvées.'
+    );
+  }
+
+  if (
+    ancien === 'EN_VOL' &&
+    nouveau === 'EN_TRANSIT'
+  ) {
+    return {
+      decision: 'SANS_MOUVEMENT',
+      anomalie: '',
+      commentaire:
+        'EN_TRANSIT est une étape facultative sans mouvement de stock.',
+      mouvements: []
+    };
+  }
+
+  if (
+    (
+      ancien === 'EN_VOL' ||
+      ancien === 'EN_TRANSIT'
+    ) &&
+    nouveau === 'ARRIVE'
+  ) {
+    return {
+      decision: 'MOUVEMENT_SIMULE',
+      anomalie: '',
+      commentaire:
+        'ARRIVEE_EXPLICITE_DESTINATION_ENREGISTREE_DANS_LE_MANIFESTE',
+      mouvements: [
+        creerMouvementTheoriqueStockages_(
+          1,
+          'ENTREE_DESTINATION',
+          feuille,
+          1,
+          poids,
+          'ARRIVEE_EXPLICITE_DESTINATION'
+        )
+      ]
+    };
+  }
+
+  if (
+    (
+      ancien === 'EN_VOL' ||
+      ancien === 'EN_TRANSIT'
+    ) &&
+    nouveau === 'LIVRE'
+  ) {
+    if (feuille === 'KLZ') {
+      return {
+        decision: 'MOUVEMENT_SIMULE_EXCEPTIONNEL',
+        anomalie: '',
+        commentaire: 'LIVRAISON_DIRECTE_KLZ',
+        mouvements: [
+          creerMouvementTheoriqueStockages_(
+            1,
+            'ENTREE_DESTINATION',
+            'KLZ',
+            1,
+            poids,
+            [
+              'ARRIVEE_IMPLICITE_KLZ_DEDUITE_DE_LIVRAISON_DIRECTE.',
+              'Date technique fondée sur la détection du statut LIVRE.',
+              'Heure physique exacte d’arrivée non certifiée.'
+            ].join(' ')
+          ),
+          creerMouvementTheoriqueStockages_(
+            2,
+            'SORTIE_DESTINATION',
+            'KLZ',
+            -1,
+            -poids,
+            'LIVRAISON_DIRECTE_KLZ_APRES_ARRIVEE_IMPLICITE.'
+          )
+        ]
+      };
+    }
+
+    return transitionBloqueeStockages_(
+      'ENTREE_DESTINATION_MANQUANTE',
+      'Le statut ARRIVE nécessaire à l’entrée destination est manquant.'
+    );
+  }
+
+  if (
+    ancien === 'ARRIVE' &&
+    nouveau === 'LIVRE'
+  ) {
+    return {
+      decision: 'MOUVEMENT_SIMULE',
+      anomalie: '',
+      commentaire:
+        'LIVRAISON_APRES_ARRIVEE_EXPLICITE',
+      mouvements: [
+        creerMouvementTheoriqueStockages_(
+          1,
+          'SORTIE_DESTINATION',
+          feuille,
+          -1,
+          -poids,
+          'LIVRAISON_APRES_ARRIVEE_EXPLICITE'
+        )
+      ]
+    };
+  }
+
+  return transitionBloqueeStockages_(
+    'TRANSITION_NON_AUTORISEE',
+    ancien + ' vers ' + nouveau +
+      ' n’appartient pas à la matrice autorisée.'
+  );
+}
+
+function creerMouvementTheoriqueStockages_(
+  ordre,
+  type,
+  agence,
+  variationColis,
+  variationKg,
+  commentaire
+) {
+  return {
+    ordre: ordre,
+    type: type,
+    agence: agence,
+    variationColis: variationColis,
+    variationKg: variationKg,
+    commentaire: commentaire
+  };
+}
+
+function transitionBloqueeStockages_(
+  anomalie,
+  commentaire
+) {
+  return {
+    decision: 'BLOQUEE',
+    anomalie: anomalie,
+    commentaire: commentaire,
+    mouvements: []
+  };
+}
+
+function construireLignesSimulationStockages_(contexte) {
+  const transition = contexte.transition;
+
+  if (transition.mouvements.length === 0) {
+    return [
+      construireLigneRapportSimulation_({
+        dateTechniqueDetection:
+          contexte.dateTechniqueDetection,
+        observee: contexte.observee,
+        reference: contexte.reference,
+        versionActuelle: contexte.versionActuelle,
+        versionProposee: contexte.versionProposee,
+        decision: transition.decision,
+        statusEventId: contexte.statusEventId,
+        anomalie: transition.anomalie,
+        commentaire: transition.commentaire
+      })
+    ];
+  }
+
+  return transition.mouvements.map(function (mouvement) {
+    return construireLigneRapportSimulation_({
+      dateTechniqueDetection:
+        contexte.dateTechniqueDetection,
+      observee: contexte.observee,
+      reference: contexte.reference,
+      versionActuelle: contexte.versionActuelle,
+      versionProposee: contexte.versionProposee,
+      decision: transition.decision,
+      ordreMouvement: mouvement.ordre,
+      typeMouvement: mouvement.type,
+      agenceCible: mouvement.agence,
+      variationColis: mouvement.variationColis,
+      variationKg: mouvement.variationKg,
+      statusEventId: contexte.statusEventId,
+      movementId:
+        genererMovementIdTheoriqueStockages_({
+          statusEventId: contexte.statusEventId,
+          typeMouvement: mouvement.type,
+          agenceCible: mouvement.agence,
+          ordreMouvement: mouvement.ordre
+        }),
+      anomalie: '',
+      commentaire: mouvement.commentaire
+    });
+  });
+}
+
+function construireLigneRapportSimulation_(contexte) {
+  const reference = contexte.reference;
+  const observee = contexte.observee;
+
+  return [
+    contexte.dateTechniqueDetection,
+    observee.identite || '',
+    observee.feuille || '',
+    observee.codeBrut || '',
+    observee.destination || '',
+    Number.isFinite(observee.poids)
+      ? observee.poids
+      : '',
+    reference ? reference.statutReference : 'ABSENT',
+    observee.statutNormalise || '',
+    contexte.versionActuelle,
+    contexte.versionProposee,
+    contexte.decision,
+    contexte.ordreMouvement || '',
+    contexte.typeMouvement || '',
+    contexte.agenceCible || '',
+    Number.isFinite(contexte.variationColis)
+      ? contexte.variationColis
+      : '',
+    Number.isFinite(contexte.variationKg)
+      ? contexte.variationKg
+      : '',
+    contexte.statusEventId || '',
+    contexte.movementId || '',
+    contexte.anomalie || '',
+    contexte.commentaire || ''
+  ];
+}
+
+function canoniserDateSourceStockages_(
+  valeurBrute,
+  valeurAffichee
+) {
+  if (estDateValideStockages_(valeurBrute)) {
+    return Utilities.formatDate(
+      valeurBrute,
+      STOCKAGES_CONFIG.timezone,
+      "yyyy-MM-dd'T'HH:mm:ss"
+    );
+  }
+
+  const texte = String(valeurAffichee || '').trim();
+  const correspondance = texte.match(
+    /^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/
+  );
+
+  if (!correspondance) {
+    return '';
+  }
+
+  const jour = Number(correspondance[1]);
+  const mois = Number(correspondance[2]);
+  const annee = Number(correspondance[3]);
+  const heure = Number(correspondance[4] || 0);
+  const minute = Number(correspondance[5] || 0);
+  const seconde = Number(correspondance[6] || 0);
+
+  if (
+    heure > 23 ||
+    minute > 59 ||
+    seconde > 59
+  ) {
+    return '';
+  }
+
+  const texteCanonique = [
+    String(jour).padStart(2, '0'),
+    String(mois).padStart(2, '0'),
+    String(annee).padStart(4, '0')
+  ].join('/') +
+    ' ' +
+    [
+      String(heure).padStart(2, '0'),
+      String(minute).padStart(2, '0'),
+      String(seconde).padStart(2, '0')
+    ].join(':');
+  let date;
+
+  try {
+    date = Utilities.parseDate(
+      texteCanonique,
+      STOCKAGES_CONFIG.timezone,
+      'dd/MM/yyyy HH:mm:ss'
+    );
+  } catch (erreur) {
+    return '';
+  }
+
+  if (
+    Utilities.formatDate(
+      date,
+      STOCKAGES_CONFIG.timezone,
+      'dd/MM/yyyy HH:mm:ss'
+    ) !== texteCanonique
+  ) {
+    return '';
+  }
+
+  return Utilities.formatDate(
+    date,
+    STOCKAGES_CONFIG.timezone,
+    "yyyy-MM-dd'T'HH:mm:ss"
+  );
+}
+
+function canoniserDateTechniqueStockages_(date) {
+  if (!estDateValideStockages_(date)) {
+    return '';
+  }
+
+  return Utilities.formatDate(
+    date,
+    STOCKAGES_CONFIG.timezone,
+    "yyyy-MM-dd'T'HH:mm:ss"
+  );
+}
+
+function calculerEmpreinteObservationStockages_(ligne) {
+  return calculerSha256HexStockages_(
+    [
+      ligne.identite,
+      ligne.destination,
+      canoniserNombreStockages_(ligne.poids),
+      ligne.statutNormalise,
+      ligne.dateSourceCanonique
+    ].join('|')
+  );
+}
+
+function genererStatusEventIdTheoriqueStockages_(
+  contexte
+) {
+  return calculerSha256HexStockages_(
+    [
+      'STATUS_EVENT_V1',
+      contexte.identite,
+      contexte.ancienStatut,
+      contexte.nouveauStatut,
+      contexte.dateSourceCanonique,
+      contexte.versionObservation
+    ].join('|')
+  );
+}
+
+function genererMovementIdTheoriqueStockages_(
+  contexte
+) {
+  const nomCanonique = [
+    'EEB',
+    'STOCKAGES',
+    'MOVEMENT',
+    'V1',
+    contexte.statusEventId,
+    contexte.typeMouvement,
+    contexte.agenceCible,
+    contexte.ordreMouvement
+  ].join('|');
+
+  return genererUuidV5Stockages_(
+    STOCKAGES_CONFIG.simulation.namespaceUuidV5,
+    nomCanonique
+  );
+}
+
+function genererUuidV5Stockages_(
+  namespaceUuid,
+  nom
+) {
+  const namespace =
+    convertirUuidEnOctetsStockages_(namespaceUuid);
+  const nomOctets = Utilities
+    .newBlob(String(nom), 'text/plain')
+    .getBytes();
+  const entree = namespace.concat(nomOctets);
+  const digest = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_1,
+    entree
+  );
+  const octets = digest.slice(0, 16).map(
+    function (octet) {
+      return octet & 0xff;
+    }
+  );
+
+  octets[6] = (octets[6] & 0x0f) | 0x50;
+  octets[8] = (octets[8] & 0x3f) | 0x80;
+
+  return formaterOctetsUuidStockages_(octets);
+}
+
+function convertirUuidEnOctetsStockages_(uuid) {
+  const hexadecimal = String(uuid || '')
+    .toLowerCase()
+    .replace(/-/g, '');
+
+  if (!/^[0-9a-f]{32}$/.test(hexadecimal)) {
+    throw new Error(
+      'Namespace UUID v5 invalide.'
+    );
+  }
+
+  const octets = [];
+
+  for (
+    let index = 0;
+    index < hexadecimal.length;
+    index += 2
+  ) {
+    const valeur = parseInt(
+      hexadecimal.slice(index, index + 2),
+      16
+    );
+    octets.push(valeur > 127 ? valeur - 256 : valeur);
+  }
+
+  return octets;
+}
+
+function formaterOctetsUuidStockages_(octets) {
+  const hexadecimal = octets
+    .map(function (octet) {
+      return (octet & 0xff)
+        .toString(16)
+        .padStart(2, '0');
+    })
+    .join('');
+
+  return [
+    hexadecimal.slice(0, 8),
+    hexadecimal.slice(8, 12),
+    hexadecimal.slice(12, 16),
+    hexadecimal.slice(16, 20),
+    hexadecimal.slice(20, 32)
+  ].join('-');
+}
+
+function calculerSha256HexStockages_(valeur) {
+  return Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    String(valeur),
+    Utilities.Charset.UTF_8
+  )
+    .map(function (octet) {
+      return (octet & 0xff)
+        .toString(16)
+        .padStart(2, '0');
+    })
+    .join('');
+}
+
+function canoniserNombreStockages_(valeur) {
+  const nombre = Number(valeur);
+
+  if (!Number.isFinite(nombre)) {
+    return '';
+  }
+
+  if (Object.is(nombre, -0)) {
+    return '0';
+  }
+
+  return String(nombre);
+}
+
+function comparerChainesCanoniquesStockages_(a, b) {
+  const gauche = String(a);
+  const droite = String(b);
+
+  if (gauche < droite) {
+    return -1;
+  }
+
+  if (gauche > droite) {
+    return 1;
+  }
+
+  return 0;
+}
+/**
+ * Point d’entrée initial.
+ * Cette fonction est idempotente.
+ */
+function initialiserStockagesPublic() {
+  const verrou = LockService.getScriptLock();
+
+  try {
+    verrou.waitLock(30000);
+
+    const classeur = SpreadsheetApp.getActiveSpreadsheet();
+
+    classeur.setSpreadsheetTimeZone(
+      STOCKAGES_CONFIG.timezone
+    );
+
+    creerStructuresStockages_(classeur);
+    initialiserParametresStockages_(classeur);
+    initialiserSoldesAgences_(classeur);
+    installerValidationsStockages_(classeur);
+    mettreEnFormeStockages_(classeur);
+
+    SpreadsheetApp.flush();
+
+    ajouterAuditStockages_(classeur, {
+      action: 'INITIALISATION',
+      agence: '',
+      reference: STOCKAGES_CONFIG.version,
+      ancienneValeur: '',
+      nouvelleValeur: 'STRUCTURE_VERIFIEE',
+      resultat: 'SUCCESS',
+      details:
+        'Initialisation idempotente du classeur STOCKAGES PUBLIC.'
+    });
+
+    SpreadsheetApp.getUi().alert(
+      'Initialisation terminée',
+      'Les feuilles et paramètres de STOCKAGES PUBLIC sont prêts.',
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+  } catch (erreur) {
+    journaliserErreurStockages_(
+      'INITIALISATION',
+      erreur
+    );
+
+    SpreadsheetApp.getUi().alert(
+      'Échec de l’initialisation',
+      messageErreurStockages_(erreur),
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+
+    throw erreur;
+  } finally {
+    verrou.releaseLock();
+  }
+}
+
+/**
+ * Vérifie la configuration du classeur.
+ */
+function verifierConfigurationStockages() {
+  try {
+    const classeur = SpreadsheetApp.getActiveSpreadsheet();
+    const erreurs = verifierConfigurationInterne_(classeur);
+    const interfaceUtilisateur = SpreadsheetApp.getUi();
+
+    if (erreurs.length > 0) {
+      interfaceUtilisateur.alert(
+        'Configuration incomplète',
+        erreurs.join('\n'),
+        interfaceUtilisateur.ButtonSet.OK
+      );
+      return;
+    }
+
+    interfaceUtilisateur.alert(
+      'Configuration valide',
+      'Les feuilles, en-têtes, paramètres et agences sont conformes.',
+      interfaceUtilisateur.ButtonSet.OK
+    );
+  } catch (erreur) {
+    journaliserErreurStockages_(
+      'VERIFICATION_CONFIGURATION',
+      erreur
+    );
+
+    throw erreur;
+  }
+}
+
+/**
+ * Demande une date et une heure uniques, puis l’applique aux
+ * quatre lignes officielles de SOLDE INITIAL.
+ */
+function definirDateActivationStockages() {
+  const verrou = LockService.getScriptLock();
+
+  try {
+    verrou.waitLock(30000);
+
+    const classeur = SpreadsheetApp.getActiveSpreadsheet();
+    exigerConfigurationValide_(classeur);
+
+    const statutSysteme = lireParametreStockages_(
+      classeur,
+      'SYSTEM_STATUS'
+    );
+
+    if (statutSysteme === 'ACTIF') {
+      throw new Error(
+        'La date d’activation ne peut pas être modifiée lorsque le système est ACTIF.'
+      );
+    }
+
+    const soldes = lireSoldesInitiaux_(classeur);
+    const soldeDejaValide = soldes.some(function(solde) {
+      return solde.statut === 'VALIDÉ';
+    });
+
+    if (soldeDejaValide) {
+      throw new Error(
+        'La date d’activation ne peut plus être modifiée car un solde initial est déjà VALIDÉ.'
+      );
+    }
+
+    const interfaceUtilisateur = SpreadsheetApp.getUi();
+    const reponse = interfaceUtilisateur.prompt(
+      'Définir la date d’activation',
+      [
+        'Saisissez une date et une heure uniques.',
+        'Format obligatoire : JJ/MM/AAAA HH:mm',
+        'Exemple : 31/07/2026 08:00'
+      ].join('\n'),
+      interfaceUtilisateur.ButtonSet.OK_CANCEL
+    );
+
+    if (
+      reponse.getSelectedButton() !==
+      interfaceUtilisateur.Button.OK
+    ) {
+      return;
+    }
+
+    const texteDate = reponse.getResponseText().trim();
+    const dateActivation =
+      analyserDateHeureSaisieStockages_(texteDate);
+
+    if (!dateActivation) {
+      throw new Error(
+        'Date invalide. Utilisez exactement le format JJ/MM/AAAA HH:mm.'
+      );
+    }
+
+    const confirmation = interfaceUtilisateur.alert(
+      'Confirmer la date d’activation',
+      [
+        'Date commune :',
+        formaterDateHeureStockages_(dateActivation),
+        '',
+        'Cette date sera appliquée à COO, FIH, LSHI et KLZ.'
+      ].join('\n'),
+      interfaceUtilisateur.ButtonSet.YES_NO
+    );
+
+    if (confirmation !== interfaceUtilisateur.Button.YES) {
+      return;
+    }
+
+    const feuille = exigerFeuilleStockages_(
+      classeur,
+      STOCKAGES_CONFIG.feuilles.soldeInitial
+    );
+
+    const anciennesDates = STOCKAGES_CONFIG.agences.map(
+      function(agence) {
+        const ligne = STOCKAGES_CONFIG.lignesAgences[agence];
+        return feuille.getRange(ligne, 1).getValue();
+      }
+    );
+
+    const valeursDates = STOCKAGES_CONFIG.agences.map(
+      function() {
+        return [new Date(dateActivation.getTime())];
+      }
+    );
+
+    feuille
+      .getRange(2, 1, 4, 1)
+      .setValues(valeursDates)
+      .setNumberFormat('dd/MM/yyyy HH:mm');
+
+    ecrireParametreStockages_(
+      classeur,
+      'DATE_ACTIVATION',
+      dateActivation,
+      'Date et heure commune d’activation du stock.'
+    );
+
+    SpreadsheetApp.flush();
+
+    ajouterAuditStockages_(classeur, {
+      action: 'DEFINITION_DATE_ACTIVATION',
+      agence: '',
+      reference: '',
+      ancienneValeur: anciennesDates
+        .map(function(date) {
+          return estDateValideStockages_(date)
+            ? formaterDateHeureStockages_(date)
+            : '';
+        })
+        .join(' | '),
+      nouvelleValeur:
+        formaterDateHeureStockages_(dateActivation),
+      resultat: 'SUCCESS',
+      details:
+        'Date commune appliquée aux quatre agences.'
+    });
+
+    interfaceUtilisateur.alert(
+      'Date enregistrée',
+      'La date d’activation commune a été appliquée aux quatre agences.',
+      interfaceUtilisateur.ButtonSet.OK
+    );
+  } catch (erreur) {
+    journaliserErreurStockages_(
+      'DEFINITION_DATE_ACTIVATION',
+      erreur
+    );
+
+    SpreadsheetApp.getUi().alert(
+      'Date non enregistrée',
+      messageErreurStockages_(erreur),
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+
+    throw erreur;
+  } finally {
+    verrou.releaseLock();
+  }
+}
+
+/**
+ * Valide la ligne sélectionnée dans SOLDE INITIAL.
+ */
+function validerSoldeInitial() {
+  const verrou = LockService.getScriptLock();
+
+  try {
+    verrou.waitLock(30000);
+
+    const classeur = SpreadsheetApp.getActiveSpreadsheet();
+    exigerConfigurationValide_(classeur);
+
+    const statutSysteme = lireParametreStockages_(
+      classeur,
+      'SYSTEM_STATUS'
+    );
+
+    if (statutSysteme === 'ACTIF') {
+      throw new Error(
+        'Un solde initial ne peut pas être validé lorsque le système est ACTIF.'
+      );
+    }
+
+    const feuille = classeur.getActiveSheet();
+    const plageActive = feuille.getActiveRange();
+
+    if (
+      feuille.getName() !==
+        STOCKAGES_CONFIG.feuilles.soldeInitial ||
+      !plageActive ||
+      plageActive.getRow() < 2 ||
+      plageActive.getRow() > 5
+    ) {
+      throw new Error(
+        'Sélectionnez une cellule de la ligne officielle COO, FIH, LSHI ou KLZ dans SOLDE INITIAL.'
+      );
+    }
+
+    const ligne = plageActive.getRow();
+    const agenceOfficielle =
+      agenceOfficiellePourLigne_(ligne);
+
+    if (!agenceOfficielle) {
+      throw new Error(
+        'La ligne sélectionnée n’est pas une ligne officielle.'
+      );
+    }
+
+    const valeurs = feuille
+      .getRange(ligne, 1, 1, 9)
+      .getValues()[0];
+
+    const dateActivation = valeurs[0];
+    const agence = normaliserTexteStockages_(valeurs[1]);
+    const nombreColis = analyserEntierPositifOuZero_(
+      valeurs[2]
+    );
+    const kilogrammes = analyserNombrePositifOuZero_(
+      valeurs[3]
+    );
+    const statut = normaliserTexteStockages_(valeurs[6]);
+    const dateCommune = lireParametreStockagesBrut_(
+      classeur,
+      'DATE_ACTIVATION'
+    );
+
+    if (agence !== agenceOfficielle) {
+      throw new Error(
+        'L’agence de la ligne ne correspond pas à la ligne officielle : ' +
+          agenceOfficielle
+      );
+    }
+
+    if (!STOCKAGES_CONFIG.agences.includes(agence)) {
+      throw new Error('Agence non autorisée.');
+    }
+
+    if (!estDateValideStockages_(dateCommune)) {
+      throw new Error(
+        'Définissez d’abord la date d’activation commune depuis le menu STOCKAGES EEB.'
+      );
+    }
+
+    if (!estDateValideStockages_(dateActivation)) {
+      throw new Error(
+        'La ligne ne possède pas de date d’activation valide.'
+      );
+    }
+
+    if (
+      dateActivation.getTime() !==
+      dateCommune.getTime()
+    ) {
+      throw new Error(
+        'La date de la ligne ne correspond pas exactement à la date d’activation commune.'
+      );
+    }
+
+    if (nombreColis === null) {
+      throw new Error(
+        'Le nombre initial de colis doit être un entier supérieur ou égal à zéro.'
+      );
+    }
+
+    if (kilogrammes === null) {
+      throw new Error(
+        'Les kilogrammes initiaux doivent être un nombre supérieur ou égal à zéro.'
+      );
+    }
+
+    if (statut === 'VALIDÉ') {
+      throw new Error(
+        'Ce solde initial est déjà VALIDÉ et ne peut plus être modifié.'
+      );
+    }
+
+    if (statut !== 'BROUILLON') {
+      throw new Error(
+        'Le statut du solde initial doit être BROUILLON.'
+      );
+    }
+
+    const lignesSoldes = lireSoldesInitiaux_(classeur);
+    const autreSoldeValide = lignesSoldes.some(
+      function(item) {
+        return (
+          item.ligne !== ligne &&
+          item.agence === agence &&
+          item.statut === 'VALIDÉ'
+        );
+      }
+    );
+
+    if (autreSoldeValide) {
+      throw new Error(
+        'Un autre solde initial VALIDÉ existe déjà pour cette agence.'
+      );
+    }
+
+    const interfaceUtilisateur = SpreadsheetApp.getUi();
+    const confirmation = interfaceUtilisateur.alert(
+      'Valider le solde initial',
+      [
+        'Agence : ' + agence,
+        'Date : ' +
+          formaterDateHeureStockages_(dateActivation),
+        'Nombre de colis : ' + nombreColis,
+        'Kilogrammes : ' + kilogrammes,
+        '',
+        'Cette validation rendra la ligne immuable.'
+      ].join('\n'),
+      interfaceUtilisateur.ButtonSet.YES_NO
+    );
+
+    if (confirmation !== interfaceUtilisateur.Button.YES) {
+      return;
+    }
+
+    const maintenant = new Date();
+    const utilisateur = utilisateurCourantStockages_();
+    const initialStockId =
+      Utilities.getUuid().toLowerCase();
+
+    feuille
+      .getRange(ligne, 1, 1, 9)
+      .setValues([[
+        dateActivation,
+        agence,
+        nombreColis,
+        kilogrammes,
+        valeurs[4] || '',
+        utilisateur,
+        'VALIDÉ',
+        initialStockId,
+        maintenant
+      ]]);
+
+    protegerLigneSoldeValide_(
+      feuille,
+      ligne,
+      initialStockId
+    );
+
+    SpreadsheetApp.flush();
+
+    ajouterAuditStockages_(classeur, {
+      action: 'VALIDATION_SOLDE_INITIAL',
+      agence: agence,
+      reference: initialStockId,
+      ancienneValeur: 'BROUILLON',
+      nouvelleValeur: JSON.stringify({
+        colis: nombreColis,
+        kilogrammes: kilogrammes,
+        statut: 'VALIDÉ'
+      }),
+      resultat: 'SUCCESS',
+      details:
+        'Validation définitive du solde initial.'
+    });
+
+    interfaceUtilisateur.alert(
+      'Solde initial validé',
+      'Le solde initial de ' + agence + ' est maintenant protégé.',
+      interfaceUtilisateur.ButtonSet.OK
+    );
+  } catch (erreur) {
+    journaliserErreurStockages_(
+      'VALIDATION_SOLDE_INITIAL',
+      erreur
+    );
+
+    SpreadsheetApp.getUi().alert(
+      'Validation impossible',
+      messageErreurStockages_(erreur),
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+
+    throw erreur;
+  } finally {
+    verrou.releaseLock();
+  }
+}
+
+/**
+ * Active le système après validation des quatre soldes initiaux.
+ */
+function activerSystemeStockages() {
+  const verrou = LockService.getScriptLock();
+
+  try {
+    verrou.waitLock(30000);
+
+    const classeur = SpreadsheetApp.getActiveSpreadsheet();
+    exigerConfigurationValide_(classeur);
+
+    const statutActuel = lireParametreStockages_(
+      classeur,
+      'SYSTEM_STATUS'
+    );
+
+    if (statutActuel === 'ACTIF') {
+      SpreadsheetApp.getUi().alert(
+        'Le système est déjà ACTIF.'
+      );
+      return;
+    }
+
+    const dateCommune = lireParametreStockagesBrut_(
+      classeur,
+      'DATE_ACTIVATION'
+    );
+
+    if (!estDateValideStockages_(dateCommune)) {
+      throw new Error(
+        'La date d’activation commune n’est pas définie.'
+      );
+    }
+
+    const soldes = lireSoldesInitiauxValides_(classeur);
+
+    if (soldes.length !== STOCKAGES_CONFIG.agences.length) {
+      throw new Error(
+        'Les quatre agences doivent posséder un solde initial VALIDÉ.'
+      );
+    }
+
+    STOCKAGES_CONFIG.agences.forEach(function(agence) {
+      const correspondances = soldes.filter(function(item) {
+        return item.agence === agence;
+      });
+
+      if (correspondances.length !== 1) {
+        throw new Error(
+          'Chaque agence doit posséder exactement un solde initial VALIDÉ : ' +
+            agence
+        );
+      }
+
+      const solde = correspondances[0];
+
+      if (
+        solde.nombreColis === null ||
+        solde.kilogrammes === null ||
+        !estDateValideStockages_(solde.dateActivation)
+      ) {
+        throw new Error(
+          'Solde initial invalide pour ' + agence + '.'
+        );
+      }
+
+      if (
+        solde.dateActivation.getTime() !==
+        dateCommune.getTime()
+      ) {
+        throw new Error(
+          'La date du solde initial ne correspond pas à la date commune pour ' +
+            agence
+        );
+      }
+    });
+
+    const interfaceUtilisateur = SpreadsheetApp.getUi();
+    const confirmation = interfaceUtilisateur.alert(
+      'Activer STOCKAGES PUBLIC',
+      [
+        'Les quatre soldes initiaux sont validés.',
+        'Date d’activation : ' +
+          formaterDateHeureStockages_(dateCommune),
+        '',
+        'Confirmer l’activation du système ?'
+      ].join('\n'),
+      interfaceUtilisateur.ButtonSet.YES_NO
+    );
+
+    if (confirmation !== interfaceUtilisateur.Button.YES) {
+      return;
+    }
+
+    ecrireParametreStockages_(
+      classeur,
+      'SYSTEM_STATUS',
+      'ACTIF',
+      'Statut du système de stockage.'
+    );
+
+    protegerDonneesSensiblesStockages_(classeur);
+    SpreadsheetApp.flush();
+
+    ajouterAuditStockages_(classeur, {
+      action: 'ACTIVATION',
+      agence: '',
+      reference: '',
+      ancienneValeur: statutActuel,
+      nouvelleValeur: 'ACTIF',
+      resultat: 'SUCCESS',
+      details:
+        'Activation avec date commune ' +
+        formaterDateHeureStockages_(dateCommune)
+    });
+
+    interfaceUtilisateur.alert(
+      'Système activé',
+      'STOCKAGES PUBLIC est maintenant ACTIF.',
+      interfaceUtilisateur.ButtonSet.OK
+    );
+  } catch (erreur) {
+    journaliserErreurStockages_('ACTIVATION', erreur);
+
+    SpreadsheetApp.getUi().alert(
+      'Activation impossible',
+      messageErreurStockages_(erreur),
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+
+    throw erreur;
+  } finally {
+    verrou.releaseLock();
+  }
+}
+
+/**
+ * Désactive le système sans supprimer les données.
+ */
+function desactiverSystemeStockages() {
+  const verrou = LockService.getScriptLock();
+
+  try {
+    verrou.waitLock(30000);
+
+    const classeur = SpreadsheetApp.getActiveSpreadsheet();
+    exigerConfigurationValide_(classeur);
+
+    const statutActuel = lireParametreStockages_(
+      classeur,
+      'SYSTEM_STATUS'
+    );
+
+    if (statutActuel !== 'ACTIF') {
+      SpreadsheetApp.getUi().alert(
+        'Le système n’est pas actuellement ACTIF.'
+      );
+      return;
+    }
+
+    const interfaceUtilisateur = SpreadsheetApp.getUi();
+    const confirmation = interfaceUtilisateur.alert(
+      'Désactiver le système',
+      'Les données seront conservées. Confirmer la désactivation ?',
+      interfaceUtilisateur.ButtonSet.YES_NO
+    );
+
+    if (confirmation !== interfaceUtilisateur.Button.YES) {
+      return;
+    }
+
+    ecrireParametreStockages_(
+      classeur,
+      'SYSTEM_STATUS',
+      'INACTIF',
+      'Statut du système de stockage.'
+    );
+
+    SpreadsheetApp.flush();
+
+    ajouterAuditStockages_(classeur, {
+      action: 'DESACTIVATION',
+      agence: '',
+      reference: '',
+      ancienneValeur: 'ACTIF',
+      nouvelleValeur: 'INACTIF',
+      resultat: 'SUCCESS',
+      details:
+        'Désactivation manuelle sans suppression de données.'
+    });
+
+    interfaceUtilisateur.alert(
+      'Système désactivé',
+      'Les données existantes ont été conservées.',
+      interfaceUtilisateur.ButtonSet.OK
+    );
+  } catch (erreur) {
+    journaliserErreurStockages_('DESACTIVATION', erreur);
+    throw erreur;
+  } finally {
+    verrou.releaseLock();
+  }
+}
+
+/**
+ * Recalcule le stock journalier à partir des soldes initiaux
+ * et des mouvements déjà présents.
+ *
+ * Cette fonction ne lit pas encore MANIFESTE PUBLIC.
+ */
+function recalculerStockJournalier() {
+  const verrou = LockService.getScriptLock();
+
+  try {
+    verrou.waitLock(30000);
+
+    const classeur = SpreadsheetApp.getActiveSpreadsheet();
+    exigerConfigurationValide_(classeur);
+
+    const statutSysteme = lireParametreStockages_(
+      classeur,
+      'SYSTEM_STATUS'
+    );
+
+    if (statutSysteme !== 'ACTIF') {
+      throw new Error(
+        'Le système doit être ACTIF avant le recalcul.'
+      );
+    }
+
+    const soldes = lireSoldesInitiauxValides_(classeur);
+
+    if (soldes.length !== 4) {
+      throw new Error(
+        'Les quatre soldes initiaux VALIDÉS sont requis.'
+      );
+    }
+
+    const mouvements = lireMouvementsStock_(classeur);
+    const calculs = construireStockJournalier_(
+      soldes,
+      mouvements
+    );
+
+    ecrireStockJournalierIdempotent_(classeur, calculs);
+
+    const lignesNegatives = calculs.filter(function(calcul) {
+      return calcul.valeurs[14] ===
+        'ALERTE_STOCK_NEGATIF';
+    });
+
+    lignesNegatives.forEach(function(calcul) {
+      ajouterAuditStockNegatifSiAbsent_(
+        classeur,
+        calcul
+      );
+    });
+
+    SpreadsheetApp.flush();
+
+    ajouterAuditStockages_(classeur, {
+      action: 'RECALCUL_STOCK_JOURNALIER',
+      agence: '',
+      reference: STOCKAGES_CONFIG.version,
+      ancienneValeur: '',
+      nouvelleValeur:
+        calculs.length + ' lignes calculées',
+      resultat:
+        lignesNegatives.length > 0
+          ? 'AVERTISSEMENT'
+          : 'SUCCESS',
+      details:
+        lignesNegatives.length +
+        ' ligne(s) avec stock négatif.'
+    });
+
+    const messageFinal = [
+      calculs.length +
+        ' lignes journalières ont été vérifiées.'
+    ];
+
+    if (lignesNegatives.length > 0) {
+      messageFinal.push(
+        '',
+        'ATTENTION : ' +
+          lignesNegatives.length +
+          ' ligne(s) présentent un stock négatif.',
+        'Les résultats ont été conservés pour examen.',
+        'Consultez STOCK JOURNALIER et AUDIT.'
+      );
+    } else {
+      messageFinal.push(
+        '',
+        'Aucun stock négatif détecté.'
+      );
+    }
+
+    SpreadsheetApp.getUi().alert(
+      'Recalcul terminé',
+      messageFinal.join('\n'),
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+  } catch (erreur) {
+    journaliserErreurStockages_(
+      'RECALCUL_STOCK_JOURNALIER',
+      erreur
+    );
+
+    SpreadsheetApp.getUi().alert(
+      'Recalcul impossible',
+      messageErreurStockages_(erreur),
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+
+    throw erreur;
+  } finally {
+    verrou.releaseLock();
+  }
+}
+
+/**
+ * Affiche l’état courant sans normaliser l’identifiant MANIFESTE.
+ */
+function afficherStatutSysteme() {
+  const classeur = SpreadsheetApp.getActiveSpreadsheet();
+
+  const statut = lireParametreStockages_(
+    classeur,
+    'SYSTEM_STATUS'
+  );
+
+  const dateActivation = lireParametreStockagesBrut_(
+    classeur,
+    'DATE_ACTIVATION'
+  );
+
+  const identifiantManifesteBrut =
+    lireParametreStockagesBrut_(
+      classeur,
+      'MANIFEST_SPREADSHEET_ID'
+    );
+
+  const identifiantManifeste = String(
+    identifiantManifesteBrut || ''
+  ).trim();
+
+  SpreadsheetApp.getUi().alert(
+    'Statut de STOCKAGES PUBLIC',
+    [
+      'Statut : ' + (statut || 'NON CONFIGURÉ'),
+      'Date d’activation : ' +
+        (estDateValideStockages_(dateActivation)
+          ? formaterDateHeureStockages_(dateActivation)
+          : 'Non définie'),
+      'MANIFESTE PUBLIC : ' +
+        (identifiantManifeste
+          ? 'Identifiant configuré'
+          : 'Non connecté'),
+      'Version : ' + STOCKAGES_CONFIG.version
+    ].join('\n'),
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
+}
+
+function creerStructuresStockages_(classeur) {
+  assurerFeuilleEtEntetes_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.parametres,
+    STOCKAGES_CONFIG.entetes.parametres
+  );
+
+  assurerFeuilleEtEntetes_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.soldeInitial,
+    STOCKAGES_CONFIG.entetes.soldeInitial
+  );
+
+  assurerFeuilleEtEntetes_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.historique,
+    STOCKAGES_CONFIG.entetes.historique
+  );
+
+  assurerFeuilleEtEntetes_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.mouvements,
+    STOCKAGES_CONFIG.entetes.mouvements
+  );
+
+  assurerFeuilleEtEntetes_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.stockJournalier,
+    STOCKAGES_CONFIG.entetes.stockJournalier
+  );
+
+  assurerFeuilleEtEntetes_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.audit,
+    STOCKAGES_CONFIG.entetes.audit
+  );
+}
+
+function assurerFeuilleEtEntetes_(
+  classeur,
+  nomFeuille,
+  entetes
+) {
+  let feuille = classeur.getSheetByName(nomFeuille);
+
+  if (!feuille) {
+    feuille = classeur.insertSheet(nomFeuille);
+  }
+
+  if (feuille.getMaxColumns() < entetes.length) {
+    feuille.insertColumnsAfter(
+      feuille.getMaxColumns(),
+      entetes.length - feuille.getMaxColumns()
+    );
+  }
+
+  const plageEntetes = feuille.getRange(
+    1,
+    1,
+    1,
+    entetes.length
+  );
+
+  const valeursExistantes =
+    plageEntetes.getDisplayValues()[0];
+
+  const entetesVides = valeursExistantes.every(
+    function(valeur) {
+      return String(valeur).trim() === '';
+    }
+  );
+
+  if (entetesVides) {
+    plageEntetes.setValues([entetes]);
+  } else {
+    entetes.forEach(function(entete, index) {
+      if (
+        String(valeursExistantes[index]).trim() !==
+        entete
+      ) {
+        throw new Error(
+          'En-tête incompatible dans ' +
+            nomFeuille +
+            ', colonne ' +
+            (index + 1) +
+            '. Attendu : ' +
+            entete
+        );
+      }
+    });
+  }
+
+  feuille.setFrozenRows(1);
+}
+
+function initialiserParametresStockages_(classeur) {
+  const maintenant = new Date();
+  const utilisateur = utilisateurCourantStockages_();
+
+  const parametres = [
+    [
+      'SYSTEM_STATUS',
+      'BROUILLON',
+      'Statut du système de stockage.'
+    ],
+    [
+      'MANIFEST_SPREADSHEET_ID',
+      '',
+      'Identifiant du classeur MANIFESTE PUBLIC.'
+    ],
+    [
+      'TIMEZONE',
+      STOCKAGES_CONFIG.timezone,
+      'Fuseau horaire métier.'
+    ],
+    [
+      'DATE_ACTIVATION',
+      '',
+      'Date et heure commune d’activation.'
+    ],
+    [
+      'VERSION',
+      STOCKAGES_CONFIG.version,
+      'Version du système.'
+    ],
+    ['AGENCE_COO', 'COO', 'Agence Cotonou.'],
+    ['AGENCE_FIH', 'FIH', 'Agence Kinshasa.'],
+    ['AGENCE_LSHI', 'LSHI', 'Agence Lubumbashi.'],
+    ['AGENCE_KLZ', 'KLZ', 'Agence Kolwezi.'],
+    [
+      'STATUT_ENREGISTRE',
+      'ENREGISTRÉ',
+      'Colis enregistré à COO.'
+    ],
+    [
+      'STATUT_EN_VOL',
+      'EN VOL',
+      'Colis sorti de COO.'
+    ],
+    [
+      'STATUT_EN_TRANSIT',
+      'EN TRANSIT',
+      'Statut sans mouvement de stock.'
+    ],
+    [
+      'STATUT_ARRIVE',
+      'ARRIVÉ',
+      'Colis entré dans sa destination finale.'
+    ],
+    [
+      'STATUT_LIVRE',
+      'LIVRÉ',
+      'Colis sorti de sa destination finale.'
+    ]
+  ];
+
+  const feuille = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.parametres
+  );
+
+  const derniereLigne = feuille.getLastRow();
+
+  const existantes = derniereLigne >= 2
+    ? feuille
+        .getRange(2, 1, derniereLigne - 1, 5)
+        .getValues()
+    : [];
+
+  const indexParCle = new Map();
+
+  existantes.forEach(function(ligne, index) {
+    const cle = String(ligne[0] || '').trim();
+
+    if (!cle) {
+      return;
+    }
+
+    if (indexParCle.has(cle)) {
+      throw new Error(
+        'Paramètre dupliqué dans PARAMETRES : ' + cle
+      );
+    }
+
+    indexParCle.set(cle, index + 2);
+  });
+
+  const aAjouter = [];
+
+  parametres.forEach(function(parametre) {
+    if (!indexParCle.has(parametre[0])) {
+      aAjouter.push([
+        parametre[0],
+        parametre[1],
+        parametre[2],
+        maintenant,
+        utilisateur
+      ]);
+    }
+  });
+
+  if (aAjouter.length > 0) {
+    feuille
+      .getRange(
+        feuille.getLastRow() + 1,
+        1,
+        aAjouter.length,
+        5
+      )
+      .setValues(aAjouter);
+  }
+}
+
+function initialiserSoldesAgences_(classeur) {
+  const feuille = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.soldeInitial
+  );
+
+  STOCKAGES_CONFIG.agences.forEach(function(agence) {
+    const ligneOfficielle =
+      STOCKAGES_CONFIG.lignesAgences[agence];
+
+    const agenceActuelle = normaliserTexteStockages_(
+      feuille.getRange(ligneOfficielle, 2).getValue()
+    );
+
+    if (!agenceActuelle) {
+      feuille
+        .getRange(ligneOfficielle, 1, 1, 9)
+        .setValues([[
+          '',
+          agence,
+          '',
+          '',
+          '',
+          '',
+          'BROUILLON',
+          '',
+          ''
+        ]]);
+
+      return;
+    }
+
+    if (agenceActuelle !== agence) {
+      throw new Error(
+        'La ligne ' +
+          ligneOfficielle +
+          ' de SOLDE INITIAL doit appartenir à ' +
+          agence +
+          '.'
+      );
+    }
+  });
+
+  if (feuille.getLastRow() > 5) {
+    const lignesSupplementaires = feuille
+      .getRange(6, 1, feuille.getLastRow() - 5, 9)
+      .getValues();
+
+    lignesSupplementaires.forEach(function(ligne, index) {
+      const agence = normaliserTexteStockages_(ligne[1]);
+
+      if (STOCKAGES_CONFIG.agences.includes(agence)) {
+        throw new Error(
+          'Agence officielle dupliquée dans SOLDE INITIAL, ligne ' +
+            (index + 6) +
+            ' : ' +
+            agence
+        );
+      }
+    });
+  }
+}
+
+function installerValidationsStockages_(classeur) {
+  const feuilleSolde = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.soldeInitial
+  );
+  const feuilleHistorique = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.historique
+  );
+  const feuilleMouvements = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.mouvements
+  );
+
+  feuilleSolde
+    .getRange(2, 1, 4, 1)
+    .clearDataValidations()
+    .setNumberFormat('dd/MM/yyyy HH:mm');
+
+  const validationNombreColis = SpreadsheetApp
+    .newDataValidation()
+    .requireNumberGreaterThanOrEqualTo(0)
+    .setAllowInvalid(false)
+    .setHelpText(
+      'Saisissez un nombre entier supérieur ou égal à zéro.'
+    )
+    .build();
+
+  feuilleSolde
+    .getRange(2, 3, 4, 1)
+    .setDataValidation(validationNombreColis);
+
+  const validationKilogrammes = SpreadsheetApp
+    .newDataValidation()
+    .requireNumberGreaterThanOrEqualTo(0)
+    .setAllowInvalid(false)
+    .setHelpText(
+      'Saisissez un nombre supérieur ou égal à zéro.'
+    )
+    .build();
+
+  feuilleSolde
+    .getRange(2, 4, 4, 1)
+    .setDataValidation(validationKilogrammes);
+
+  const validationStatutSolde = SpreadsheetApp
+    .newDataValidation()
+    .requireValueInList(['BROUILLON', 'VALIDÉ'], true)
+    .setAllowInvalid(false)
+    .setHelpText(
+      'Sélectionnez BROUILLON ou VALIDÉ.'
+    )
+    .build();
+
+  feuilleSolde
+    .getRange(2, 7, 4, 1)
+    .setDataValidation(validationStatutSolde);
+
+  const validationStatutColis = SpreadsheetApp
+    .newDataValidation()
+    .requireValueInList(STOCKAGES_CONFIG.statutsColis.slice(), true)
+    .setAllowInvalid(false)
+    .setHelpText(
+      'Sélectionnez un statut de colis autorisé.'
+    )
+    .build();
+
+  feuilleHistorique
+    .getRange(
+      2,
+      7,
+      Math.max(feuilleHistorique.getMaxRows() - 1, 1),
+      1
+    )
+    .setDataValidation(validationStatutColis);
+
+  const validationAgence = SpreadsheetApp
+    .newDataValidation()
+    .requireValueInList(STOCKAGES_CONFIG.agences.slice(), true)
+    .setAllowInvalid(false)
+    .setHelpText(
+      'Sélectionnez une agence autorisée.'
+    )
+    .build();
+
+  feuilleMouvements
+    .getRange(
+      2,
+      3,
+      Math.max(feuilleMouvements.getMaxRows() - 1, 1),
+      1
+    )
+    .setDataValidation(validationAgence);
+
+  const validationTypeMouvement = SpreadsheetApp
+    .newDataValidation()
+    .requireValueInList(STOCKAGES_CONFIG.typesMouvements.slice(), true)
+    .setAllowInvalid(false)
+    .setHelpText(
+      'Sélectionnez un type de mouvement autorisé.'
+    )
+    .build();
+
+  feuilleMouvements
+    .getRange(
+      2,
+      6,
+      Math.max(feuilleMouvements.getMaxRows() - 1, 1),
+      1
+    )
+    .setDataValidation(validationTypeMouvement);
+
+  const validationAnnule = SpreadsheetApp
+    .newDataValidation()
+    .requireCheckbox()
+    .setAllowInvalid(false)
+    .build();
+
+  feuilleMouvements
+    .getRange(
+      2,
+      14,
+      Math.max(feuilleMouvements.getMaxRows() - 1, 1),
+      1
+    )
+    .setDataValidation(validationAnnule);
+}
+function mettreEnFormeStockages_(classeur) {
+  Object.keys(STOCKAGES_CONFIG.feuilles).forEach(
+    function(cle) {
+      const nomFeuille = STOCKAGES_CONFIG.feuilles[cle];
+      const feuille = exigerFeuilleStockages_(
+        classeur,
+        nomFeuille
+      );
+
+      const nombreColonnes = feuille.getLastColumn();
+
+      if (nombreColonnes > 0) {
+        feuille
+          .getRange(1, 1, 1, nombreColonnes)
+          .setFontWeight('bold')
+          .setBackground('#17324d')
+          .setFontColor('#ffffff')
+          .setHorizontalAlignment('center');
+
+        feuille.autoResizeColumns(
+          1,
+          nombreColonnes
+        );
+      }
+    }
+  );
+}
+
+function verifierConfigurationInterne_(classeur) {
+  const erreurs = [];
+
+  Object.keys(STOCKAGES_CONFIG.feuilles).forEach(
+    function(cle) {
+      const nomFeuille = STOCKAGES_CONFIG.feuilles[cle];
+      const feuille = classeur.getSheetByName(nomFeuille);
+
+      if (!feuille) {
+        erreurs.push('Feuille absente : ' + nomFeuille);
+        return;
+      }
+
+      const entetesAttendues =
+        STOCKAGES_CONFIG.entetes[cle];
+
+      if (!entetesAttendues) {
+        return;
+      }
+
+      const entetesReelles = feuille
+        .getRange(
+          1,
+          1,
+          1,
+          entetesAttendues.length
+        )
+        .getDisplayValues()[0];
+
+      entetesAttendues.forEach(function(entete, index) {
+        if (entetesReelles[index] !== entete) {
+          erreurs.push(
+            nomFeuille +
+              ' : en-tête invalide en colonne ' +
+              (index + 1)
+          );
+        }
+      });
+    }
+  );
+
+  [
+    'SYSTEM_STATUS',
+    'MANIFEST_SPREADSHEET_ID',
+    'TIMEZONE',
+    'DATE_ACTIVATION',
+    'VERSION'
+  ].forEach(function(cle) {
+    try {
+      lireParametreStockagesBrut_(classeur, cle);
+    } catch (erreur) {
+      erreurs.push(messageErreurStockages_(erreur));
+    }
+  });
+
+  const feuilleSolde = classeur.getSheetByName(
+    STOCKAGES_CONFIG.feuilles.soldeInitial
+  );
+
+  if (feuilleSolde) {
+    STOCKAGES_CONFIG.agences.forEach(function(agence) {
+      const ligne =
+        STOCKAGES_CONFIG.lignesAgences[agence];
+
+      const agenceReelle = normaliserTexteStockages_(
+        feuilleSolde.getRange(ligne, 2).getValue()
+      );
+
+      if (agenceReelle !== agence) {
+        erreurs.push(
+          'SOLDE INITIAL ligne ' +
+            ligne +
+            ' doit appartenir à ' +
+            agence
+        );
+      }
+    });
+  }
+
+  return erreurs;
+}
+
+function exigerConfigurationValide_(classeur) {
+  const erreurs = verifierConfigurationInterne_(classeur);
+
+  if (erreurs.length > 0) {
+    throw new Error(erreurs.join('\n'));
+  }
+}
+
+function lireSoldesInitiaux_(classeur) {
+  const feuille = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.soldeInitial
+  );
+
+  return STOCKAGES_CONFIG.agences.map(function(agence) {
+    const ligne = STOCKAGES_CONFIG.lignesAgences[agence];
+    const valeurs = feuille
+      .getRange(ligne, 1, 1, 9)
+      .getValues()[0];
+
+    return {
+      ligne: ligne,
+      dateActivation: valeurs[0],
+      agence: normaliserTexteStockages_(valeurs[1]),
+      nombreColis: analyserEntierPositifOuZero_(
+        valeurs[2]
+      ),
+      kilogrammes: analyserNombrePositifOuZero_(
+        valeurs[3]
+      ),
+      statut: normaliserTexteStockages_(valeurs[6]),
+      initialStockId: String(valeurs[7] || '').trim()
+    };
+  });
+}
+
+function lireSoldesInitiauxValides_(classeur) {
+  return lireSoldesInitiaux_(classeur).filter(
+    function(item) {
+      return item.statut === 'VALIDÉ';
+    }
+  );
+}
+
+function lireMouvementsStock_(classeur) {
+  const feuille = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.mouvements
+  );
+
+  if (feuille.getLastRow() < 2) {
+    return [];
+  }
+
+  const lignes = feuille
+    .getRange(
+      2,
+      1,
+      feuille.getLastRow() - 1,
+      15
+    )
+    .getValues();
+
+  const ids = new Set();
+  const referencesEvenements = new Set();
+
+  return lignes
+    .map(function(ligne, index) {
+      const numeroLigne = index + 2;
+
+      const entierementVide = ligne.every(
+        function(valeur) {
+          return valeur === '' || valeur === null;
+        }
+      );
+
+      if (entierementVide) {
+        return null;
+      }
+
+      const dateMouvement = ligne[1];
+      const agence = normaliserTexteStockages_(
+        ligne[2]
+      );
+      const type = normaliserTexteStockages_(
+        ligne[5]
+      );
+      const variationColis = analyserNombreSigne_(
+        ligne[6]
+      );
+      const variationKg = analyserNombreSigne_(
+        ligne[7]
+      );
+      const movementId = String(ligne[10] || '')
+        .trim()
+        .toLowerCase();
+      const annule = estValeurVraieStockages_(
+        ligne[13]
+      );
+      const referenceEvenement = String(
+        ligne[14] || ''
+      )
+        .trim()
+        .toLowerCase();
+
+      if (!estDateValideStockages_(dateMouvement)) {
+        throw new Error(
+          'Date de mouvement invalide, ligne ' +
+            numeroLigne
+        );
+      }
+
+      if (!STOCKAGES_CONFIG.agences.includes(agence)) {
+        throw new Error(
+          'Agence invalide dans MOUVEMENTS STOCK, ligne ' +
+            numeroLigne
+        );
+      }
+
+      if (
+        !STOCKAGES_CONFIG.typesMouvements.includes(type)
+      ) {
+        throw new Error(
+          'Type de mouvement invalide, ligne ' +
+            numeroLigne
+        );
+      }
+
+      if (
+        variationColis === null ||
+        variationKg === null
+      ) {
+        throw new Error(
+          'Variation invalide, ligne ' +
+            numeroLigne
+        );
+      }
+
+      if (!estUuidStockages_(movementId)) {
+        throw new Error(
+          'Movement ID invalide, ligne ' +
+            numeroLigne
+        );
+      }
+
+      if (ids.has(movementId)) {
+        throw new Error(
+          'Movement ID dupliqué : ' + movementId
+        );
+      }
+
+      ids.add(movementId);
+
+      if (referenceEvenement) {
+        const cleReference =
+          type + '|' + referenceEvenement;
+
+        if (
+          referencesEvenements.has(cleReference)
+        ) {
+          throw new Error(
+            'Mouvement dupliqué pour la référence événement : ' +
+              referenceEvenement
+          );
+        }
+
+        referencesEvenements.add(cleReference);
+      }
+
+      if (
+        (
+          type === 'ENTREE_COO' ||
+          type === 'ENTREE_DESTINATION'
+        ) &&
+        (
+          variationColis < 0 ||
+          variationKg < 0
+        )
+      ) {
+        throw new Error(
+          'Une entrée ne peut pas avoir une variation négative, ligne ' +
+            numeroLigne
+        );
+      }
+
+      if (
+        (
+          type === 'SORTIE_COO' ||
+          type === 'SORTIE_DESTINATION'
+        ) &&
+        (
+          variationColis > 0 ||
+          variationKg > 0
+        )
+      ) {
+        throw new Error(
+          'Une sortie doit utiliser des variations négatives, ligne ' +
+            numeroLigne
+        );
+      }
+
+      return {
+        dateMouvement: dateMouvement,
+        agence: agence,
+        type: type,
+        variationColis: variationColis,
+        variationKg: variationKg,
+        annule: annule
+      };
+    })
+    .filter(function(item) {
+      return item !== null && !item.annule;
+    });
+}
+
+function construireStockJournalier_(soldes, mouvements) {
+  const aujourdHui = debutJourStockages_(new Date());
+  const calculs = [];
+
+  soldes.forEach(function(solde) {
+    const dateActivation = solde.dateActivation;
+    const premierJour = debutJourStockages_(
+      dateActivation
+    );
+
+    let stockColis = solde.nombreColis;
+    let stockKg = solde.kilogrammes;
+    let dateCourante = new Date(
+      premierJour.getTime()
+    );
+
+    while (
+      dateCourante.getTime() <=
+      aujourdHui.getTime()
+    ) {
+      const cleDate = cleDateStockages_(dateCourante);
+
+      const mouvementsDuJour = mouvements.filter(
+        function(mouvement) {
+          return (
+            mouvement.agence === solde.agence &&
+            mouvement.dateMouvement.getTime() >=
+              dateActivation.getTime() &&
+            cleDateStockages_(
+              mouvement.dateMouvement
+            ) === cleDate
+          );
+        }
+      );
+
+      let entreesColis = 0;
+      let entreesKg = 0;
+      let sortiesColis = 0;
+      let sortiesKg = 0;
+      let ajustementsColis = 0;
+      let ajustementsKg = 0;
+
+      mouvementsDuJour.forEach(function(mouvement) {
+        if (
+          mouvement.type === 'ENTREE_COO' ||
+          mouvement.type === 'ENTREE_DESTINATION'
+        ) {
+          entreesColis += mouvement.variationColis;
+          entreesKg += mouvement.variationKg;
+          return;
+        }
+
+        if (
+          mouvement.type === 'SORTIE_COO' ||
+          mouvement.type === 'SORTIE_DESTINATION'
+        ) {
+          sortiesColis += Math.abs(
+            mouvement.variationColis
+          );
+          sortiesKg += Math.abs(
+            mouvement.variationKg
+          );
+          return;
+        }
+
+        if (mouvement.type === 'AJUSTEMENT_ADMIN') {
+          ajustementsColis +=
+            mouvement.variationColis;
+          ajustementsKg += mouvement.variationKg;
+        }
+      });
+
+      const stockInitialJourColis = stockColis;
+      const stockInitialJourKg = stockKg;
+
+      stockColis =
+        stockColis +
+        entreesColis -
+        sortiesColis +
+        ajustementsColis;
+
+      stockKg =
+        stockKg +
+        entreesKg -
+        sortiesKg +
+        ajustementsKg;
+
+      calculs.push({
+        cle: cleDate + '|' + solde.agence,
+        agence: solde.agence,
+        date: new Date(dateCourante.getTime()),
+        stockFinalColis: stockColis,
+        stockFinalKg: stockKg,
+        valeurs: [
+          new Date(dateCourante.getTime()),
+          solde.agence,
+          stockInitialJourColis,
+          stockInitialJourKg,
+          entreesColis,
+          entreesKg,
+          sortiesColis,
+          sortiesKg,
+          ajustementsColis,
+          ajustementsKg,
+          stockColis,
+          stockKg,
+          new Date(),
+          STOCKAGES_CONFIG.version,
+          stockColis < 0 || stockKg < 0
+            ? 'ALERTE_STOCK_NEGATIF'
+            : 'OK'
+        ]
+      });
+
+      dateCourante.setDate(
+        dateCourante.getDate() + 1
+      );
+    }
+  });
+
+  calculs.sort(function(a, b) {
+    return a.cle.localeCompare(b.cle);
+  });
+
+  return calculs;
+}
+
+function ecrireStockJournalierIdempotent_(
+  classeur,
+  calculs
+) {
+  const feuille = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.stockJournalier
+  );
+
+  const derniereLigne = feuille.getLastRow();
+
+  const existantes = derniereLigne >= 2
+    ? feuille
+        .getRange(
+          2,
+          1,
+          derniereLigne - 1,
+          15
+        )
+        .getValues()
+    : [];
+
+  const lignesParCle = new Map();
+
+  existantes.forEach(function(ligne, index) {
+    if (!estDateValideStockages_(ligne[0])) {
+      return;
+    }
+
+    const agence = normaliserTexteStockages_(
+      ligne[1]
+    );
+
+    if (!agence) {
+      return;
+    }
+
+    const cle =
+      cleDateStockages_(ligne[0]) +
+      '|' +
+      agence;
+
+    if (lignesParCle.has(cle)) {
+      throw new Error(
+        'Doublon existant dans STOCK JOURNALIER : ' +
+          cle
+      );
+    }
+
+    lignesParCle.set(cle, index + 2);
+  });
+
+  const aAjouter = [];
+
+  calculs.forEach(function(calcul) {
+    if (lignesParCle.has(calcul.cle)) {
+      feuille
+        .getRange(
+          lignesParCle.get(calcul.cle),
+          1,
+          1,
+          15
+        )
+        .setValues([calcul.valeurs]);
+    } else {
+      aAjouter.push(calcul.valeurs);
+    }
+  });
+
+  if (aAjouter.length > 0) {
+    feuille
+      .getRange(
+        feuille.getLastRow() + 1,
+        1,
+        aAjouter.length,
+        15
+      )
+      .setValues(aAjouter);
+  }
+}
+
+function ajouterAuditStockNegatifSiAbsent_(
+  classeur,
+  calcul
+) {
+  const feuille = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.audit
+  );
+
+  const reference = [
+    cleDateStockages_(calcul.date),
+    calcul.agence,
+    calcul.stockFinalColis,
+    calcul.stockFinalKg
+  ].join('|');
+
+  if (feuille.getLastRow() >= 2) {
+    const lignes = feuille
+      .getRange(
+        2,
+        3,
+        feuille.getLastRow() - 1,
+        3
+      )
+      .getDisplayValues();
+
+    const existe = lignes.some(function(ligne) {
+      return (
+        normaliserTexteStockages_(ligne[0]) ===
+          'ALERTE_STOCK_NEGATIF' &&
+        String(ligne[2] || '').trim() === reference
+      );
+    });
+
+    if (existe) {
+      return;
+    }
+  }
+
+  ajouterAuditStockages_(classeur, {
+    action: 'ALERTE_STOCK_NEGATIF',
+    agence: calcul.agence,
+    reference: reference,
+    ancienneValeur: '',
+    nouvelleValeur: JSON.stringify({
+      stockFinalColis: calcul.stockFinalColis,
+      stockFinalKg: calcul.stockFinalKg
+    }),
+    resultat: 'AVERTISSEMENT',
+    details:
+      'Stock négatif détecté pour le ' +
+      cleDateStockages_(calcul.date) +
+      '. Résultat conservé pour examen.'
+  });
+}
+
+function protegerLigneSoldeValide_(
+  feuille,
+  ligne,
+  initialStockId
+) {
+  const description =
+    'STOCKAGES EEB - Solde initial validé - ' +
+    initialStockId;
+
+  const existe = feuille
+    .getProtections(
+      SpreadsheetApp.ProtectionType.RANGE
+    )
+    .some(function(protection) {
+      return (
+        protection.getDescription() === description
+      );
+    });
+
+  if (existe) {
+    return;
+  }
+
+  const protection = feuille
+    .getRange(ligne, 1, 1, 9)
+    .protect()
+    .setDescription(description)
+    .setWarningOnly(false);
+
+  limiterProtectionAuProprietaireStockages_(
+    protection
+  );
+}
+
+function protegerDonneesSensiblesStockages_(
+  classeur
+) {
+  [
+    STOCKAGES_CONFIG.feuilles.parametres,
+    STOCKAGES_CONFIG.feuilles.historique,
+    STOCKAGES_CONFIG.feuilles.mouvements,
+    STOCKAGES_CONFIG.feuilles.stockJournalier,
+    STOCKAGES_CONFIG.feuilles.audit
+  ].forEach(function(nomFeuille) {
+    const feuille = exigerFeuilleStockages_(
+      classeur,
+      nomFeuille
+    );
+
+    protegerFeuilleTechniqueStockages_(
+      feuille,
+      'STOCKAGES EEB - Feuille protégée - ' +
+        nomFeuille
+    );
+  });
+}
+
+function protegerFeuilleTechniqueStockages_(
+  feuille,
+  description
+) {
+  const existe = feuille
+    .getProtections(
+      SpreadsheetApp.ProtectionType.SHEET
+    )
+    .some(function(protection) {
+      return (
+        protection.getDescription() === description
+      );
+    });
+
+  if (existe) {
+    return;
+  }
+
+  const protection = feuille
+    .protect()
+    .setDescription(description)
+    .setWarningOnly(false);
+
+  limiterProtectionAuProprietaireStockages_(
+    protection
+  );
+}
+
+function limiterProtectionAuProprietaireStockages_(
+  protection
+) {
+  const utilisateur = Session.getEffectiveUser();
+
+  protection.addEditor(utilisateur);
+
+  const emailUtilisateur =
+    utilisateur.getEmail();
+
+  const autresEditeurs = protection
+    .getEditors()
+    .filter(function(editeur) {
+      return (
+        editeur.getEmail() !== emailUtilisateur
+      );
+    });
+
+  if (autresEditeurs.length > 0) {
+    protection.removeEditors(autresEditeurs);
+  }
+
+  if (protection.canDomainEdit()) {
+    protection.setDomainEdit(false);
+  }
+}
+
+/**
+ * Utiliser cette fonction uniquement pour les paramètres textuels
+ * dont la normalisation en majuscules est souhaitée.
+ *
+ * Ne pas utiliser pour MANIFEST_SPREADSHEET_ID.
+ */
+function lireParametreStockages_(classeur, cle) {
+  const valeur = lireParametreStockagesBrut_(
+    classeur,
+    cle
+  );
+
+  return normaliserTexteStockages_(valeur);
+}
+
+/**
+ * Retourne la valeur originale sans changer sa casse.
+ * Obligatoire pour MANIFEST_SPREADSHEET_ID.
+ */
+function lireParametreStockagesBrut_(classeur, cle) {
+  const feuille = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.parametres
+  );
+
+  if (feuille.getLastRow() < 2) {
+    throw new Error('Paramètre absent : ' + cle);
+  }
+
+  const lignes = feuille
+    .getRange(
+      2,
+      1,
+      feuille.getLastRow() - 1,
+      5
+    )
+    .getValues();
+
+  const correspondances = lignes.filter(
+    function(ligne) {
+      return String(ligne[0] || '').trim() === cle;
+    }
+  );
+
+  if (correspondances.length !== 1) {
+    throw new Error(
+      'Le paramètre doit exister une seule fois : ' +
+        cle
+    );
+  }
+
+  return correspondances[0][1];
+}
+
+function ecrireParametreStockages_(
+  classeur,
+  cle,
+  valeur,
+  description
+) {
+  const feuille = exigerFeuilleStockages_(
+    classeur,
+    STOCKAGES_CONFIG.feuilles.parametres
+  );
+
+  if (feuille.getLastRow() < 2) {
+    throw new Error('PARAMETRES est vide.');
+  }
+
+  const cles = feuille
+    .getRange(
+      2,
+      1,
+      feuille.getLastRow() - 1,
+      1
+    )
+    .getDisplayValues();
+
+  const lignes = [];
+
+  cles.forEach(function(ligne, index) {
+    if (String(ligne[0]).trim() === cle) {
+      lignes.push(index + 2);
+    }
+  });
+
+  if (lignes.length !== 1) {
+    throw new Error(
+      'Le paramètre doit exister une seule fois : ' +
+        cle
+    );
+  }
+
+  feuille
+    .getRange(lignes[0], 2, 1, 4)
+    .setValues([[
+      valeur,
+      description,
+      new Date(),
+      utilisateurCourantStockages_()
+    ]]);
+}
+
+function ajouterAuditStockages_(classeur, evenement) {
+  const feuille = classeur.getSheetByName(
+    STOCKAGES_CONFIG.feuilles.audit
+  );
+
+  if (!feuille) {
+    return;
+  }
+
+  feuille
+    .getRange(
+      feuille.getLastRow() + 1,
+      1,
+      1,
+      10
+    )
+    .setValues([[
+      new Date(),
+      utilisateurCourantStockages_(),
+      evenement.action || '',
+      evenement.agence || '',
+      evenement.reference || '',
+      evenement.ancienneValeur || '',
+      evenement.nouvelleValeur || '',
+      evenement.resultat || '',
+      evenement.details || '',
+      Utilities.getUuid().toLowerCase()
+    ]]);
+}
+
+function journaliserErreurStockages_(action, erreur) {
+  try {
+    const classeur =
+      SpreadsheetApp.getActiveSpreadsheet();
+
+    ajouterAuditStockages_(classeur, {
+      action: action,
+      agence: '',
+      reference: '',
+      ancienneValeur: '',
+      nouvelleValeur: '',
+      resultat: 'ERREUR',
+      details: messageErreurStockages_(erreur)
+    });
+  } catch (erreurAudit) {
+    console.error(
+      'Impossible de journaliser l’erreur : ' +
+        messageErreurStockages_(erreurAudit)
+    );
+  }
+}
+
+function exigerFeuilleStockages_(
+  classeur,
+  nomFeuille
+) {
+  const feuille = classeur.getSheetByName(
+    nomFeuille
+  );
+
+  if (!feuille) {
+    throw new Error(
+      'Feuille absente : ' + nomFeuille
+    );
+  }
+
+  return feuille;
+}
+
+function agenceOfficiellePourLigne_(ligne) {
+  const agences = STOCKAGES_CONFIG.agences;
+
+  for (let index = 0; index < agences.length; index++) {
+    const agence = agences[index];
+
+    if (
+      STOCKAGES_CONFIG.lignesAgences[agence] ===
+      ligne
+    ) {
+      return agence;
+    }
+  }
+
+  return null;
+}
+
+function analyserDateHeureSaisieStockages_(texte) {
+  if (
+    !/^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/.test(
+      texte
+    )
+  ) {
+    return null;
+  }
+
+  try {
+    const date = Utilities.parseDate(
+      texte,
+      STOCKAGES_CONFIG.timezone,
+      'dd/MM/yyyy HH:mm'
+    );
+
+    if (
+      Utilities.formatDate(
+        date,
+        STOCKAGES_CONFIG.timezone,
+        'dd/MM/yyyy HH:mm'
+      ) !== texte
+    ) {
+      return null;
+    }
+
+    return date;
+  } catch (erreur) {
+    return null;
+  }
+}
+
+function analyserEntierPositifOuZero_(valeur) {
+  if (
+    valeur === '' ||
+    valeur === null ||
+    valeur === undefined
+  ) {
+    return null;
+  }
+
+  const nombre = Number(valeur);
+
+  if (
+    !Number.isFinite(nombre) ||
+    !Number.isInteger(nombre) ||
+    nombre < 0
+  ) {
+    return null;
+  }
+
+  return nombre;
+}
+
+function analyserNombrePositifOuZero_(valeur) {
+  if (
+    valeur === '' ||
+    valeur === null ||
+    valeur === undefined
+  ) {
+    return null;
+  }
+
+  const nombre = Number(
+    String(valeur).replace(',', '.')
+  );
+
+  if (!Number.isFinite(nombre) || nombre < 0) {
+    return null;
+  }
+
+  return nombre;
+}
+
+function analyserNombreSigne_(valeur) {
+  if (
+    valeur === '' ||
+    valeur === null ||
+    valeur === undefined
+  ) {
+    return null;
+  }
+
+  const nombre = Number(
+    String(valeur).replace(',', '.')
+  );
+
+  return Number.isFinite(nombre)
+    ? nombre
+    : null;
+}
+
+function normaliserTexteStockages_(valeur) {
+  return String(valeur || '')
+    .normalize('NFC')
+    .replace(/\u00A0/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+}
+
+function estDateValideStockages_(valeur) {
+  return (
+    valeur instanceof Date &&
+    !Number.isNaN(valeur.getTime())
+  );
+}
+
+function estValeurVraieStockages_(valeur) {
+  return (
+    valeur === true ||
+    normaliserTexteStockages_(valeur) === 'TRUE' ||
+    normaliserTexteStockages_(valeur) === 'VRAI' ||
+    normaliserTexteStockages_(valeur) === 'OUI'
+  );
+}
+
+function estUuidStockages_(valeur) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[45][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+    String(valeur || '').toLowerCase()
+  );
+}
+
+function debutJourStockages_(date) {
+  const cle = Utilities.formatDate(
+    date,
+    STOCKAGES_CONFIG.timezone,
+    'yyyy-MM-dd'
+  );
+
+  const morceaux = cle.split('-').map(Number);
+
+  return new Date(
+    morceaux[0],
+    morceaux[1] - 1,
+    morceaux[2],
+    12,
+    0,
+    0,
+    0
+  );
+}
+
+function cleDateStockages_(date) {
+  return Utilities.formatDate(
+    date,
+    STOCKAGES_CONFIG.timezone,
+    'yyyy-MM-dd'
+  );
+}
+
+function formaterDateHeureStockages_(date) {
+  return Utilities.formatDate(
+    date,
+    STOCKAGES_CONFIG.timezone,
+    'dd/MM/yyyy HH:mm:ss'
+  );
+}
+
+function utilisateurCourantStockages_() {
+  const email =
+    Session.getEffectiveUser().getEmail();
+
+  return email || 'Utilisateur non identifié';
+}
+
+function messageErreurStockages_(erreur) {
+  return erreur && erreur.message
+    ? erreur.message
+    : String(erreur);
+}
+
+function afficherLienAutorisationStockages() {
+  const autorisation = ScriptApp.getAuthorizationInfo(
+    ScriptApp.AuthMode.FULL,
+    [
+      'https://www.googleapis.com/auth/spreadsheets',
+      'https://www.googleapis.com/auth/userinfo.email'
+    ]
+  );
+
+  console.log(
+    'STATUT_AUTORISATION : ' +
+      autorisation.getAuthorizationStatus()
+  );
+
+  console.log(
+    'LIEN_AUTORISATION : ' +
+      autorisation.getAuthorizationUrl()
+  );
+}

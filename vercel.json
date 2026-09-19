@@ -1,0 +1,73 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "buildCommand": "pnpm build",
+  "crons": [
+    {
+      "path": "/api/internal/cron/forwarding-manifest-worker",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/internal/cron/operational-anomalies",
+      "schedule": "15 5 * * *"
+    },
+    {
+      "path": "/api/internal/cron/lshi-operational-reconciliation",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/internal/cron/lshi-daily-continuity",
+      "schedule": "30 23 * * *"
+    },
+    {
+      "path": "/api/internal/cron/lshi-daily-continuity-retry",
+      "schedule": "15 5 * * *"
+    },
+    {
+      "path": "/api/internal/cron/klz-operational-reconciliation",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/internal/cron/klz-daily-continuity",
+      "schedule": "30 23 * * *"
+    },
+    {
+      "path": "/api/internal/cron/klz-daily-continuity-retry",
+      "schedule": "15 5 * * *"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/sw.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        },
+        {
+          "key": "Service-Worker-Allowed",
+          "value": "/"
+        }
+      ]
+    },
+    {
+      "source": "/manifest.json",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=3600, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/icons/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    }
+  ]
+}

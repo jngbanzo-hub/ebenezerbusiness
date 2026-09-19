@@ -1,0 +1,129 @@
+import "server-only";
+
+import { createClient } from "@supabase/supabase-js";
+
+import type { ManifestShipperRow } from "@/features/admin/types";
+import { normalizeManifestStatus, normalizeManifestStatusFilter } from "@/lib/manifest-status";
+import { readAdminManifestRows } from "@/server/admin-manifest-sheets";
+import {
+  matchesManifestFilters,
+  normalizeManifestDateFilter,
+  normalizeManifestRowDate
+} from "@/server/agent-manifest-date";
+import { StockagesV2Error, type StorageAgency } from "@/server/stockages-v2";
+
+export type AgentManifestAgency = "COO" | StorageAgency;
+
+export async function resolveForwardingManifestAgency(input: {
+  viewerAgency: StorageAgency;
+  requestedAgency: StorageAgency;
+  trackingCode: string;
+  parcelId: string;
+  forwardingId: string;
+  weightKg: number;
+}) {
+  const client = serviceClient();
+  const [{ data: parcel, error: parcelError }, { data: forwarding, error: forwardingError }] = await Promise.all([
+    client.from("stockage_parcels")
+      .select("parcel_id,forwarding_id,tracking_code,agency,canonical_weight_kg,delivery_status")
+      .eq("parcel_id", input.parcelId)
+      .eq("forwarding_id", input.forwardingId)
+      .eq("tracking_code", input.trackingCode)
+      .eq("agency", input.viewerAgency)
+      .in("delivery_status", ["AVAILABLE", "PRESENT"])
+      .maybeSingle(),
+    client.from("stockage_forwardings")
+      .select("forwarding_id,origin_agency,destination_agency,canonical_weight_kg,status")
+      .eq("forwarding_id", input.forwardingId)
+      .maybeSingle()
+  ]);
+  if (parcelError || forwardingError) throw new StockagesV2Error("MANIFEST_FORWARDING_IDENTITY_UNAVAILABLE", 503);
+  if (!parcel || !forwarding || !Number.isFinite(input.weightKg) || Math.abs(Number(parcel.canonical_weight_kg) - input.weightKg) >= 0.001 || Math.abs(Number(forwarding.canonical_weight_kg) - input.weightKg) >= 0.001 || forwarding.status !== "ARRIVAL_CONFIRMED" || forwarding.destination_agency !== input.viewerAgency || forwarding.origin_agency !== input.requestedAgency) {
+    throw new StockagesV2Error("MANIFEST_FORWARDING_IDENTITY_MISMATCH", 403);
+  }
+  return input.requestedAgency;
+}
+
+export async function readAgentManifest(input: {
+  agency: AgentManifestAgency;
+  compareStorage?: boolean;
+  code?: string;
+  status?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  const page = positiveInteger(input.page ?? 1, 1, 10_000);
+  const pageSize = positiveInteger(input.pageSize ?? 25, 1, 100);
+  const code = normalizeCodeFilter(input.code);
+  const status = normalizeManifestStatusFilter(input.status);
+  const from = normalizeManifestDateFilter(input.from);
+  const to = normalizeManifestDateFilter(input.to);
+  const rows = (await readAdminManifestRows())
+    .filter((row) => input.agency === "COO" || row.sourceSite === input.agency)
+    .map(toManifestItem)
+    .filter((row) => matchesManifestFilters(row, { code, status, from, to }));
+
+  const storage = input.agency === "COO" || input.compareStorage === false
+    ? new Map<string, { weightKg: number; status: string }>()
+    : await readStorageComparison(input.agency, rows.map((row) => row.trackingCode));
+  const enriched = rows.map((row) => {
+    const parcel = storage.get(row.trackingCode);
+    return Object.freeze({
+      ...row,
+      presentInStorage: Boolean(parcel),
+      storageWeightKg: parcel?.weightKg ?? null,
+      weightDifferenceKg: parcel ? round(parcel.weightKg - row.weightKg) : null
+    });
+  });
+  const total = enriched.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+  return Object.freeze({
+    agency: input.agency,
+    rows: Object.freeze(enriched.slice((safePage - 1) * pageSize, safePage * pageSize)),
+    pagination: Object.freeze({ page: safePage, pageSize, total, totalPages })
+  });
+}
+
+function toManifestItem(row: ManifestShipperRow) {
+  return Object.freeze({
+    date: normalizeManifestRowDate(row.dateRaw),
+    trackingCode: normalizeRequiredCode(row.codeColisRaw),
+    weightKg: parseWeight(row.poidsRaw),
+    status: normalizeManifestStatus(row.statutRaw),
+    sourceSite: row.sourceSite
+  });
+}
+
+async function readStorageComparison(agency: StorageAgency, codes: string[]) {
+  const unique = Array.from(new Set(codes));
+  if (!unique.length) return new Map<string, { weightKg: number; status: string }>();
+  const data = (await Promise.all(chunk(unique, 250).map(async (trackingCodes) => {
+    const result = await serviceClient().from("stockage_parcels").select("tracking_code,canonical_weight_kg,delivery_status").eq("agency", agency).is("forwarding_id", null).eq("delivery_status", "AVAILABLE").in("tracking_code", trackingCodes);
+    if (result.error) throw new StockagesV2Error("STORAGE_READ_FAILED", 503);
+    return result.data ?? [];
+  }))).flat();
+  return new Map(
+    data.map((row) => [
+      String(row.tracking_code),
+      { weightKg: Number(row.canonical_weight_kg), status: String(row.delivery_status) }
+    ])
+  );
+}
+
+function chunk<T>(rows: T[], size: number) { return Array.from({ length: Math.ceil(rows.length / size) }, (_, index) => rows.slice(index * size, (index + 1) * size)); }
+
+function serviceClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new StockagesV2Error("STORAGE_SERVICE_NOT_CONFIGURED", 503);
+  return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } }).schema("public");
+}
+
+function normalizeCodeFilter(value: unknown) { const code = String(value ?? "").trim().toUpperCase(); return code && /^[A-Z0-9._/-]{1,64}$/.test(code) ? code : ""; }
+function normalizeRequiredCode(value: unknown) { const code = normalizeCodeFilter(value); return code || "CODE_INVALIDE"; }
+function parseWeight(value: unknown) { const parsed = Number(String(value ?? "").replace(",", ".").replace(/[^0-9.-]/g, "")); return Number.isFinite(parsed) && parsed > 0 ? parsed : 0; }
+function positiveInteger(value: number, min: number, max: number) { return Number.isInteger(value) && value >= min && value <= max ? value : min; }
+function round(value: number) { return Math.round((value + Number.EPSILON) * 1000) / 1000; }

@@ -1,0 +1,41 @@
+{
+  "retrievedAt": "2026-07-30T21:46:27Z",
+  "retrievalMethod": "Supabase CLI functions download --use-api (read-only)",
+  "projectRef": "axtyoqlknjjikmxcefvy",
+  "functions": [
+    {
+      "name": "paiements-agents-rechercher-colis",
+      "id": "e5efb0ba-d1a4-4ea9-b56e-2efda04cb062",
+      "status": "ACTIVE",
+      "version": 3,
+      "createdAt": "2026-07-24T23:23:06.759Z",
+      "updatedAt": "2026-07-27T21:01:46.488Z",
+      "verifyJwt": true,
+      "files": [
+        {
+          "path": "paiements-agents-rechercher-colis/index.ts",
+          "sha256": "a347319e4c42ccbe835f8f9690be26f08dc1050e1853897bef35ee71d6db5d0b"
+        }
+      ],
+      "provisionalLocalSha256": "a347319e4c42ccbe835f8f9690be26f08dc1050e1853897bef35ee71d6db5d0b",
+      "comparison": "IDENTIQUE"
+    },
+    {
+      "name": "paiements-agents-enregistrer-paiement",
+      "id": "77fe4644-beaa-49bf-9f4c-a9fdf0f735e6",
+      "status": "ACTIVE",
+      "version": 4,
+      "createdAt": "2026-07-25T11:45:46.340Z",
+      "updatedAt": "2026-07-27T18:51:31.637Z",
+      "verifyJwt": true,
+      "files": [
+        {
+          "path": "paiements-agents-enregistrer-paiement/index.ts",
+          "sha256": "1cbcb2b7cd6e927ec268c086f94329e53a4a885d09b03c36bbb4f09b5b485c9a"
+        }
+      ],
+      "provisionalLocalSha256": "1cbcb2b7cd6e927ec268c086f94329e53a4a885d09b03c36bbb4f09b5b485c9a",
+      "comparison": "IDENTIQUE"
+    }
+  ]
+}

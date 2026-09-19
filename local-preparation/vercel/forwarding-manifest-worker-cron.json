@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/internal/cron/forwarding-manifest-worker",
+      "schedule": "*/10 * * * *"
+    }
+  ]
+}

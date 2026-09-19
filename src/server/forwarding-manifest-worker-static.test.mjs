@@ -1,0 +1,10 @@
+import assert from "node:assert/strict";import {readFileSync} from "node:fs";import test from "node:test";
+const migration=readFileSync(new URL("../../local-preparation/supabase/stockages-v2/021_forwarding_manifest_worker.sql",import.meta.url),"utf8");
+const worker=readFileSync(new URL("./forwarding-manifest-worker.ts",import.meta.url),"utf8");
+const route=readFileSync(new URL("../app/api/internal/forwarding-manifest-worker/route.ts",import.meta.url),"utf8");
+test("claim atomique, lease et lot borné",()=>{for(const token of ["for update skip locked","p_batch_size not between 1 and 25","p_lease_seconds not between 60 and 900","lease_until","claimed_by"])assert.match(migration,new RegExp(token,"i"));});
+test("AWAITING_PAYMENT et SYNCED ne sont jamais claimés",()=>{assert.match(migration,/sync_state in \('PENDING','RETRY','AWAITING_MANIFEST_IDENTITY'\)/);assert.doesNotMatch(migration,/sync_state in \([^)]*AWAITING_PAYMENT/);});
+test("retry plafonné à huit et soixante minutes",()=>{assert.match(migration,/sync_attempt_count>=8/);assert.match(migration,/least\(60/);assert.match(migration,/ADMIN_INTERVENTION_REQUIRED/);});
+test("adaptateur utilise seulement les RPC atomiques",()=>{assert.match(worker,/rpc\("claim_forwarding_manifest_sync_jobs"/);assert.match(worker,/rpc\("complete_forwarding_manifest_sync_job"/);assert.doesNotMatch(worker,/\.from\("stockage_forwarding_manifest_registry"/);});
+test("endpoint manuel POST protégé sans cache",()=>{assert.match(route,/export async function POST/);assert.doesNotMatch(route,/export async function GET/);assert.match(route,/timingSafeEqual/);assert.match(route,/private, no-store/);});
+test("Apps Script appelé sans cache et avec timeout",()=>{assert.match(worker,/cache:"no-store"/);assert.match(worker,/AbortSignal\.timeout\(45_000\)/);});

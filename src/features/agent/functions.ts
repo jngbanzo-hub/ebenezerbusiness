@@ -1,0 +1,330 @@
+import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead } from "@/features/auth/authenticated-fetch";
+import { AgentWriteSessionError, getVerifiedAgentWriteToken } from "@/features/stockages/verified-agent-token";
+import {
+  DESTINATIONS,
+  type DestinationCode,
+  type PaymentMode,
+  type PaymentResult
+} from "@/features/agent/types";
+
+const FUNCTION_NAMES = {
+  search: "paiements-agents-rechercher-colis",
+  payment: "paiements-agents-enregistrer-paiement"
+} as const;
+
+const ERROR_MESSAGES = {
+  SESSION_EXPIREE: "Votre session Agent a expiré. Veuillez vous reconnecter.",
+  COMPTE_DESACTIVE: "Votre accès Agent a été désactivé.",
+  ACCES_REFUSE: "Accès Agent refusé.",
+  COLIS_INTROUVABLE: "Aucun colis ne correspond à ce code pour la destination sélectionnée.",
+  PARCEL_NOT_IN_AGENCY_STORAGE: "Ce colis n’est pas présent dans le Stockage de votre agence.",
+  PARCEL_NOT_IN_STOCK: "Ce colis n’est pas présent dans le Stockage de votre agence.",
+  SESSION_EXPIRED: "Votre session Agent a expiré. Veuillez vous reconnecter.",
+  SESSION_EXPIRED_REFRESHED: "Votre session Agent a expiré. Veuillez vous reconnecter.",
+  DESTINATION_INVALIDE: "Destination invalide. Choisissez Kinshasa, Lubumbashi ou Kolwezi.",
+  AGENCE_INVALIDE: "Agence invalide.",
+  MONTANT_INVALIDE: "Le montant payé est invalide.",
+  MODE_PAIEMENT_INVALIDE: "Le mode de paiement est invalide.",
+  PAYMENT_REQUEST_ID_INVALIDE:
+    "La demande de paiement n’a pas pu être sécurisée. Veuillez réessayer.",
+  PAIEMENT_DEJA_ENREGISTRE: "Ce paiement a déjà été enregistré.",
+  DEPASSEMENT_SOLDE: "Le montant payé dépasse le solde restant.",
+  COLIS_DEJA_SOLDE: "Ce colis est déjà entièrement soldé.",
+  MONTANT_SUPERIEUR_SOLDE: "Le montant payé dépasse le solde restant.",
+  PAIEMENT_PARTIEL_INTERDIT:
+    "Le montant doit correspondre exactement au solde restant pour cette agence.",
+  PAIEMENT_REFUSE: "Le paiement a été refusé. Vérifiez les informations et réessayez.",
+  PAYMENT_LOCK_BUSY: "Le service de paiement est temporairement occupé. Réessayez avec la même demande.",
+  IDEMPOTENCY_CONFLICT:
+    "Ce paymentRequestId correspond déjà à un autre paiement.",
+  SERVICE_INDISPONIBLE: "Le service Agent est indisponible. Veuillez réessayer."
+} as const;
+
+export type AgentApiErrorCode = keyof typeof ERROR_MESSAGES;
+
+export class AgentApiError extends Error {
+  constructor(
+    message: string,
+    readonly code: AgentApiErrorCode | null
+  ) {
+    super(message);
+    this.name = "AgentApiError";
+  }
+}
+
+export type ParcelIdentityCandidate = { parcelId: string; forwardingId: string | null; trackingCode: string; displayCode: string; agency: string };
+export class ParcelIdentitySelectionRequiredError extends Error {
+  constructor(readonly candidates: readonly ParcelIdentityCandidate[]) { super("Sélectionnez le contexte physique du colis."); this.name="ParcelIdentitySelectionRequiredError"; }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readErrorCode(data: Record<string, unknown>): AgentApiErrorCode | null {
+  const value = data.error ?? data.code;
+  return typeof value === "string" && value in ERROR_MESSAGES
+    ? (value as AgentApiErrorCode)
+    : null;
+}
+
+function createResponseError(data: Record<string, unknown> | null, fallback: string) {
+  if (data) {
+    const code = readErrorCode(data);
+    if (code) return new AgentApiError(ERROR_MESSAGES[code], code);
+    if (typeof data.message === "string" && data.message.trim()) {
+      return new AgentApiError(data.message.trim().slice(0, 300), null);
+    }
+  }
+
+  return new AgentApiError(fallback, null);
+}
+
+async function invokeAgentFunction<T>(
+  functionName: (typeof FUNCTION_NAMES)[keyof typeof FUNCTION_NAMES],
+  payload: object,
+  readOnly = false
+): Promise<T> {
+  const timingStartedAt = performance.now();
+  const timing: Record<string, number> = {};
+  const requestId = isRecord(payload) && typeof payload.paymentRequestId === "string" ? payload.paymentRequestId : "UNKNOWN";
+  const supabase = getSupabaseBrowserClient();
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!supabaseUrl) {
+    throw new Error("Configuration Supabase manquante.");
+  }
+
+  const init = {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  } satisfies RequestInit;
+  let response: Response;
+  if (readOnly) {
+    response = await authenticatedRead(supabase.auth, `${supabaseUrl}/functions/v1/${functionName}`, init);
+  } else {
+    let accessToken: string;
+    const authStartedAt = performance.now();
+    try {
+      accessToken = await getVerifiedAgentWriteToken(supabase.auth);
+    } catch (cause) {
+      if (cause instanceof AgentWriteSessionError) throw new AgentApiError(cause.message, "SESSION_EXPIRED");
+      throw cause;
+    }
+    timing.local_auth = roundedMs(authStartedAt);
+    const fetchStartedAt = performance.now();
+    response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
+      ...init,
+      headers: { ...init.headers, Authorization: `Bearer ${accessToken}` }
+    });
+    timing.fetch_wait = roundedMs(fetchStartedAt);
+  }
+
+  const bodyStartedAt = performance.now();
+  const responseText = await response.text();
+  timing.response_body_read = roundedMs(bodyStartedAt);
+  const parseStartedAt = performance.now();
+  const rawData: unknown = parseJson(responseText);
+  timing.response_json_parse = roundedMs(parseStartedAt);
+  const data = isRecord(rawData) ? rawData : null;
+
+  if (!response.ok) {
+    throw createResponseError(data, "La demande a échoué.");
+  }
+
+  if (!data) {
+    throw new Error("Réponse vide du service.");
+  }
+
+  if (data.success === false) {
+    throw createResponseError(data, "L’opération a été refusée.");
+  }
+
+  if (functionName === FUNCTION_NAMES.payment) logPaymentClientTiming(requestId, timingStartedAt, timing);
+  return data as T;
+}
+
+export function searchParcel(payload: { destinationCode: string; codeColis: string }) {
+  return invokeAgentFunction<Record<string, unknown>>(FUNCTION_NAMES.search, payload, true);
+}
+
+export async function searchDestinationParcel(trackingCode: string, parcelId?: string) {
+  const params = new URLSearchParams({ trackingCode });
+  if (parcelId) params.set("parcelId", parcelId);
+  const response = await authenticatedRead(
+    getSupabaseBrowserClient().auth,
+    `/api/agent/encaissements/parcel?${params}`,
+    {}
+  );
+  const payload = await response.json().catch(() => null) as
+    | { parcel?: Record<string, unknown>; message?: string; code?: string; candidates?: ParcelIdentityCandidate[] }
+    | null;
+  if (response.status === 409 && payload?.code === "PARCEL_IDENTITY_SELECTION_REQUIRED" && Array.isArray(payload.candidates)) throw new ParcelIdentitySelectionRequiredError(payload.candidates);
+  if (!response.ok || !payload?.parcel) {
+    const code = payload?.code && payload.code in ERROR_MESSAGES
+      ? payload.code as AgentApiErrorCode
+      : null;
+    throw new AgentApiError(
+      code ? ERROR_MESSAGES[code] : payload?.message ?? "Recherche Encaissements indisponible.",
+      code
+    );
+  }
+  return payload.parcel;
+}
+
+export type AgentManifestSearchRow = {
+  date: string;
+  trackingCode: string;
+  weightKg: number;
+  status: string;
+  sourceSite: string;
+};
+
+export async function searchAgentManifestControl(trackingCode: string, forwarding?: {
+  originAgency: "FIH" | "LSHI" | "KLZ";
+  parcelId: string;
+  forwardingId: string;
+  weightKg: number;
+}) {
+  const params = new URLSearchParams({ code: trackingCode, page: "1", pageSize: "25" });
+  if (forwarding) {
+    params.set("agency", forwarding.originAgency);
+    params.set("parcelId", forwarding.parcelId);
+    params.set("forwardingId", forwarding.forwardingId);
+    params.set("weightKg", String(forwarding.weightKg));
+  }
+  const response = await authenticatedRead(
+    getSupabaseBrowserClient().auth,
+    `/api/agent/manifest?${params}`,
+    {}
+  );
+  const payload = await response.json().catch(() => null) as
+    | { agency?: string; rows?: AgentManifestSearchRow[] }
+    | null;
+  if (!response.ok || !payload?.agency || !Array.isArray(payload.rows)) {
+    throw new Error("Vérification du MANIFESTE PUBLIC indisponible.");
+  }
+  const exact = payload.rows.filter(
+    (row) => row.trackingCode.trim().toUpperCase() === trackingCode.trim().toUpperCase()
+  );
+  const compatible = forwarding
+    ? exact.filter((row) => Math.abs(row.weightKg - forwarding.weightKg) < 0.001)
+    : exact;
+  return { agency: payload.agency, row: compatible.length === 1 ? compatible[0] : null, ambiguous: compatible.length > 1 };
+}
+
+export function savePayment(payload: {
+  codeColis: string;
+  destinationCode: string;
+  montantPaye: number;
+  modePaiement: PaymentMode;
+  referencePaiement: string;
+  observation: string;
+  paymentRequestId: string;
+}) {
+  return invokeAgentFunction<Record<string, unknown>>(FUNCTION_NAMES.payment, payload).then(async (response) => {
+    const result = parsePaymentResult(response);
+    if (!result.replayed) await syncPaymentNotification(payload.paymentRequestId).catch(() => undefined);
+    return result;
+  });
+}
+
+async function syncPaymentNotification(paymentRequestId: string) { const { data: { session } } = await getSupabaseBrowserClient().auth.getSession(); if (!session?.access_token) return; await fetch("/api/agent/notifications/payment-sync", { method: "POST", headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" }, body: JSON.stringify({ paymentRequestId }) }); }
+
+export async function saveDestinationPayment(payload: {
+  trackingCode: string;
+  parcelId?: string;
+  paymentMode: PaymentMode;
+  paymentReference: string;
+  observation: string;
+  paymentRequestId: string;
+}) {
+  const timingStartedAt = performance.now();
+  const timing: Record<string, number> = {};
+  const auth = getSupabaseBrowserClient().auth;
+  let accessToken: string;
+  const authStartedAt = performance.now();
+  try {
+    accessToken = await getVerifiedAgentWriteToken(auth);
+  } catch (cause) {
+    if (cause instanceof AgentWriteSessionError) throw new AgentApiError(cause.message, "SESSION_EXPIRED");
+    throw cause;
+  }
+  timing.local_auth = roundedMs(authStartedAt);
+  const payloadStartedAt = performance.now();
+  const body = JSON.stringify(payload);
+  timing.payload_preparation = roundedMs(payloadStartedAt);
+  const fetchStartedAt = performance.now();
+  const response = await fetch("/api/agent/encaissements/payment", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body
+  });
+  timing.fetch_wait = roundedMs(fetchStartedAt);
+  const bodyStartedAt = performance.now();
+  const responseText = await response.text();
+  timing.response_body_read = roundedMs(bodyStartedAt);
+  const parseStartedAt = performance.now();
+  const parsed = parseJson(responseText);
+  timing.response_json_parse = roundedMs(parseStartedAt);
+  const raw = isRecord(parsed) ? parsed : null;
+  logPaymentClientTiming(payload.paymentRequestId, timingStartedAt, timing);
+  if (!response.ok || !raw) throw createResponseError(raw, "Le paiement a échoué.");
+  return parsePaymentResult(raw);
+}
+
+function parseJson(value: string): unknown | null {
+  try { return JSON.parse(value) as unknown; } catch { return null; }
+}
+
+function roundedMs(startedAt: number) { return Math.round((performance.now() - startedAt) * 10) / 10; }
+
+function logPaymentClientTiming(requestId: string, startedAt: number, durationsMs: Record<string, number>) {
+  console.info(JSON.stringify({ type: "payment_client_performance", requestId: requestId.replace(/[^a-zA-Z0-9._:-]/g, "_").slice(0, 128), totalMs: roundedMs(startedAt), durationsMs }));
+}
+
+function parsePaymentResult(response: Record<string, unknown>): PaymentResult {
+  if (
+    typeof response.codeColis !== "string" ||
+    !isDestinationCode(response.destinationCode) ||
+    typeof response.destinationNom !== "string" ||
+    !isNonNegativeNumber(response.montantPaye) ||
+    !isNonNegativeNumber(response.nouveauTotalPaye) ||
+    !isNonNegativeNumber(response.nouveauSolde) ||
+    (response.statutPaiement !== "SOLDE" &&
+      response.statutPaiement !== "PARTIELLEMENT PAYE") ||
+    typeof response.datePaiement !== "string"
+  ) {
+    throw new AgentApiError("La confirmation du paiement est invalide.", null);
+  }
+
+  return {
+    codeColis: response.codeColis.trim(),
+    destinationCode: response.destinationCode,
+    destinationNom: response.destinationNom.trim(),
+    montantPaye: response.montantPaye,
+    nouveauTotalPaye: response.nouveauTotalPaye,
+    nouveauSolde: response.nouveauSolde,
+    statutPaiement: response.statutPaiement,
+    datePaiement: response.datePaiement,
+    cashRecorded: response.cashRecorded === true,
+    cashStatus:
+      response.cashStatus === "RECORDED" ||
+      response.cashStatus === "ACCOUNT_NOT_ACTIVE"
+        ? response.cashStatus
+        : undefined,
+    replayed: response.replayed === true
+  };
+}
+
+function isDestinationCode(value: unknown): value is DestinationCode {
+  return typeof value === "string" && DESTINATIONS.includes(value as DestinationCode);
+}
+
+function isNonNegativeNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}

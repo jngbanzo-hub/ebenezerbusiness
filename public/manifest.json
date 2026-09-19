@@ -1,0 +1,54 @@
+{
+  "name": "Eben Ezer Business",
+  "short_name": "EEB",
+  "description": "Application officielle Eben Ezer Business pour le transport de colis entre le Benin et la RDC.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#061225",
+  "theme_color": "#A3E635",
+  "orientation": "portrait-primary",
+  "lang": "fr",
+  "categories": ["business", "productivity", "travel"],
+  "icons": [
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Suivi de colis",
+      "short_name": "Suivi",
+      "description": "Suivre un colis avec son Tracking ID.",
+      "url": "/suivi-de-colis",
+      "icons": [
+        {
+          "src": "/icons/icon-192x192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Tarifs",
+      "short_name": "Tarifs",
+      "description": "Consulter les tarifs d'expedition.",
+      "url": "/tarifs",
+      "icons": [
+        {
+          "src": "/icons/icon-192x192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ]
+}
