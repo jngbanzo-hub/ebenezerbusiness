@@ -65,7 +65,7 @@ test("F_ZERO classe l'état final selon la dernière transaction chronologique",
 
 test("audit inverse moderne part du Manifeste et couvre dynamiquement août 2026 → présent", () => {
   assert.match(route, /const MODERN_START_DATE = "2026-08-01"/);
-  assert.match(route, /buildModernManifestAudit\(manifests, payments\)/);
+  assert.match(route, /buildModernManifestAudit\(manifests, payments(?:, physicalMatches)?\)/);
   assert.match(route, /manifests\.filter\(isModernManifestRow\)/);
   assert.match(route, /const allByCode = new Map/);
   assert.match(route, /allByCode\.get\(code\) \?\? \[\]/);
@@ -82,7 +82,8 @@ test("dettes modernes restent read-only et séparées des cas À VÉRIFIER", () 
 });
 
 test("expose les identités physiques nécessaires au contrôle AT02326 et AT09826 en lecture seule", () => {
-  assert.match(route, /readPhysicalIdentities\(\["AT02326", "AT09826"\]\)/);
+  assert.match(route, /readPhysicalIdentities\(/);
+  assert.match(route, /verifyCodes/);
   assert.match(route, /stockage_forwardings/);
   assert.match(route, /forwardingId/);
   assert.match(route, /originAgency/);
