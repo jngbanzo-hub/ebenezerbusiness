@@ -65,13 +65,20 @@ test("F_ZERO classe l'état final selon la dernière transaction chronologique",
 
 test("audit inverse moderne part du Manifeste et couvre dynamiquement août 2026 → présent", () => {
   assert.match(route, /const MODERN_START_DATE = "2026-08-01"/);
-  assert.match(route, /buildModernManifestAudit\(manifests, payments(?:, physicalMatches)?\)/);
+  assert.match(route, /buildModernManifestAudit\(manifests, payments, physicalMatches(?:, cohortId)?\)/);
   assert.match(route, /manifests\.filter\(isModernManifestRow\)/);
   assert.match(route, /const allByCode = new Map/);
   assert.match(route, /allByCode\.get\(code\) \?\? \[\]/);
   assert.match(route, /ModernFinancialState = "SOLDÉ" \| "PARTIEL" \| "NON PAYÉ" \| "À VÉRIFIER"/);
   assert.match(route, /byCohort/);
   assert.doesNotMatch(route, /isModernManifestRow[\s\S]{0,500}\/\^\(AT\|SE\)/);
+});
+
+test("le rapprochement moderne accepte une cohorte active et filtre avant agrégation", () => {
+  assert.match(route, /searchParams\.get\("cohortId"\)/);
+  assert.match(route, /buildModernManifestAudit\(manifests, payments, physicalMatches(?:, cohortId)?\)/);
+  assert.match(route, /filter\(\(row\) => \{[\s\S]*selectedCohortId[\s\S]*cohort\.definition\.id === selectedCohortId/);
+  assert.match(route, /activeCohortId: selectedCohortId/);
 });
 
 test("dettes modernes restent read-only et séparées des cas À VÉRIFIER", () => {

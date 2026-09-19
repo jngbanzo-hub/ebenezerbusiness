@@ -46,10 +46,13 @@ export async function GET(request: Request) {
       label: item.label
     }));
 
-    const initial = withBilanCohorts(definitions, () => buildReport(manifests, payments));
+    const requestedCohortId = new URL(request.url).searchParams.get("cohortId")?.trim() || null;
+    if (requestedCohortId && !definitions.some((item) => item.id === requestedCohortId)) return jsonError("Cohorte non résolue.", 400);
+
+    const initial = withBilanCohorts(definitions, () => buildReport(manifests, payments, [], requestedCohortId));
     const verifyCodes = initial.modernManifestAudit.rows.filter((row) => row.state === "À VÉRIFIER").map((row) => row.code);
     const physical = await readPhysicalIdentities(Array.from(new Set(["AT02326", "AT09826", ...verifyCodes])));
-    const result = withBilanCohorts(definitions, () => buildReport(manifests, payments, physical.matches));
+    const result = withBilanCohorts(definitions, () => buildReport(manifests, payments, physical.matches, requestedCohortId));
     return NextResponse.json({ ...result, physicalIdentities: physical }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   } catch {
     return jsonError("Certification temporairement indisponible.", 503);
@@ -101,7 +104,7 @@ async function readPhysicalIdentities(codes: readonly string[]) {
   return { state: "FOUND" as const, matches };
 }
 
-function buildReport(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[], physicalMatches: readonly PhysicalIdentity[] = []) {
+function buildReport(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[], physicalMatches: readonly PhysicalIdentity[] = [], cohortId: string | null = null) {
   const rows = manifests.map((row) => certifyHistoricalRow(row));
   const targets = TARGETS.map(([sheet, code]) => {
     const matches = rows.filter((row) => row.sheet === sheet && row.code === code);
@@ -144,7 +147,7 @@ function buildReport(manifests: readonly ManifestShipperRow[], payments: readonl
     p1Checks,
     modern: buildModernReport(manifests, payments),
     p1ModernAudit: buildP1ModernAudit(manifests, payments),
-    modernManifestAudit: buildModernManifestAudit(manifests, payments, physicalMatches),
+    modernManifestAudit: buildModernManifestAudit(manifests, payments, physicalMatches, cohortId),
     fZeroAudit: buildFZeroAudit(manifests, payments),
     aggregates: byAgency,
     conservation: Object.fromEntries((["FIH", "LSHI", "KLZ"] as const).map((agency) => {
@@ -330,8 +333,15 @@ function isModernManifestRow(row: ManifestShipperRow) {
   return Boolean(date && date >= MODERN_START_DATE && exactCode(row.codeColisRaw));
 }
 
-function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[], physicalMatches: readonly PhysicalIdentity[] = []) {
-  const modernRows = manifests.filter(isModernManifestRow);
+function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[], physicalMatches: readonly PhysicalIdentity[] = [], selectedCohortId: string | null = null) {
+  const modernRows = manifests.filter(isModernManifestRow).filter((row) => {
+    if (!selectedCohortId) return true;
+    const code = exactCode(row.codeColisRaw);
+    const date = parseDate(row.dateRaw);
+    const year = date ? Number(date.slice(0, 4)) : NaN;
+    const cohort = Number.isFinite(year) ? resolveCohort(code, year) : null;
+    return cohort?.state === "RESOLVED" && cohort.definition.id === selectedCohortId;
+  });
   const byIdentity = new Map<string, ManifestShipperRow[]>();
   modernRows.forEach((row) => {
     const key = `${row.sourceSite}:${exactCode(row.codeColisRaw)}`;
@@ -393,7 +403,7 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
     total: cohortRows.length, settled: cohortRows.filter((row) => row.state === "SOLDÉ").length, partial: cohortRows.filter((row) => row.state === "PARTIEL").length,
     unpaidCertified: cohortRows.filter((row) => row.state === "NON PAYÉ").length, toVerify: cohortRows.filter((row) => row.state === "À VÉRIFIER").length
   }]));
-  return { startDate: MODERN_START_DATE, endDate: new Date().toISOString().slice(0, 10), rows, byAgency, byCohort: cohortSummary, conservation: Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => { const item = byAgency[agency] as { total: number; settled: number; partial: number; unpaidCertified: number; toVerify: number }; return [agency, item.total === item.settled + item.partial + item.unpaidCertified + item.toVerify ? "PASS" : "FAIL"]; })) };
+  return { startDate: MODERN_START_DATE, endDate: new Date().toISOString().slice(0, 10), activeCohortId: selectedCohortId, rows, byAgency, byCohort: cohortSummary, conservation: Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => { const item = byAgency[agency] as { total: number; settled: number; partial: number; unpaidCertified: number; toVerify: number }; return [agency, item.total === item.settled + item.partial + item.unpaidCertified + item.toVerify ? "PASS" : "FAIL"]; })) };
 }
 
 function deduplicatePayments(payments: readonly ReturnType<typeof normalizePayment>[]) {
