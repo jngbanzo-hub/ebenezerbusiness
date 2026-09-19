@@ -65,7 +65,7 @@ test("F_ZERO classe l'état final selon la dernière transaction chronologique",
 
 test("audit inverse moderne part du Manifeste et couvre dynamiquement août 2026 → présent", () => {
   assert.match(route, /const MODERN_START_DATE = "2026-08-01"/);
-  assert.match(route, /buildModernManifestAudit\(manifests, payments(?:, physicalMatches)?\)/);
+  assert.match(route, /buildModernManifestAudit\(manifests, payments, physicalMatches(?:, cohortId)?\)/);
   assert.match(route, /manifests\.filter\(isModernManifestRow\)/);
   assert.match(route, /const allByCode = new Map/);
   assert.match(route, /allByCode\.get\(code\) \?\? \[\]/);
@@ -88,4 +88,11 @@ test("expose les identités physiques nécessaires au contrôle AT02326 et AT098
   assert.match(route, /forwardingId/);
   assert.match(route, /originAgency/);
   assert.match(route, /destinationAgency/);
+});
+
+test("le rapprochement moderne accepte une cohorte active et filtre avant agrégation", () => {
+  assert.match(route, /searchParams\.get\("cohortId"\)/);
+  assert.match(route, /buildModernManifestAudit\(manifests, payments, physicalMatches, cohortId\)/);
+  assert.match(route, /\.filter\(\(row\) => !selectedCohortId \|\| row\.cohort === selectedCohortId\)/);
+  assert.match(route, /activeCohortId: selectedCohortId/);
 });
