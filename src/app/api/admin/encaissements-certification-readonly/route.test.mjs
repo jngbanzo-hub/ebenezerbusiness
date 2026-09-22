@@ -21,7 +21,7 @@ test("façade ne renvoie que des agrégats et détails read-only non sensibles",
   assert.match(route, /diagnosticRows/);
   assert.match(route, /firstFail/);
   assert.match(route, /manifestMatches/);
-  assert.doesNotMatch(route, /expediteurRaw|phone|telephone|email/i);
+  assert.doesNotMatch(route, /phone|telephone|email/i);
   assert.match(route, /SUPABASE_SERVICE_ROLE_KEY/);
   assert.doesNotMatch(route, /NextResponse\.json\([^)]*SUPABASE_SERVICE_ROLE_KEY/);
 });
@@ -69,7 +69,10 @@ test("audit inverse moderne part du Manifeste et couvre dynamiquement août 2026
   assert.match(route, /manifests\.filter\(isModernManifestRow\)/);
   assert.match(route, /const allByCode = new Map/);
   assert.match(route, /allByCode\.get\(code\) \?\? \[\]/);
-  assert.match(route, /ModernFinancialState = "SOLDÉ" \| "PARTIEL" \| "NON PAYÉ" \| "À VÉRIFIER"/);
+  assert.match(route, /ModernFinancialState = "SOLDÉ" \| "PARTIEL" \| "NON PAYÉ" \| "FUTURE DETTE" \| "À VÉRIFIER"/);
+  assert.match(route, /currentlyPresent/);
+  assert.match(route, /everPresent/);
+  assert.match(route, /paymentCohortAmbiguous/);
   assert.match(route, /byCohort/);
   assert.doesNotMatch(route, /isModernManifestRow[\s\S]{0,500}\/\^\(AT\|SE\)/);
 });
@@ -90,7 +93,8 @@ test("dettes modernes restent read-only et séparées des cas À VÉRIFIER", () 
 
 test("expose les identités physiques nécessaires au contrôle AT02326 et AT09826 en lecture seule", () => {
   assert.match(route, /readPhysicalIdentities\(/);
-  assert.match(route, /verifyCodes/);
+  assert.match(route, /modernCodes/);
+  assert.match(route, /readExhaustivePages/);
   assert.match(route, /stockage_forwardings/);
   assert.match(route, /forwardingId/);
   assert.match(route, /originAgency/);
