@@ -460,14 +460,19 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
 
   const byAgency = Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => {
     const agencyRows = rows.filter((row) => String(row.sourceSheet).trim().toUpperCase() === agency);
-    const count = (state: ModernFinancialState) => agencyRows.filter((row) => row.state === state).length;
+    // The row state is the sole financial classification. Normalize only its
+    // serialized representation at the aggregation boundary; never re-read
+    // F/L/M or derive a second financial state here.
+    const canonicalState = (state: ModernFinancialState) => String(state).trim().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const count = (state: ModernFinancialState) => agencyRows.filter((row) => canonicalState(row.state) === canonicalState(state)).length;
     const certifiable = agencyRows.filter((row) => row.state === "SOLDÉ" || row.state === "PARTIEL" || row.state === "NON PAYÉ" || row.state === "FUTURE DETTE");
     const settled = count("SOLDÉ");
     const partial = count("PARTIEL");
-    const unpaid = count("NON PAYÉ");
-    const toVerify = count("À VÉRIFIER");
-    const currentDebts = partial + unpaid;
+    const unpaidCurrent = count("NON PAYÉ");
     const futureDebts = count("FUTURE DETTE");
+    const unpaid = unpaidCurrent + futureDebts;
+    const toVerify = count("À VÉRIFIER");
+    const currentDebts = partial + unpaidCurrent;
     return [agency, {
       total: agencyRows.length, settled, partial, unpaidCertified: unpaid, currentDebts, futureDebts, toVerify,
       certifiedPaidUsd: round(certifiable.reduce((sum, row) => sum + row.paidUsd, 0)),
