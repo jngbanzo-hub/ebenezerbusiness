@@ -377,7 +377,7 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
     else if (expectedUsd !== null && settled && totalPaidUsd < expectedUsd) { state = "À VÉRIFIER"; reason = "P1_SOLDÉ_INFÉRIEUR_AU_PRIX"; }
     return {
       code, exactPrefix: code.match(/^[A-Z]+/)?.[0] ?? "", sourceSheet: row.sourceSite, date, year: Number.isFinite(year) ? year : null,
-      cohort: cohort?.state === "RESOLVED" ? cohort.definition.id : null, weightKg: parseAmount(row.poidsRaw), beneficiary: row.beneficiaireRaw || null,
+      cohort: cohort?.state === "RESOLVED" ? cohort.definition.id : null, weightKg: parseAmount(row.poidsRaw), sender: row.expediteurRaw || null, beneficiary: row.beneficiaireRaw || null,
       manifestF: row.historicalCurrentPriceFieldRaw ?? row.montantAttenduRaw ?? null, manifestFState: fState, manifestG: row.historicalPaymentStatusRaw ?? null,
       manifestL: row.historicalRemainingAmountRaw ?? null, manifestM: row.historicalPaidAmountRaw ?? null, expectedUsd, paidUsd: totalPaidUsd, remainingUsd: expectedUsd === null ? null : round(Math.max(0, expectedUsd - totalPaidUsd)),
       state, reason, transactions: transactions.map((payment) => ({ amountUsd: payment.amount, status: payment.status, date: payment.dateKey, collectingAgency: payment.agency, destination: payment.destination, paymentRequestId: payment.paymentRequestId })),
