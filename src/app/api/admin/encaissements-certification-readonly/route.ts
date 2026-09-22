@@ -459,15 +459,25 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
   });
 
   const byAgency = Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => {
-    const agencyRows = rows.filter((row) => row.sourceSheet === agency);
+    const agencyRows = rows.filter((row) => String(row.sourceSheet).trim().toUpperCase() === agency);
     const count = (state: ModernFinancialState) => agencyRows.filter((row) => row.state === state).length;
     const certifiable = agencyRows.filter((row) => row.state === "SOLDÉ" || row.state === "PARTIEL" || row.state === "NON PAYÉ" || row.state === "FUTURE DETTE");
+    const settled = count("SOLDÉ");
+    const partial = count("PARTIEL");
+    const unpaid = count("NON PAYÉ");
+    const toVerify = count("À VÉRIFIER");
+    const currentDebts = partial + unpaid;
+    const futureDebts = count("FUTURE DETTE");
     return [agency, {
-      total: agencyRows.length, settled: count("SOLDÉ"), partial: count("PARTIEL"), unpaidCertified: count("NON PAYÉ"), currentDebts: count("PARTIEL") + count("NON PAYÉ"), futureDebts: count("FUTURE DETTE"), toVerify: count("À VÉRIFIER"),
+      total: agencyRows.length, settled, partial, unpaidCertified: unpaid, currentDebts, futureDebts, toVerify,
       certifiedPaidUsd: round(certifiable.reduce((sum, row) => sum + row.paidUsd, 0)),
       certifiedRemainingUsd: certifiable.every((row) => row.remainingUsd !== null) ? round(certifiable.reduce((sum, row) => sum + (row.remainingUsd ?? 0), 0)) : null,
       debts: agencyRows.filter((row) => row.state === "PARTIEL" || row.state === "NON PAYÉ"),
-      futureDebtRows: agencyRows.filter((row) => row.state === "FUTURE DETTE")
+      futureDebtRows: agencyRows.filter((row) => row.state === "FUTURE DETTE"),
+      conservation: {
+        principal: agencyRows.length === settled + partial + unpaid + toVerify ? "PASS" : "FAIL",
+        receivables: currentDebts + futureDebts === partial + unpaid ? "PASS" : "FAIL"
+      }
     }];
   }));
   const cohorts = new Map<string, typeof rows>();
@@ -476,7 +486,7 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
     total: cohortRows.length, settled: cohortRows.filter((row) => row.state === "SOLDÉ").length, partial: cohortRows.filter((row) => row.state === "PARTIEL").length,
     unpaidCertified: cohortRows.filter((row) => row.state === "NON PAYÉ").length, toVerify: cohortRows.filter((row) => row.state === "À VÉRIFIER").length
   }]));
-  return { startDate: MODERN_START_DATE, endDate: new Date().toISOString().slice(0, 10), activeCohortId: selectedCohortId, rows, byAgency, byCohort: cohortSummary, conservation: Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => { const item = byAgency[agency] as { total: number; settled: number; partial: number; unpaidCertified: number; futureDebts: number; toVerify: number }; return [agency, item.total === item.settled + item.partial + item.unpaidCertified + item.futureDebts + item.toVerify ? "PASS" : "FAIL"]; })) };
+  return { startDate: MODERN_START_DATE, endDate: new Date().toISOString().slice(0, 10), activeCohortId: selectedCohortId, rows, byAgency, byCohort: cohortSummary, conservation: Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => { const item = byAgency[agency] as { total: number; settled: number; partial: number; unpaidCertified: number; currentDebts: number; futureDebts: number; toVerify: number; conservation: { principal: string; receivables: string } }; return [agency, item.conservation.principal === "PASS" && item.conservation.receivables === "PASS" ? "PASS" : "FAIL"]; })) };
 }
 
 function deduplicatePayments(payments: readonly ReturnType<typeof normalizePayment>[]) {
