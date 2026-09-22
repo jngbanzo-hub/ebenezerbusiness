@@ -10,8 +10,8 @@ import { withBilanCohorts } from "@/features/admin/bilan/cohort-registry";
 import { readBilanOriginMonths } from "@/server/bilan-origin-months";
 import type { BilanApiQuery } from "@/features/admin/bilan/bilan-api-query";
 import { resolveDirectionScope } from "@/server/direction-summary-scope";
+import { observeDirectionSource } from "@/server/direction-summary-diagnostics";
 
-const SOURCE_TIMEOUT_MS = 4_500;
 const CASH_AGENCIES = ["FIH", "LSHI", "KLZ"] as const;
 const SERVICE_ACTOR: Extract<AdminAuthorizationResult, { authorized: true }> = Object.freeze({
   authorized: true,
@@ -55,15 +55,15 @@ export async function readDirectionSummary(now = new Date()): Promise<DirectionS
   let scope = resolveDirectionScope<import("@/features/admin/bilan/bilan-contracts").CohortDefinition>(businessDate, []);
 
   const [cash, expenses, profit, storage] = await Promise.all([
-    isolated(() => readCash(businessDate)),
-    isolated(() => readExpenses(businessDate)),
-    isolated(async () => {
+    observeDirectionSource("CAISSE", () => readCash(businessDate)),
+    observeDirectionSource("DEPENSES", () => readExpenses(businessDate)),
+    observeDirectionSource("BENEFICE", async () => {
       const definitions = await readBilanOriginMonths();
       scope = resolveDirectionScope(businessDate, definitions);
       const { cohort, analysisPeriod: period } = scope;
       return cohort ? withBilanCohorts(definitions, () => readProfit({ cohort, period })) : null;
     }),
-    isolated(readStorage)
+    observeDirectionSource("STOCK", readStorage)
   ]);
   const { cohort, analysisPeriod: period } = scope;
 
@@ -134,17 +134,6 @@ async function readStorage() {
     if (typeof parcels !== "number" || typeof weightKg !== "number") throw new Error("STORAGE_CONTRACT_INVALID");
     return [agency, Object.freeze({ status: "AVAILABLE" as const, parcels, weightKg })];
   })) as Record<(typeof CASH_AGENCIES)[number], StockValue>;
-}
-
-async function isolated<T>(reader: () => Promise<T>) {
-  try { return await withTimeout(reader(), SOURCE_TIMEOUT_MS); } catch { return null; }
-}
-
-async function withTimeout<T>(promise: Promise<T>, milliseconds: number) {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([promise, new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("SOURCE_TIMEOUT")), milliseconds); })]);
-  } finally { if (timeout) clearTimeout(timeout); }
 }
 
 function sumCurrencies(rows: readonly CurrencyTotals[]) { const totals: Record<string, number> = {}; for (const row of rows) for (const [currency, amount] of Object.entries(row)) totals[currency] = (totals[currency] ?? 0) + amount; return Object.freeze(totals); }
