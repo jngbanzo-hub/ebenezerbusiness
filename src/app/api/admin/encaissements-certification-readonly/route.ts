@@ -49,9 +49,11 @@ export async function GET(request: Request) {
     const requestedCohortId = new URL(request.url).searchParams.get("cohortId")?.trim() || null;
     if (requestedCohortId && !definitions.some((item) => item.id === requestedCohortId)) return jsonError("Cohorte non résolue.", 400);
 
-    const initial = withBilanCohorts(definitions, () => buildReport(manifests, payments, [], requestedCohortId));
-    const verifyCodes = initial.modernManifestAudit.rows.filter((row) => row.state === "À VÉRIFIER").map((row) => row.code);
-    const physical = await readPhysicalIdentities(Array.from(new Set(["AT02326", "AT09826", ...verifyCodes])));
+    // Read the physical source for every modern manifest identity.  The
+    // financial source remains the Manifest (F/L/M); Storage V2 is only used
+    // to classify an outstanding balance as current or future debt.
+    const modernCodes = manifests.filter(isModernManifestRow).map((row) => exactCode(row.codeColisRaw));
+    const physical = await readPhysicalIdentities(Array.from(new Set(["AT02326", "AT09826", ...modernCodes])));
     const result = withBilanCohorts(definitions, () => buildReport(manifests, payments, physical.matches, requestedCohortId));
     return NextResponse.json({ ...result, physicalIdentities: physical }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   } catch {
@@ -71,6 +73,10 @@ type PhysicalIdentity = {
   paymentRequestId: string | null;
   orchestrationState: string | null;
   createdAt: string | null;
+  arrivalDate: string | null;
+  currentlyPresent: boolean;
+  historicallyReceived: boolean;
+  physicalEvidence: string[];
 };
 
 async function readPhysicalIdentities(codes: readonly string[]) {
@@ -78,17 +84,20 @@ async function readPhysicalIdentities(codes: readonly string[]) {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   if (!url || !key) return { state: "UNAVAILABLE" as const, matches: [] as PhysicalIdentity[] };
   const client = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } }).schema("public");
-  const [{ data: parcels, error: parcelsError }, { data: forwardings, error: forwardingsError }, { data: orchestrations, error: orchestrationsError }] = await Promise.all([
+  const [{ data: parcels, error: parcelsError }, { data: forwardings, error: forwardingsError }, { data: orchestrations, error: orchestrationsError }, { data: events, error: eventsError }] = await Promise.all([
     client.from("stockage_parcels").select("parcel_id,forwarding_id,tracking_code,agency,canonical_weight_kg,delivery_status,created_at,stockage_forwardings(origin_agency,destination_agency)").in("tracking_code", codes),
     client.from("stockage_forwardings").select("forwarding_id,original_tracking_code,origin_agency,destination_agency").in("original_tracking_code", codes),
-    client.from("stockage_payment_orchestrations").select("request_id,tracking_code,agency,state,parcel_id,forwarding_id").in("tracking_code", codes)
+    client.from("stockage_payment_orchestrations").select("request_id,tracking_code,agency,state,parcel_id,forwarding_id").in("tracking_code", codes),
+    client.from("stockage_events").select("event_id,event_type,agency,occurred_at,business_date,tracking_code,arrival_reference,metadata").in("tracking_code", codes)
   ]);
   if (parcelsError || forwardingsError || orchestrationsError) return { state: "UNAVAILABLE" as const, matches: [] as PhysicalIdentity[] };
   const forwardingById = new Map((forwardings ?? []).map((row) => [String(row.forwarding_id), row]));
   const orchestrationRows = (orchestrations ?? []) as Array<Record<string, unknown>>;
+  const eventRows = (eventsError ? [] : (events ?? [])) as Array<Record<string, unknown>>;
   const matches = (parcels ?? []).map((row) => {
     const forwarding = row.forwarding_id ? forwardingById.get(String(row.forwarding_id)) : null;
     const orchestration = orchestrationRows.find((candidate) => String(candidate.agency ?? "") === String(row.agency ?? "") && String(candidate.tracking_code ?? "") === String(row.tracking_code ?? "") && (!row.forwarding_id || String(candidate.forwarding_id ?? "") === String(row.forwarding_id)));
+    const rowEvents = eventRows.filter((event) => String(event.agency ?? "").toUpperCase() === String(row.agency ?? "").toUpperCase() && exactCode(event.tracking_code) === exactCode(row.tracking_code));
     return {
       agency: String(row.agency ?? ""), trackingCode: String(row.tracking_code ?? ""), parcelId: row.parcel_id ? String(row.parcel_id) : null,
       forwardingId: row.forwarding_id ? String(row.forwarding_id) : null,
@@ -98,10 +107,27 @@ async function readPhysicalIdentities(codes: readonly string[]) {
       deliveryStatus: row.delivery_status ? String(row.delivery_status) : null,
       paymentRequestId: orchestration?.request_id ? String(orchestration.request_id) : null,
       orchestrationState: orchestration?.state ? String(orchestration.state) : null,
-      createdAt: row.created_at ? String(row.created_at) : null
+      createdAt: row.created_at ? String(row.created_at) : null,
+      arrivalDate: rowEvents.map((event) => String(event.occurred_at ?? event.business_date ?? "")).filter(Boolean).sort()[0] ?? (row.created_at ? String(row.created_at) : null),
+      currentlyPresent: true,
+      historicallyReceived: true,
+      physicalEvidence: ["PARCEL_V2", ...rowEvents.map((event) => String(event.event_type ?? "STORAGE_EVENT"))]
     } satisfies PhysicalIdentity;
   });
-  return { state: "FOUND" as const, matches };
+  // Keep historical event evidence even when the parcel has already been
+  // delivered/removed from the current parcel table.
+  const historicalOnly = eventRows.filter((event) => {
+    const agency = String(event.agency ?? "").toUpperCase();
+    const code = exactCode(event.tracking_code);
+    return agency && code && !matches.some((match) => match.agency.toUpperCase() === agency && match.trackingCode === code);
+  }).map((event) => ({
+    agency: String(event.agency ?? ""), trackingCode: exactCode(event.tracking_code), parcelId: null, forwardingId: null,
+    originAgency: null, destinationAgency: String(event.agency ?? ""), weightKg: Number.isFinite(Number(event.metadata && typeof event.metadata === "object" ? (event.metadata as Record<string, unknown>).weight_kg : NaN)) ? Number((event.metadata as Record<string, unknown>).weight_kg) : null,
+    deliveryStatus: String(event.event_type ?? ""), paymentRequestId: null, orchestrationState: null, createdAt: null,
+    arrivalDate: String(event.occurred_at ?? event.business_date ?? "") || null, currentlyPresent: false,
+    historicallyReceived: true, physicalEvidence: [String(event.event_type ?? "STORAGE_EVENT")]
+  } satisfies PhysicalIdentity));
+  return { state: "FOUND" as const, matches: [...matches, ...historicalOnly] };
 }
 
 function buildReport(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[], physicalMatches: readonly PhysicalIdentity[] = [], cohortId: string | null = null) {
@@ -337,45 +363,56 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
   const modernRows = manifests.filter(isModernManifestRow);
   const byIdentity = new Map<string, ManifestShipperRow[]>();
   modernRows.forEach((row) => {
-    const key = `${row.sourceSite}:${exactCode(row.codeColisRaw)}`;
+    const year = parseDate(row.dateRaw)?.slice(0, 4) ?? "UNKNOWN";
+    const key = `${row.sourceSite}:${year}:${exactCode(row.codeColisRaw)}`;
     byIdentity.set(key, [...(byIdentity.get(key) ?? []), row]);
   });
 
   const allByCode = new Map<string, ReturnType<typeof normalizePayment>[]>();
   payments.forEach((payment) => allByCode.set(payment.code, [...(allByCode.get(payment.code) ?? []), payment]));
-  const physicalByCode = new Map<string, PhysicalIdentity[]>();
-  physicalMatches.forEach((match) => physicalByCode.set(match.trackingCode, [...(physicalByCode.get(match.trackingCode) ?? []), match]));
+  const physicalByIdentity = new Map<string, PhysicalIdentity[]>();
+  physicalMatches.forEach((match) => {
+    const key = `${match.agency.toUpperCase()}:${match.trackingCode}`;
+    physicalByIdentity.set(key, [...(physicalByIdentity.get(key) ?? []), match]);
+  });
 
-  const rows = Array.from(byIdentity.entries()).map(([key, matches]) => {
+  const rows = Array.from(byIdentity.entries()).map(([, matches]) => {
     const row = matches[0];
     const code = exactCode(row.codeColisRaw);
     const date = parseDate(row.dateRaw);
     const year = date ? Number(date.slice(0, 4)) : NaN;
     const cohort = Number.isFinite(year) ? resolveCohort(code, year) : null;
-    const fState = classifyManifestF(row.historicalCurrentPriceFieldRaw ?? row.montantAttenduRaw);
-    const expectedUsd = fState === "F_POSITIF" ? parseAmount(row.historicalCurrentPriceFieldRaw ?? row.montantAttenduRaw) : null;
+    const fRaw = row.historicalCurrentPriceFieldRaw ?? row.montantAttenduRaw;
+    const fState = classifyManifestF(fRaw);
+    const fUsd = parseAmount(fRaw);
+    const lUsd = parseAmount(row.historicalRemainingAmountRaw);
+    const mUsd = parseAmount(row.historicalPaidAmountRaw);
+    const resolvedFinancial = lUsd !== null && mUsd !== null;
+    const expectedUsd = resolvedFinancial ? round(lUsd + mUsd) : null;
     const transactions = deduplicatePayments(allByCode.get(code) ?? []);
     const totalPaidUsd = round(transactions.reduce((sum, payment) => sum + payment.amount, 0));
     const chronological = [...transactions].sort((a, b) => `${a.dateKey}:${a.id}`.localeCompare(`${b.dateKey}:${b.id}`));
     const finalPayment = chronological.at(-1) ?? null;
-    const settled = Boolean(finalPayment && isSettledPayment(finalPayment) && (finalPayment.remainingAmount ?? 0) <= 0);
-    const partial = Boolean(finalPayment && (/PARTIEL/i.test(finalPayment.status) || (finalPayment.remainingAmount ?? 0) > 0));
     let state: ModernFinancialState = "À VÉRIFIER";
-    let reason = "IDENTITE_OU_MONTANT_NON_CERTIFIABLE";
+    let reason = "F_L_M_NON_CERTIFIABLE";
     if (matches.length !== 1) reason = "IDENTITE_MANIFESTE_DUPLIQUEE";
     else if (!cohort || cohort.state !== "RESOLVED") reason = "COHORTE_NON_RESOLUE";
-    else if (settled && (expectedUsd === null || totalPaidUsd >= expectedUsd)) { state = "SOLDÉ"; reason = "DERNIER_P1_SOLDÉ"; }
-    else if (expectedUsd !== null && partial && totalPaidUsd < expectedUsd) { state = "PARTIEL"; reason = "DERNIER_P1_PARTIEL"; }
-    else if (expectedUsd !== null && transactions.length === 0) { state = "NON PAYÉ"; reason = "AUCUNE_TRANSACTION_P1"; }
-    else if (expectedUsd !== null && settled && totalPaidUsd < expectedUsd) { state = "À VÉRIFIER"; reason = "P1_SOLDÉ_INFÉRIEUR_AU_PRIX"; }
+    else if (resolvedFinancial && lUsd === 0 && mUsd > 0) { state = "SOLDÉ"; reason = "MANIFESTE_L_ZERO_M_POSITIF"; }
+    else if (resolvedFinancial && lUsd > 0 && mUsd === 0) { state = "NON PAYÉ"; reason = "MANIFESTE_L_POSITIF_M_ZERO"; }
+    else if (resolvedFinancial && lUsd > 0 && mUsd > 0) { state = "PARTIEL"; reason = "MANIFESTE_L_ET_M_POSITIFS"; }
+    else if (resolvedFinancial && lUsd === 0 && mUsd === 0) { state = "À VÉRIFIER"; reason = "MANIFESTE_L_ET_M_ZERO"; }
     return {
       code, exactPrefix: code.match(/^[A-Z]+/)?.[0] ?? "", sourceSheet: row.sourceSite, date, year: Number.isFinite(year) ? year : null,
       cohort: cohort?.state === "RESOLVED" ? cohort.definition.id : null, weightKg: parseAmount(row.poidsRaw), beneficiary: row.beneficiaireRaw || null,
-      manifestF: row.historicalCurrentPriceFieldRaw ?? row.montantAttenduRaw ?? null, manifestFState: fState, manifestG: row.historicalPaymentStatusRaw ?? null,
-      manifestL: row.historicalRemainingAmountRaw ?? null, manifestM: row.historicalPaidAmountRaw ?? null, expectedUsd, paidUsd: totalPaidUsd, remainingUsd: expectedUsd === null ? null : round(Math.max(0, expectedUsd - totalPaidUsd)),
+      manifestF: fRaw ?? null, manifestFNormalized: fUsd, manifestFState: fState, manifestG: row.historicalPaymentStatusRaw ?? null,
+      manifestL: row.historicalRemainingAmountRaw ?? null, manifestLNormalized: lUsd, manifestM: row.historicalPaidAmountRaw ?? null, manifestMNormalized: mUsd, expectedUsd, paidUsd: mUsd ?? totalPaidUsd, remainingUsd: lUsd,
       state, reason, transactions: transactions.map((payment) => ({ amountUsd: payment.amount, status: payment.status, date: payment.dateKey, collectingAgency: payment.agency, destination: payment.destination, paymentRequestId: payment.paymentRequestId })),
-      lastPaymentDate: finalPayment?.dateKey ?? null, lastCollectingAgency: finalPayment?.agency ?? null,
-      physicalMatches: physicalByCode.get(code) ?? []
+      lastPaymentDate: transactions.at(-1)?.dateKey ?? null, lastCollectingAgency: transactions.at(-1)?.agency ?? null,
+      identityKey: `${row.sourceSite}:${year}:${code}`,
+      physicalMatches: physicalByIdentity.get(`${row.sourceSite.toUpperCase()}:${code}`) ?? [],
+      currentlyPresent: (physicalByIdentity.get(`${row.sourceSite.toUpperCase()}:${code}`) ?? []).some((item) => item.currentlyPresent),
+      historicallyReceived: (physicalByIdentity.get(`${row.sourceSite.toUpperCase()}:${code}`) ?? []).some((item) => item.historicallyReceived),
+      debtType: lUsd !== null && lUsd > 0 ? ((physicalByIdentity.get(`${row.sourceSite.toUpperCase()}:${code}`) ?? []).some((item) => item.historicallyReceived) ? "DETTE ACTUELLE" : "FUTURE DETTE") : null
     };
   }).filter((row) => !selectedCohortId || row.cohort === selectedCohortId);
 
@@ -385,6 +422,8 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
     const certifiable = agencyRows.filter((row) => row.state === "SOLDÉ" || row.state === "PARTIEL" || row.state === "NON PAYÉ");
     return [agency, {
       total: agencyRows.length, settled: count("SOLDÉ"), partial: count("PARTIEL"), unpaidCertified: count("NON PAYÉ"), toVerify: count("À VÉRIFIER"),
+      currentDebt: agencyRows.filter((row) => row.debtType === "DETTE ACTUELLE").length,
+      futureDebt: agencyRows.filter((row) => row.debtType === "FUTURE DETTE").length,
       certifiedPaidUsd: round(certifiable.reduce((sum, row) => sum + row.paidUsd, 0)),
       certifiedRemainingUsd: certifiable.every((row) => row.remainingUsd !== null) ? round(certifiable.reduce((sum, row) => sum + (row.remainingUsd ?? 0), 0)) : null,
       debts: agencyRows.filter((row) => row.state === "PARTIEL" || row.state === "NON PAYÉ")
@@ -394,7 +433,8 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
   rows.forEach((row) => { const key = row.cohort ?? `${row.exactPrefix}-${row.year ?? "UNKNOWN"}`; cohorts.set(key, [...(cohorts.get(key) ?? []), row]); });
   const cohortSummary = Object.fromEntries(Array.from(cohorts.entries()).map(([cohort, cohortRows]) => [cohort, {
     total: cohortRows.length, settled: cohortRows.filter((row) => row.state === "SOLDÉ").length, partial: cohortRows.filter((row) => row.state === "PARTIEL").length,
-    unpaidCertified: cohortRows.filter((row) => row.state === "NON PAYÉ").length, toVerify: cohortRows.filter((row) => row.state === "À VÉRIFIER").length
+    unpaidCertified: cohortRows.filter((row) => row.state === "NON PAYÉ").length, toVerify: cohortRows.filter((row) => row.state === "À VÉRIFIER").length,
+    currentDebt: cohortRows.filter((row) => row.debtType === "DETTE ACTUELLE").length, futureDebt: cohortRows.filter((row) => row.debtType === "FUTURE DETTE").length
   }]));
   return { startDate: MODERN_START_DATE, endDate: new Date().toISOString().slice(0, 10), activeCohortId: selectedCohortId, rows, byAgency, byCohort: cohortSummary, conservation: Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => { const item = byAgency[agency] as { total: number; settled: number; partial: number; unpaidCertified: number; toVerify: number }; return [agency, item.total === item.settled + item.partial + item.unpaidCertified + item.toVerify ? "PASS" : "FAIL"]; })) };
 }
