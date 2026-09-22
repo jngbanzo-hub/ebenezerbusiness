@@ -93,7 +93,8 @@ test("dettes modernes restent read-only et séparées des cas À VÉRIFIER", () 
 
 test("l'agrégation financière utilise l'état F/L/M unique et ne double-compte pas les créances", () => {
   assert.match(route, /const settled = count\("SOLDÉ"\)/);
-  assert.match(route, /const currentDebts = partial \+ unpaid/);
+  assert.match(route, /const canonicalState = \(state: ModernFinancialState\)/);
+  assert.match(route, /const currentDebts = partial \+ unpaidCurrent/);
   assert.match(route, /principal: agencyRows\.length === settled \+ partial \+ unpaid \+ toVerify/);
   assert.match(route, /receivables: currentDebts \+ futureDebts === partial \+ unpaid/);
   assert.doesNotMatch(route, /item\.total === item\.settled \+ item\.partial \+ item\.unpaidCertified \+ item\.futureDebts/);
