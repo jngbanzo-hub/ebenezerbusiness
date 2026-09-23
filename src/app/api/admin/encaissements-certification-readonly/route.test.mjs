@@ -8,7 +8,7 @@ const route = readFileSync(join(process.cwd(), "src/app/api/admin/encaissements-
 test("façade certification est Admin, GET-only et server-side", () => {
   assert.match(route, /authorizeAdminRequest\(request\)/);
   assert.match(route, /export async function GET\(request: Request\)/);
-  assert.match(route, /readAdminManifestRows\(\)/);
+  assert.match(route, /readCanonicalPaymentManifestRows\(\)/);
   assert.match(route, /readAdminPayments\(\)/);
   assert.match(route, /readBilanOriginMonths\(\)/);
   assert.doesNotMatch(route, /export async function (?:POST|PUT|PATCH|DELETE)/);
