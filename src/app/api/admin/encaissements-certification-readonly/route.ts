@@ -50,10 +50,9 @@ export async function GET(request: Request) {
     const requestedCohortId = new URL(request.url).searchParams.get("cohortId")?.trim() || null;
     if (requestedCohortId && !definitions.some((item) => item.id === requestedCohortId)) return jsonError("Cohorte non résolue.", 400);
 
-    const initial = withBilanCohorts(definitions, () => buildReport(manifests, payments, [], requestedCohortId));
     const modernCodes = manifests.filter(isModernManifestRow).map((row) => exactCode(row.codeColisRaw));
     const physical = await readPhysicalIdentities(Array.from(new Set(["AT02326", "AT09826", ...modernCodes])));
-    const result = withBilanCohorts(definitions, () => buildReport(manifests, payments, physical.matches, requestedCohortId));
+    const result = withBilanCohorts(definitions, () => buildReport(manifests, payments, physical.matches, requestedCohortId, physical.state));
     return NextResponse.json({ ...result, physicalIdentities: physical }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   } catch {
     return jsonError("Certification temporairement indisponible.", 503);
@@ -152,7 +151,7 @@ async function readPhysicalIdentities(codes: readonly string[]) {
   return { state: "FOUND" as const, matches: [...matches, ...historicalOnly] };
 }
 
-function buildReport(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[], physicalMatches: readonly PhysicalIdentity[] = [], cohortId: string | null = null) {
+function buildReport(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[], physicalMatches: readonly PhysicalIdentity[] = [], cohortId: string | null = null, physicalSourceState: "FOUND" | "UNAVAILABLE" = "FOUND") {
   const rows = manifests.map((row) => certifyHistoricalRow(row));
   const targets = TARGETS.map(([sheet, code]) => {
     const matches = rows.filter((row) => row.sheet === sheet && row.code === code);
@@ -195,7 +194,7 @@ function buildReport(manifests: readonly ManifestShipperRow[], payments: readonl
     p1Checks,
     modern: buildModernReport(manifests, payments),
     p1ModernAudit: buildP1ModernAudit(manifests, payments),
-    modernManifestAudit: buildModernManifestAudit(manifests, payments, physicalMatches, cohortId),
+    modernManifestAudit: buildModernManifestAudit(manifests, payments, physicalMatches, cohortId, physicalSourceState),
     fZeroAudit: buildFZeroAudit(manifests, payments),
     aggregates: byAgency,
     conservation: Object.fromEntries((["FIH", "LSHI", "KLZ"] as const).map((agency) => {
@@ -384,7 +383,7 @@ function isModernManifestRow(row: ManifestShipperRow) {
   return Boolean(date && date >= MODERN_START_DATE && exactCode(row.codeColisRaw));
 }
 
-function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[], physicalMatches: readonly PhysicalIdentity[] = [], selectedCohortId: string | null = null) {
+function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[], physicalMatches: readonly PhysicalIdentity[] = [], selectedCohortId: string | null = null, physicalSourceState: "FOUND" | "UNAVAILABLE" = "FOUND") {
   const modernRows = manifests.filter(isModernManifestRow).filter((row) => {
     if (!selectedCohortId) return true;
     const code = exactCode(row.codeColisRaw);
@@ -444,6 +443,7 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
     else if (!cohort || cohort.state !== "RESOLVED") reason = "COHORTE_NON_RESOLUE";
     else if (paymentCohortAmbiguous) reason = "PAIEMENT_COHORTE_AMBIGU";
     else if (financial.state === "SOLDÉ") { state = "SOLDÉ"; reason = "L_ZERO_M_POSITIF"; }
+    else if (physicalSourceState !== "FOUND") reason = "STOCKAGE_V2_SOURCE_INDISPONIBLE";
     else if (financial.state === "PARTIEL" && historicallyReceived) { state = "PARTIEL"; reason = "DETTE_ACTUELLE_PARTIELLE"; }
     else if (financial.state === "NON PAYÉ" && historicallyReceived) { state = "NON PAYÉ"; reason = "DETTE_ACTUELLE_NON_PAYEE"; }
     else if ((financial.state === "PARTIEL" || financial.state === "NON PAYÉ") && !historicallyReceived) { state = "FUTURE DETTE"; reason = "JAMAIS_RECU_STOCKAGE_V2"; }
