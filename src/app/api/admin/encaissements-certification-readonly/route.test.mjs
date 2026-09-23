@@ -56,11 +56,21 @@ test("F_ZERO est rapproché depuis le Manifeste vers toutes les feuilles P1", ()
   assert.doesNotMatch(route, /fZeroAudit.*\.insert\(|fZeroAudit.*\.update\(|fZeroAudit.*\.upsert\(/s);
 });
 
-test("F_ZERO classe l'état final selon la dernière transaction chronologique", () => {
+test("F_ZERO conserve la chronologie P1 comme preuve auxiliaire", () => {
   assert.match(route, /const chronological = \[\.\.\.transactions\]\.sort/);
   assert.match(route, /const finalPayment = chronological\.at\(-1\)/);
-  assert.match(route, /else if \(finalIsSettled\) classification = "F_ZERO_P1_SOLDE_CERTIFIE"/);
-  assert.match(route, /else if \(finalIsPartial\) classification = "F_ZERO_P1_PARTIEL_CERTIFIE"/);
+  assert.match(route, /else if \(financial\.state === "SOLDÉ"\) classification = "F_ZERO_P1_SOLDE_CERTIFIE"/);
+  assert.match(route, /else if \(financial\.state === "PARTIEL"\) classification = "F_ZERO_P1_PARTIEL_CERTIFIE"/);
+});
+
+test("un classifieur F/L/M unique alimente F_ZERO et l'audit moderne", () => {
+  assert.match(route, /function classifyFinancialState\(\{ F, L, M \}/);
+  assert.match(route, /const financial = classifyFinancialState\(\{\s*F: parseAmount\(item\.row\.historicalCurrentPriceFieldRaw/);
+  assert.match(route, /const financial = classifyFinancialState\(\{ F: fUsd, L: lUsd, M: mUsd \}\)/);
+  assert.match(route, /if \(L === 0 && M > 0\)/);
+  assert.match(route, /if \(L > 0 && M === 0\)/);
+  assert.match(route, /if \(L > 0 && M > 0\)/);
+  assert.match(route, /financialState: financial\.state/);
 });
 
 test("audit inverse moderne part du Manifeste et couvre dynamiquement août 2026 → présent", () => {
