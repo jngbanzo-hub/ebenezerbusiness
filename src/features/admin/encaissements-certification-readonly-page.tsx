@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Container, GlassPanel } from "@/components/design-system";
 import { getAdminProfile } from "@/features/agent/auth";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
+import { authenticatedRead } from "@/features/auth/authenticated-fetch";
 
 type Report = {
   targets?: Array<{ sheet: string; code: string; state: string; reasons: string[]; matches: Array<{ date: string | null; weightKg: number | null; expectedUsd: number | null; paidUsd: number | null; remainingUsd: number | null; status: string; cohort: string | null }> }>;
@@ -21,6 +22,7 @@ type Report = {
 
 type ModernManifestRow = {
   code: string; exactPrefix: string; sourceSheet: string; date: string | null; year: number | null; cohort: string | null;
+  identityKey: string;
   weightKg: number | null; beneficiary: string | null; manifestF: unknown; manifestFState: string; manifestG: unknown; manifestM: unknown;
   expectedUsd: number | null; paidUsd: number; remainingUsd: number | null; state: string; reason: string;
   transactions: Array<{ amountUsd: number; status: string; date: string; collectingAgency: string; destination: string; paymentRequestId: string | null }>;
@@ -36,6 +38,7 @@ type ModernManifestAudit = {
 type DiagnosticRow = { code: string; date: string | null; weightKg: number | null; expectedUsd: number | null; paidUsd: number; remainingUsd: number | null; status: string; paymentAgency: string; destination: string; cohort: string | null; manifestSheet: string; manifestCode: string | null; manifestMatches: number; manifestDate: string | null; result: string; reason: string | null; firstFail: string | null; pipeline: Record<string, string>; manifestF: unknown; manifestFType: string | null; manifestFState: string | null; manifestM: unknown; manifestMType: string | null; manifestMPresent: boolean; manifestG: unknown; manifestL: unknown };
 
 type DiagnosticWithAgency = DiagnosticRow & { agency: string };
+type Snapshot = { capturedAt: string; report: Report };
 
 function parseMoney(value: unknown): number | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -64,9 +67,32 @@ function buildP1Totals(report: Report) {
   return totals;
 }
 
+function snapshotChanges(before: Snapshot, after: Snapshot) {
+  const rows = new Map((before.report.modernManifestAudit?.rows ?? []).map(row => [row.identityKey, row]));
+  const changes: string[] = [];
+  for (const row of after.report.modernManifestAudit?.rows ?? []) {
+    const previous = rows.get(row.identityKey);
+    if (!previous) { changes.push(`${row.identityKey}: nouvelle identité`); continue; }
+    if (previous.state !== row.state || previous.paidUsd !== row.paidUsd || previous.remainingUsd !== row.remainingUsd) {
+      changes.push(`${row.identityKey}: ${previous.state} → ${row.state} (${previous.paidUsd} → ${row.paidUsd} USD payé)`);
+    }
+  }
+  return changes;
+}
+
+async function readGlobalCertification() {
+  const auth = getSupabaseBrowserClient().auth;
+  const response = await authenticatedRead(auth, "/api/admin/encaissements-certification-readonly");
+  const payload = await response.json() as Report & { message?: string };
+  if (!response.ok) throw new Error(payload.message ?? "Certification indisponible.");
+  return payload;
+}
+
 export function EncaissementsCertificationReadonlyPage() {
   const [report, setReport] = useState<Report | null>(null);
   const [message, setMessage] = useState("Lecture read-only en cours…");
+  const [certifying, setCertifying] = useState(false);
+  const [snapshots, setSnapshots] = useState<{ t0: Snapshot; t1: Snapshot } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -75,9 +101,7 @@ export function EncaissementsCertificationReadonlyPage() {
         const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
         if (!session?.user || !session.access_token) throw new Error("Session Admin requise.");
         await getAdminProfile(session.user);
-        const response = await fetch("/api/admin/encaissements-certification-readonly", { headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store" });
-        const payload = await response.json() as Report & { message?: string };
-        if (!response.ok) throw new Error(payload.message ?? "Certification indisponible.");
+        const payload = await readGlobalCertification();
         if (active) { setReport(payload); setMessage(""); }
       } catch (cause) {
         if (active) setMessage(cause instanceof Error ? cause.message : "Certification indisponible.");
@@ -85,6 +109,18 @@ export function EncaissementsCertificationReadonlyPage() {
     })();
     return () => { active = false; };
   }, []);
+
+  async function runGlobalCertification() {
+    setCertifying(true); setMessage("");
+    try {
+      const t0 = { capturedAt: new Date().toISOString(), report: await readGlobalCertification() };
+      const t1 = { capturedAt: new Date().toISOString(), report: await readGlobalCertification() };
+      setReport(t1.report); setSnapshots({ t0, t1 });
+      setMessage("Certification globale read-only terminée. T1 est l’état final de cette lecture.");
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : "Certification indisponible.");
+    } finally { setCertifying(false); }
+  }
 
   const diagnostics = report ? buildDiagnostics(report) : [];
   const modernManifestAudit = report?.modernManifestAudit;
@@ -116,7 +152,9 @@ export function EncaissementsCertificationReadonlyPage() {
     <Link href="/admin" className="text-accent">← Retour à l’Administration</Link>
     <h1 className="mt-4 text-3xl font-semibold">Certification encaissements — façade temporaire</h1>
     <p className="mt-2 text-sm text-muted-foreground">Lecture Admin read-only des preuves G/L/M et des contrôles P1. Aucune donnée métier n’est modifiée.</p>
+    <button type="button" onClick={() => void runGlobalCertification()} disabled={certifying} className="mt-5 rounded-md border border-accent/40 px-4 py-2 text-sm font-medium text-accent disabled:cursor-not-allowed disabled:opacity-50">{certifying ? "Certification en cours…" : "Lancer la certification globale read-only"}</button>
     {message ? <p role="status" className="mt-5 text-amber-100">{message}</p> : null}
+    {snapshots ? <GlassPanel className="mt-5 p-5"><h2 className="text-xl">Snapshots de certification</h2><p className="mt-2 text-sm">T0 : {snapshots.t0.capturedAt}</p><p className="text-sm">T1 : {snapshots.t1.capturedAt}</p><p className="mt-2 text-xs text-muted-foreground">Évolutions T0→T1 : {snapshotChanges(snapshots.t0, snapshots.t1).length ? snapshotChanges(snapshots.t0, snapshots.t1).join(" · ") : "AUCUNE"}</p></GlassPanel> : null}
     {report ? <div className="mt-6 grid gap-5">
       <GlassPanel className="p-5"><h2 className="text-xl">Dossiers obligatoires</h2><div className="mt-3 grid gap-2">{(report.targets ?? []).map(target => <div key={`${target.sheet}:${target.code}`} className="rounded border border-white/10 p-3"><strong>{target.sheet} · {target.code}</strong><span className="ml-3">{target.state}</span>{target.reasons.length ? <p className="text-xs text-muted-foreground">{target.reasons.join(" · ")}</p> : null}{target.matches.map((match, index) => <p key={index} className="mt-2 text-xs text-muted-foreground">{match.date ?? "date inconnue"} · F {match.expectedUsd ?? "N/C"} · M {match.paidUsd ?? "N/C"} · L {match.remainingUsd ?? "N/C"} · G {match.status || "N/C"} · cohorte {match.cohort ?? "N/C"}</p>)}</div>)}</div></GlassPanel>
       <GlassPanel className="p-5"><h2 className="text-xl">Contrôles P1</h2><div className="mt-3 grid gap-2">{Object.entries(report.p1Checks ?? {}).map(([code, item]) => <div key={code} className="rounded border border-white/10 p-3"><strong>{code}</strong><span className="ml-3">{item.pass ? "PASS" : "FAIL"}</span><p className="text-sm">{item.totalPaidUsd} USD / {item.expectedUsd} USD · lignes attendues : {item.rowCount} · doublons : {item.duplicatePaymentIds}</p><p className="text-xs text-muted-foreground">{Object.entries(item.byAgency).map(([agency, amount]) => `${agency} ${amount} USD`).join(" · ")}</p><p className="mt-2 text-xs text-muted-foreground">{item.rows.map(row => `${row.agency} ${row.date} ${row.amount} USD${row.paymentRequestId ? ` · ${row.paymentRequestId}` : ""}`).join(" | ")}</p>{item.unexpectedRows.length ? <p className="mt-2 text-xs text-amber-100">Même code hors périmètre attendu (identité agence distincte) : {item.unexpectedRows.map(row => `${row.agency} ${row.amount} USD`).join(" | ")}</p> : null}</div>)}</div></GlassPanel>
