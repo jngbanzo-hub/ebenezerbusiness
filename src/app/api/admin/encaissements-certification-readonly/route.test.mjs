@@ -73,15 +73,14 @@ test("un classifieur F/L/M unique alimente F_ZERO et l'audit moderne", () => {
   assert.match(route, /financialState: financial\.state/);
 });
 
-test("audit inverse moderne part du Manifeste et couvre dynamiquement août 2026 → présent", () => {
-  assert.match(route, /const MODERN_START_DATE = "2026-08-01"/);
+test("audit inverse moderne part du Manifeste et couvre les cohortes du registre", () => {
   assert.match(route, /buildModernManifestAudit\(manifests, payments, physicalMatches(?:, cohortId)?(?:, physicalSourceState)?\)/);
   assert.match(route, /manifests\.filter\(isModernManifestRow\)/);
   assert.match(route, /const allByCode = new Map/);
   assert.match(route, /allByCode\.get\(code\) \?\? \[\]/);
   assert.match(route, /ModernFinancialState = "SOLDÉ" \| "PARTIEL" \| "NON PAYÉ" \| "FUTURE DETTE" \| "À VÉRIFIER" \| "CAS_ISOLE_PREUVE_PHYSIQUE_INSUFFISANTE"/);
-  assert.match(route, /ISOLATED_FIH_AT_AUGUST_CODES/);
-  assert.match(route, /PREUVE_PHYSIQUE_FIH_INSUFFISANTE/);
+  assert.match(route, /physicalByExactCode/);
+  assert.match(route, /PREUVES_PHYSIQUES_CONTRADICTOIRES_OU_AGENCE_DIFFERENTE/);
   assert.match(route, /currentlyPresent/);
   assert.match(route, /everPresent/);
   assert.match(route, /paymentCohortAmbiguous/);
@@ -109,12 +108,18 @@ test("une lecture physique indisponible reste À VÉRIFIER et ne devient jamais 
   assert.match(route, /physicalSourceState !== "FOUND"/);
 });
 
-test("les 13 identités FIH/AT août peuvent être isolées sans changer leur état financier", () => {
-  assert.match(route, /AT00226/);
-  assert.match(route, /AT18126/);
-  assert.match(route, /financial\.state === "PARTIEL" \|\| financial\.state === "NON PAYÉ"/);
+test("les identités physiques contradictoires peuvent être isolées sans changer leur état financier", () => {
+  assert.match(route, /physicalElsewhere\.length > 0/);
   assert.match(route, /financialState: financial\.state/);
   assert.match(route, /isolatedPhysicalRows/);
+});
+
+test("une source physique indisponible reste fail-closed et une absence exhaustive peut être future", () => {
+  assert.match(route, /physicalSourceState !== "FOUND"/);
+  assert.match(route, /JAMAIS_RECU_STOCKAGE_V2/);
+  assert.match(route, /physicalElsewhere\.length > 0/);
+  assert.doesNotMatch(route, /cohort\.definition\.id === "2026-08"/);
+  assert.doesNotMatch(route, /sourceSite === "FIH"/);
 });
 
 test("l'agrégation financière utilise l'état F/L/M unique et ne double-compte pas les créances", () => {
