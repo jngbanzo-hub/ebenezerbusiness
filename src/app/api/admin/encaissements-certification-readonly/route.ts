@@ -5,7 +5,7 @@ import type { ManifestShipperRow } from "@/features/admin/types";
 import { resolveCohort, withBilanCohorts } from "@/features/admin/bilan/cohort-registry";
 import { readBilanOriginMonths } from "@/server/bilan-origin-months";
 import { authorizeAdminRequest } from "@/server/admin-authorization";
-import { readAdminManifestRows } from "@/server/admin-manifest-sheets";
+import { readCanonicalPaymentManifestRows } from "@/server/admin-manifest-sheets";
 import { readAdminPayments } from "@/server/admin-payments-sheets";
 import { readExhaustivePages } from "@/server/exhaustive-pagination";
 
@@ -34,7 +34,7 @@ export async function GET(request: Request) {
 
     const [registry, manifests, rawPayments] = await Promise.all([
       readBilanOriginMonths(),
-      readAdminManifestRows(),
+      readCanonicalPaymentManifestRows(),
       readAdminPayments()
     ]);
     const payments = rawPayments.map(normalizePayment);
