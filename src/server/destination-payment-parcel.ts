@@ -129,7 +129,8 @@ export async function recordDestinationPayment(input: {
     canonicalWeightKg: parcel.poidsKg,
     canonicalExpectedAmount: parcel.montantAttendu,
     canonicalTotalPaid: parcel.montantDejaPaye,
-    ...(parcel.forwardingId && parcel.parcelId ? { parcelId: parcel.parcelId, forwardingId: parcel.forwardingId } : {})
+    parcelId: parcel.parcelId,
+    ...(parcel.forwardingId ? { forwardingId: parcel.forwardingId } : {})
   } as const;
   const body = JSON.stringify({
     codeColis: parcel.codeColis,
