@@ -382,14 +382,19 @@ function isModernManifestRow(row: ManifestShipperRow) {
   return Boolean(date && exactCode(row.codeColisRaw));
 }
 
+function isModernCohort(cohort: ReturnType<typeof resolveCohort>): cohort is Extract<ReturnType<typeof resolveCohort>, { definition: { year: number; month: number; id: string } }> {
+  if (!("definition" in cohort)) return false;
+  return cohort.definition.year * 12 + cohort.definition.month >= 2026 * 12 + 8;
+}
+
 function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[], physicalMatches: readonly PhysicalIdentity[] = [], selectedCohortId: string | null = null, physicalSourceState: "FOUND" | "UNAVAILABLE" = "FOUND") {
   const modernRows = manifests.filter(isModernManifestRow).filter((row) => {
-    if (!selectedCohortId) return true;
     const code = exactCode(row.codeColisRaw);
     const date = parseDate(row.dateRaw);
     const year = date ? Number(date.slice(0, 4)) : NaN;
     const cohort = Number.isFinite(year) ? resolveCohort(code, year) : null;
-    return cohort?.state === "RESOLVED" && cohort.definition.id === selectedCohortId;
+    if (!cohort || !isModernCohort(cohort)) return false;
+    return !selectedCohortId || cohort.definition.id === selectedCohortId;
   });
   const byIdentity = new Map<string, ManifestShipperRow[]>();
   modernRows.forEach((row) => {

@@ -122,6 +122,13 @@ test("une source physique indisponible reste fail-closed et une absence exhausti
   assert.doesNotMatch(route, /sourceSite === "FIH"/);
 });
 
+test("le périmètre moderne commence à août 2026 sans liste de mois codée en dur", () => {
+  assert.match(route, /isModernCohort/);
+  assert.match(route, /cohort\.definition\.year \* 12 \+ cohort\.definition\.month >= 2026 \* 12 \+ 8/);
+  assert.match(route, /!selectedCohortId \|\| cohort\.definition\.id === selectedCohortId/);
+  assert.doesNotMatch(route, /(?:AT|SE)\s*\+\s*(?:SE|OT|NV)/);
+});
+
 test("l'agrégation financière utilise l'état F/L/M unique et ne double-compte pas les créances", () => {
   assert.match(route, /financialState === "SOLDÉ"/);
   assert.match(route, /const canonicalState = \(state: ModernFinancialState\)/);
