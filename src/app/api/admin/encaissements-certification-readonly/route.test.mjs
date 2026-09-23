@@ -109,7 +109,7 @@ test("une lecture physique indisponible reste À VÉRIFIER et ne devient jamais 
 });
 
 test("les identités physiques contradictoires peuvent être isolées sans changer leur état financier", () => {
-  assert.match(route, /physicalElsewhere\.length > 0/);
+  assert.match(route, /physical\.length === 0 && physicalElsewhere\.length > 0/);
   assert.match(route, /financialState: financial\.state/);
   assert.match(route, /isolatedPhysicalRows/);
 });
@@ -117,7 +117,7 @@ test("les identités physiques contradictoires peuvent être isolées sans chang
 test("une source physique indisponible reste fail-closed et une absence exhaustive peut être future", () => {
   assert.match(route, /physicalSourceState !== "FOUND"/);
   assert.match(route, /JAMAIS_RECU_STOCKAGE_V2/);
-  assert.match(route, /physicalElsewhere\.length > 0/);
+  assert.match(route, /physical\.length === 0 && physicalElsewhere\.length > 0/);
   assert.doesNotMatch(route, /cohort\.definition\.id === "2026-08"/);
   assert.doesNotMatch(route, /sourceSite === "FIH"/);
 });
