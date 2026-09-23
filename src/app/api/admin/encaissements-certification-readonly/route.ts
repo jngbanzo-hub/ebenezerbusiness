@@ -448,7 +448,7 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
     else if (!cohort || cohort.state !== "RESOLVED") reason = "COHORTE_NON_RESOLUE";
     else if (paymentCohortAmbiguous) reason = "PAIEMENT_COHORTE_AMBIGU";
     else if (financial.state === "SOLDÉ") { state = "SOLDÉ"; reason = "L_ZERO_M_POSITIF"; }
-    else if ((financial.state === "PARTIEL" || financial.state === "NON PAYÉ") && physicalElsewhere.length > 0) {
+    else if ((financial.state === "PARTIEL" || financial.state === "NON PAYÉ") && physical.length === 0 && physicalElsewhere.length > 0) {
       state = "CAS_ISOLE_PREUVE_PHYSIQUE_INSUFFISANTE";
       reason = "PREUVES_PHYSIQUES_CONTRADICTOIRES_OU_AGENCE_DIFFERENTE";
     }
