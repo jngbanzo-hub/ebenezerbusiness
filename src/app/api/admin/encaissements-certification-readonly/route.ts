@@ -14,6 +14,10 @@ export const runtime = "nodejs";
 
 const HISTORICAL_PREFIXES = new Set(["MR", "AV", "MA", "JN", "JL"]);
 const MODERN_START_DATE = "2026-08-01";
+const ISOLATED_FIH_AT_AUGUST_CODES = new Set([
+  "AT00226", "AT00626", "AT04026", "AT11026", "AT15126", "AT15226", "AT15426",
+  "AT15826", "AT15926", "AT16926", "AT17626", "AT17726", "AT18126"
+]);
 const TARGETS = [
   ["KLZ", "MA00126"],
   ["KLZ", "JN00126"],
@@ -376,7 +380,7 @@ function buildModernReport(manifests: readonly ManifestShipperRow[], payments: r
   return byAgency;
 }
 
-type ModernFinancialState = "SOLDÉ" | "PARTIEL" | "NON PAYÉ" | "FUTURE DETTE" | "À VÉRIFIER";
+type ModernFinancialState = "SOLDÉ" | "PARTIEL" | "NON PAYÉ" | "FUTURE DETTE" | "À VÉRIFIER" | "CAS_ISOLE_PREUVE_PHYSIQUE_INSUFFISANTE";
 
 function isModernManifestRow(row: ManifestShipperRow) {
   const date = parseDate(row.dateRaw);
@@ -443,6 +447,10 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
     else if (!cohort || cohort.state !== "RESOLVED") reason = "COHORTE_NON_RESOLUE";
     else if (paymentCohortAmbiguous) reason = "PAIEMENT_COHORTE_AMBIGU";
     else if (financial.state === "SOLDÉ") { state = "SOLDÉ"; reason = "L_ZERO_M_POSITIF"; }
+    else if (row.sourceSite === "FIH" && cohort?.state === "RESOLVED" && cohort.definition.id === "2026-08" && ISOLATED_FIH_AT_AUGUST_CODES.has(code) && (financial.state === "PARTIEL" || financial.state === "NON PAYÉ")) {
+      state = "CAS_ISOLE_PREUVE_PHYSIQUE_INSUFFISANTE";
+      reason = "PREUVE_PHYSIQUE_FIH_INSUFFISANTE";
+    }
     else if (physicalSourceState !== "FOUND") reason = "STOCKAGE_V2_SOURCE_INDISPONIBLE";
     else if (financial.state === "PARTIEL" && historicallyReceived) { state = "PARTIEL"; reason = "DETTE_ACTUELLE_PARTIELLE"; }
     else if (financial.state === "NON PAYÉ" && historicallyReceived) { state = "NON PAYÉ"; reason = "DETTE_ACTUELLE_NON_PAYEE"; }
@@ -469,31 +477,34 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
     // F/L/M or derive a second financial state here.
     const canonicalState = (state: ModernFinancialState) => String(state).trim().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     const count = (state: ModernFinancialState) => agencyRows.filter((row) => canonicalState(row.state) === canonicalState(state)).length;
-    const certifiable = agencyRows.filter((row) => row.state === "SOLDÉ" || row.state === "PARTIEL" || row.state === "NON PAYÉ" || row.state === "FUTURE DETTE");
-    const settled = count("SOLDÉ");
-    const partial = count("PARTIEL");
-    const unpaidCurrent = count("NON PAYÉ");
+    const certifiable = agencyRows.filter((row) => row.state === "SOLDÉ" || row.state === "PARTIEL" || row.state === "NON PAYÉ" || row.state === "FUTURE DETTE" || row.state === "CAS_ISOLE_PREUVE_PHYSIQUE_INSUFFISANTE");
+    const settled = agencyRows.filter((row) => row.financialState === "SOLDÉ").length;
+    const partial = agencyRows.filter((row) => row.financialState === "PARTIEL").length;
+    const unpaidCurrent = agencyRows.filter((row) => row.financialState === "NON PAYÉ" && row.state !== "FUTURE DETTE" && row.state !== "CAS_ISOLE_PREUVE_PHYSIQUE_INSUFFISANTE").length;
     const futureDebts = count("FUTURE DETTE");
-    const unpaid = unpaidCurrent + futureDebts;
-    const toVerify = count("À VÉRIFIER");
+    const isolatedPhysical = count("CAS_ISOLE_PREUVE_PHYSIQUE_INSUFFISANTE");
+    const unpaid = unpaidCurrent + futureDebts + isolatedPhysical;
+    const toVerify = agencyRows.filter((row) => row.financialState === "À VÉRIFIER").length;
     const currentDebts = partial + unpaidCurrent;
     return [agency, {
-      total: agencyRows.length, settled, partial, unpaidCertified: unpaid, currentDebts, futureDebts, toVerify,
+      total: agencyRows.length, settled, partial, unpaidCertified: unpaid, currentDebts, futureDebts, isolatedPhysical, toVerify,
       certifiedPaidUsd: round(certifiable.reduce((sum, row) => sum + row.paidUsd, 0)),
       certifiedRemainingUsd: certifiable.every((row) => row.remainingUsd !== null) ? round(certifiable.reduce((sum, row) => sum + (row.remainingUsd ?? 0), 0)) : null,
       debts: agencyRows.filter((row) => row.state === "PARTIEL" || row.state === "NON PAYÉ"),
       futureDebtRows: agencyRows.filter((row) => row.state === "FUTURE DETTE"),
+      isolatedPhysicalRows: agencyRows.filter((row) => row.state === "CAS_ISOLE_PREUVE_PHYSIQUE_INSUFFISANTE"),
       conservation: {
         principal: agencyRows.length === settled + partial + unpaid + toVerify ? "PASS" : "FAIL",
-        receivables: currentDebts + futureDebts === partial + unpaid ? "PASS" : "FAIL"
+        receivables: currentDebts + futureDebts + isolatedPhysical === partial + unpaid ? "PASS" : "FAIL"
       }
     }];
   }));
   const cohorts = new Map<string, typeof rows>();
   rows.forEach((row) => { const key = row.cohort ?? `${row.exactPrefix}-${row.year ?? "UNKNOWN"}`; cohorts.set(key, [...(cohorts.get(key) ?? []), row]); });
   const cohortSummary = Object.fromEntries(Array.from(cohorts.entries()).map(([cohort, cohortRows]) => [cohort, {
-    total: cohortRows.length, settled: cohortRows.filter((row) => row.state === "SOLDÉ").length, partial: cohortRows.filter((row) => row.state === "PARTIEL").length,
-    unpaidCertified: cohortRows.filter((row) => row.state === "NON PAYÉ").length, toVerify: cohortRows.filter((row) => row.state === "À VÉRIFIER").length
+    total: cohortRows.length, settled: cohortRows.filter((row) => row.financialState === "SOLDÉ").length, partial: cohortRows.filter((row) => row.financialState === "PARTIEL").length,
+    unpaidCertified: cohortRows.filter((row) => row.financialState === "NON PAYÉ").length, toVerify: cohortRows.filter((row) => row.financialState === "À VÉRIFIER").length,
+    isolatedPhysical: cohortRows.filter((row) => row.state === "CAS_ISOLE_PREUVE_PHYSIQUE_INSUFFISANTE").length
   }]));
   return { startDate: MODERN_START_DATE, endDate: new Date().toISOString().slice(0, 10), activeCohortId: selectedCohortId, rows, byAgency, byCohort: cohortSummary, conservation: Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => { const item = byAgency[agency] as { total: number; settled: number; partial: number; unpaidCertified: number; currentDebts: number; futureDebts: number; toVerify: number; conservation: { principal: string; receivables: string } }; return [agency, item.conservation.principal === "PASS" && item.conservation.receivables === "PASS" ? "PASS" : "FAIL"]; })) };
 }
