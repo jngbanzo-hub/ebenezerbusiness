@@ -79,7 +79,9 @@ test("audit inverse moderne part du Manifeste et couvre dynamiquement août 2026
   assert.match(route, /manifests\.filter\(isModernManifestRow\)/);
   assert.match(route, /const allByCode = new Map/);
   assert.match(route, /allByCode\.get\(code\) \?\? \[\]/);
-  assert.match(route, /ModernFinancialState = "SOLDÉ" \| "PARTIEL" \| "NON PAYÉ" \| "FUTURE DETTE" \| "À VÉRIFIER"/);
+  assert.match(route, /ModernFinancialState = "SOLDÉ" \| "PARTIEL" \| "NON PAYÉ" \| "FUTURE DETTE" \| "À VÉRIFIER" \| "CAS_ISOLE_PREUVE_PHYSIQUE_INSUFFISANTE"/);
+  assert.match(route, /ISOLATED_FIH_AT_AUGUST_CODES/);
+  assert.match(route, /PREUVE_PHYSIQUE_FIH_INSUFFISANTE/);
   assert.match(route, /currentlyPresent/);
   assert.match(route, /everPresent/);
   assert.match(route, /paymentCohortAmbiguous/);
@@ -107,12 +109,20 @@ test("une lecture physique indisponible reste À VÉRIFIER et ne devient jamais 
   assert.match(route, /physicalSourceState !== "FOUND"/);
 });
 
+test("les 13 identités FIH/AT août peuvent être isolées sans changer leur état financier", () => {
+  assert.match(route, /AT00226/);
+  assert.match(route, /AT18126/);
+  assert.match(route, /financial\.state === "PARTIEL" \|\| financial\.state === "NON PAYÉ"/);
+  assert.match(route, /financialState: financial\.state/);
+  assert.match(route, /isolatedPhysicalRows/);
+});
+
 test("l'agrégation financière utilise l'état F/L/M unique et ne double-compte pas les créances", () => {
-  assert.match(route, /const settled = count\("SOLDÉ"\)/);
+  assert.match(route, /financialState === "SOLDÉ"/);
   assert.match(route, /const canonicalState = \(state: ModernFinancialState\)/);
   assert.match(route, /const currentDebts = partial \+ unpaidCurrent/);
   assert.match(route, /principal: agencyRows\.length === settled \+ partial \+ unpaid \+ toVerify/);
-  assert.match(route, /receivables: currentDebts \+ futureDebts === partial \+ unpaid/);
+  assert.match(route, /receivables: currentDebts \+ futureDebts \+ isolatedPhysical === partial \+ unpaid/);
   assert.doesNotMatch(route, /item\.total === item\.settled \+ item\.partial \+ item\.unpaidCertified \+ item\.futureDebts/);
 });
 
