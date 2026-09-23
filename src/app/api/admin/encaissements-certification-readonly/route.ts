@@ -13,11 +13,6 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const HISTORICAL_PREFIXES = new Set(["MR", "AV", "MA", "JN", "JL"]);
-const MODERN_START_DATE = "2026-08-01";
-const ISOLATED_FIH_AT_AUGUST_CODES = new Set([
-  "AT00226", "AT00626", "AT04026", "AT11026", "AT15126", "AT15226", "AT15426",
-  "AT15826", "AT15926", "AT16926", "AT17626", "AT17726", "AT18126"
-]);
 const TARGETS = [
   ["KLZ", "MA00126"],
   ["KLZ", "JN00126"],
@@ -384,7 +379,7 @@ type ModernFinancialState = "SOLDÉ" | "PARTIEL" | "NON PAYÉ" | "FUTURE DETTE" 
 
 function isModernManifestRow(row: ManifestShipperRow) {
   const date = parseDate(row.dateRaw);
-  return Boolean(date && date >= MODERN_START_DATE && exactCode(row.codeColisRaw));
+  return Boolean(date && exactCode(row.codeColisRaw));
 }
 
 function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], payments: readonly ReturnType<typeof normalizePayment>[], physicalMatches: readonly PhysicalIdentity[] = [], selectedCohortId: string | null = null, physicalSourceState: "FOUND" | "UNAVAILABLE" = "FOUND") {
@@ -411,8 +406,13 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
   payments.forEach((payment) => allByCode.set(payment.code, [...(allByCode.get(payment.code) ?? []), payment]));
   const physicalByCode = new Map<string, PhysicalIdentity[]>();
   physicalMatches.forEach((match) => {
-    const key = `${match.agency}:${match.trackingCode}`;
+    const key = `${match.agency.trim().toUpperCase()}:${exactCode(match.trackingCode)}`;
     physicalByCode.set(key, [...(physicalByCode.get(key) ?? []), match]);
+  });
+  const physicalByExactCode = new Map<string, PhysicalIdentity[]>();
+  physicalMatches.forEach((match) => {
+    const codeKey = exactCode(match.trackingCode);
+    physicalByExactCode.set(codeKey, [...(physicalByExactCode.get(codeKey) ?? []), match]);
   });
 
   const rows = Array.from(byIdentity.entries()).map(([key, matches]) => {
@@ -437,7 +437,8 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
     const finalPayment = chronological.at(-1) ?? null;
     const settled = financial.state === "SOLDÉ";
     const partial = financial.state === "PARTIEL";
-    const physical = physicalByCode.get(`${row.sourceSite}:${code}`) ?? [];
+    const physical = physicalByCode.get(`${row.sourceSite.trim().toUpperCase()}:${code}`) ?? [];
+    const physicalElsewhere = (physicalByExactCode.get(code) ?? []).filter((match) => match.agency.trim().toUpperCase() !== row.sourceSite.trim().toUpperCase());
     const currentlyPresent = physical.some((match) => match.currentlyPresent);
     const historicallyReceived = physical.some((match) => match.historicallyReceived || match.everPresent);
     const paymentCohortAmbiguous = Array.from(byIdentity.keys()).filter((identity) => identity.startsWith(`${row.sourceSite}:`) && identity.endsWith(`:${code}`)).length > 1 && transactions.length > 0;
@@ -447,9 +448,9 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
     else if (!cohort || cohort.state !== "RESOLVED") reason = "COHORTE_NON_RESOLUE";
     else if (paymentCohortAmbiguous) reason = "PAIEMENT_COHORTE_AMBIGU";
     else if (financial.state === "SOLDÉ") { state = "SOLDÉ"; reason = "L_ZERO_M_POSITIF"; }
-    else if (row.sourceSite === "FIH" && cohort?.state === "RESOLVED" && cohort.definition.id === "2026-08" && ISOLATED_FIH_AT_AUGUST_CODES.has(code) && (financial.state === "PARTIEL" || financial.state === "NON PAYÉ")) {
+    else if ((financial.state === "PARTIEL" || financial.state === "NON PAYÉ") && physicalElsewhere.length > 0) {
       state = "CAS_ISOLE_PREUVE_PHYSIQUE_INSUFFISANTE";
-      reason = "PREUVE_PHYSIQUE_FIH_INSUFFISANTE";
+      reason = "PREUVES_PHYSIQUES_CONTRADICTOIRES_OU_AGENCE_DIFFERENTE";
     }
     else if (physicalSourceState !== "FOUND") reason = "STOCKAGE_V2_SOURCE_INDISPONIBLE";
     else if (financial.state === "PARTIEL" && historicallyReceived) { state = "PARTIEL"; reason = "DETTE_ACTUELLE_PARTIELLE"; }
@@ -506,7 +507,7 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
     unpaidCertified: cohortRows.filter((row) => row.financialState === "NON PAYÉ").length, toVerify: cohortRows.filter((row) => row.financialState === "À VÉRIFIER").length,
     isolatedPhysical: cohortRows.filter((row) => row.state === "CAS_ISOLE_PREUVE_PHYSIQUE_INSUFFISANTE").length
   }]));
-  return { startDate: MODERN_START_DATE, endDate: new Date().toISOString().slice(0, 10), activeCohortId: selectedCohortId, rows, byAgency, byCohort: cohortSummary, conservation: Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => { const item = byAgency[agency] as { total: number; settled: number; partial: number; unpaidCertified: number; currentDebts: number; futureDebts: number; toVerify: number; conservation: { principal: string; receivables: string } }; return [agency, item.conservation.principal === "PASS" && item.conservation.receivables === "PASS" ? "PASS" : "FAIL"]; })) };
+  return { startDate: rows.map((row) => row.date).filter((date): date is string => Boolean(date)).sort()[0] ?? null, endDate: new Date().toISOString().slice(0, 10), activeCohortId: selectedCohortId, rows, byAgency, byCohort: cohortSummary, conservation: Object.fromEntries((['FIH', 'LSHI', 'KLZ'] as const).map((agency) => { const item = byAgency[agency] as { total: number; settled: number; partial: number; unpaidCertified: number; currentDebts: number; futureDebts: number; toVerify: number; conservation: { principal: string; receivables: string } }; return [agency, item.conservation.principal === "PASS" && item.conservation.receivables === "PASS" ? "PASS" : "FAIL"]; })) };
 }
 
 function deduplicatePayments(payments: readonly ReturnType<typeof normalizePayment>[]) {
