@@ -224,6 +224,11 @@ function buildFZeroAudit(manifests: readonly ManifestShipperRow[], payments: rea
       const item = items[0];
       const code = key.slice(agency.length + 1);
       const cohort = resolveCohort(code, item.year);
+      const financial = classifyFinancialState({
+        F: parseAmount(item.row.historicalCurrentPriceFieldRaw ?? item.row.montantAttenduRaw),
+        L: parseAmount(item.row.historicalRemainingAmountRaw),
+        M: parseAmount(item.row.historicalPaidAmountRaw)
+      });
       const allPayments = (paymentIndex.get(code) ?? []).filter((payment) => payment.destination === agency);
       const seen = new Set<string>();
       const duplicateIds = new Set<string>();
@@ -235,17 +240,15 @@ function buildFZeroAudit(manifests: readonly ManifestShipperRow[], payments: rea
       const totalPaidUsd = round(transactions.reduce((sum, payment) => sum + payment.amount, 0));
       const chronological = [...transactions].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
       const finalPayment = chronological.at(-1) ?? null;
-      const finalIsPartial = Boolean(finalPayment && (/PARTIEL/i.test(finalPayment.status) || (finalPayment.remainingAmount ?? 0) > 0));
-      const finalIsSettled = Boolean(finalPayment && isSettledPayment(finalPayment) && (finalPayment.remainingAmount ?? 0) <= 0);
       const identityValid = items.length === 1 && cohort?.state === "RESOLVED";
       let classification: FZeroClassification = "F_ZERO_P1_ABSENT";
       if (duplicateIds.size) classification = "F_ZERO_P1_DUPLICATION_A_CONTROLER";
       else if (!transactions.length) classification = "F_ZERO_P1_ABSENT";
       else if (!identityValid) classification = "F_ZERO_P1_TROUVE_IDENTITE_AMBIGUE";
-      else if (finalIsSettled) classification = "F_ZERO_P1_SOLDE_CERTIFIE";
-      else if (finalIsPartial) classification = "F_ZERO_P1_PARTIEL_CERTIFIE";
+      else if (financial.state === "SOLDÉ") classification = "F_ZERO_P1_SOLDE_CERTIFIE";
+      else if (financial.state === "PARTIEL") classification = "F_ZERO_P1_PARTIEL_CERTIFIE";
       else classification = "F_ZERO_P1_TROUVE_IDENTITE_AMBIGUE";
-      return { code, destination: agency, cohort: cohort?.state === "RESOLVED" ? cohort.definition.id : null, weightKg: parseAmount(item.row.poidsRaw), manifestF: item.row.historicalCurrentPriceFieldRaw ?? item.row.montantAttenduRaw ?? null, manifestG: item.row.historicalPaymentStatusRaw ?? null, manifestL: item.row.historicalRemainingAmountRaw ?? null, transactions: transactions.map((payment) => ({ amountUsd: payment.amount, status: payment.status, date: payment.dateKey, agency: payment.agency, destination: payment.destination, paymentRequestId: payment.paymentRequestId })), totalPaidUsd, classification, duplicateIds: Array.from(duplicateIds) };
+      return { code, destination: agency, cohort: cohort?.state === "RESOLVED" ? cohort.definition.id : null, weightKg: parseAmount(item.row.poidsRaw), manifestF: item.row.historicalCurrentPriceFieldRaw ?? item.row.montantAttenduRaw ?? null, manifestG: item.row.historicalPaymentStatusRaw ?? null, manifestL: item.row.historicalRemainingAmountRaw ?? null, manifestM: item.row.historicalPaidAmountRaw ?? null, financialState: financial.state, commercialPrice: financial.commercialPrice, paid: financial.paid, remaining: financial.remaining, transactions: transactions.map((payment) => ({ amountUsd: payment.amount, status: payment.status, date: payment.dateKey, agency: payment.agency, destination: payment.destination, paymentRequestId: payment.paymentRequestId })), totalPaidUsd, classification, duplicateIds: Array.from(duplicateIds) };
     });
     const count = (classification: FZeroClassification) => rows.filter((row) => row.classification === classification).length;
     return [agency, { total: rows.length, withP1: rows.filter((row) => row.transactions.length).length, settled: count("F_ZERO_P1_SOLDE_CERTIFIE"), partial: count("F_ZERO_P1_PARTIEL_CERTIFIE"), ambiguous: count("F_ZERO_P1_TROUVE_IDENTITE_AMBIGUE"), absent: count("F_ZERO_P1_ABSENT"), duplicates: count("F_ZERO_P1_DUPLICATION_A_CONTROLER"), forwarding: count("F_ZERO_FORWARDING_A_DESAMBIGUISER"), rows }];
@@ -419,17 +422,18 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
     const lUsd = parseAmount(row.historicalRemainingAmountRaw);
     const mUsd = parseAmount(row.historicalPaidAmountRaw);
     const fUsd = fState === "F_POSITIF" ? parseAmount(row.historicalCurrentPriceFieldRaw ?? row.montantAttenduRaw) : null;
-    const remainingUsd = lUsd !== null ? Math.max(0, lUsd) : fUsd !== null && fUsd > 0 ? fUsd : null;
+    const financial = classifyFinancialState({ F: fUsd, L: lUsd, M: mUsd });
+    const remainingUsd = financial.remaining;
     const transactions = deduplicatePayments((allByCode.get(code) ?? []).filter((payment) => payment.destination === row.sourceSite));
     const totalPaidUsd = round(transactions.reduce((sum, payment) => sum + payment.amount, 0));
     // F/L/M in the Manifest are the canonical financial evidence. P1 is
     // retained as supporting evidence only and never overrides M or L.
-    const paidEvidenceUsd = mUsd;
-    const commercialUsd = lUsd !== null && mUsd !== null ? round(lUsd + mUsd) : null;
+    const paidEvidenceUsd = financial.paid;
+    const commercialUsd = financial.commercialPrice;
     const chronological = [...transactions].sort((a, b) => `${a.dateKey}:${a.id}`.localeCompare(`${b.dateKey}:${b.id}`));
     const finalPayment = chronological.at(-1) ?? null;
-    const settled = remainingUsd === 0 && paidEvidenceUsd !== null && paidEvidenceUsd > 0;
-    const partial = paidEvidenceUsd !== null && paidEvidenceUsd > 0 && remainingUsd !== null && remainingUsd > 0;
+    const settled = financial.state === "SOLDÉ";
+    const partial = financial.state === "PARTIEL";
     const physical = physicalByCode.get(`${row.sourceSite}:${code}`) ?? [];
     const currentlyPresent = physical.some((match) => match.currentlyPresent);
     const historicallyReceived = physical.some((match) => match.historicallyReceived || match.everPresent);
@@ -439,16 +443,16 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
     if (matches.length !== 1) reason = "IDENTITE_MANIFESTE_DUPLIQUEE";
     else if (!cohort || cohort.state !== "RESOLVED") reason = "COHORTE_NON_RESOLUE";
     else if (paymentCohortAmbiguous) reason = "PAIEMENT_COHORTE_AMBIGU";
-    else if (settled) { state = "SOLDÉ"; reason = "RESTE_F_ZERO_L_ZERO"; }
-    else if (remainingUsd !== null && remainingUsd > 0 && historicallyReceived && partial) { state = "PARTIEL"; reason = "DETTE_ACTUELLE_PARTIELLE"; }
-    else if (remainingUsd !== null && remainingUsd > 0 && historicallyReceived) { state = "NON PAYÉ"; reason = "DETTE_ACTUELLE_NON_PAYEE"; }
-    else if (remainingUsd !== null && remainingUsd > 0 && !historicallyReceived) { state = "FUTURE DETTE"; reason = "JAMAIS_RECU_STOCKAGE_V2"; }
-    else if (remainingUsd === null) reason = "F_L_M_NON_RESOLUS";
+    else if (financial.state === "SOLDÉ") { state = "SOLDÉ"; reason = "L_ZERO_M_POSITIF"; }
+    else if (financial.state === "PARTIEL" && historicallyReceived) { state = "PARTIEL"; reason = "DETTE_ACTUELLE_PARTIELLE"; }
+    else if (financial.state === "NON PAYÉ" && historicallyReceived) { state = "NON PAYÉ"; reason = "DETTE_ACTUELLE_NON_PAYEE"; }
+    else if ((financial.state === "PARTIEL" || financial.state === "NON PAYÉ") && !historicallyReceived) { state = "FUTURE DETTE"; reason = "JAMAIS_RECU_STOCKAGE_V2"; }
+    else if (financial.state === "À VÉRIFIER") reason = "F_L_M_NON_RESOLUS";
     return {
       code, exactPrefix: code.match(/^[A-Z]+/)?.[0] ?? "", sourceSheet: row.sourceSite, date, year: Number.isFinite(year) ? year : null,
       cohort: cohort?.state === "RESOLVED" ? cohort.definition.id : null, weightKg: parseAmount(row.poidsRaw), sender: row.expediteurRaw || null, beneficiary: row.beneficiaireRaw || null,
       manifestF: row.historicalCurrentPriceFieldRaw ?? row.montantAttenduRaw ?? null, manifestFState: fState, manifestG: row.historicalPaymentStatusRaw ?? null,
-      manifestL: row.historicalRemainingAmountRaw ?? null, manifestM: row.historicalPaidAmountRaw ?? null, expectedUsd: commercialUsd, paidUsd: paidEvidenceUsd ?? 0, remainingUsd,
+      manifestL: row.historicalRemainingAmountRaw ?? null, manifestM: row.historicalPaidAmountRaw ?? null, financialState: financial.state, expectedUsd: commercialUsd, paidUsd: paidEvidenceUsd ?? 0, remainingUsd,
       state, reason, transactions: transactions.map((payment) => ({ amountUsd: payment.amount, status: payment.status, date: payment.dateKey, collectingAgency: payment.agency, destination: payment.destination, paymentRequestId: payment.paymentRequestId })),
       lastPaymentDate: finalPayment?.dateKey ?? null, lastCollectingAgency: finalPayment?.agency ?? null,
       identityKey: `${row.sourceSite}:${cohort?.state === "RESOLVED" ? cohort.definition.id : year}:${code}`,
@@ -582,6 +586,18 @@ function classifyManifestF(value: unknown) {
   if (parsed !== null && parsed > 0) return "F_POSITIF";
   if (parsed === 0) return "F_ZERO";
   return "F_NON_NUMERIQUE";
+}
+type FinancialState = "SOLDÉ" | "PARTIEL" | "NON PAYÉ" | "À VÉRIFIER";
+type FinancialClassification = { state: FinancialState; commercialPrice: number | null; paid: number | null; remaining: number | null };
+function classifyFinancialState({ F, L, M }: { F: number | null; L: number | null; M: number | null }): FinancialClassification {
+  // F is deliberately accepted for traceability, but L/M are the canonical
+  // financial evidence. A numeric zero is valid and remains distinct from null.
+  void F;
+  if (L === null || M === null) return { state: "À VÉRIFIER", commercialPrice: null, paid: M, remaining: L };
+  if (L === 0 && M > 0) return { state: "SOLDÉ", commercialPrice: round(L + M), paid: M, remaining: 0 };
+  if (L > 0 && M === 0) return { state: "NON PAYÉ", commercialPrice: round(L), paid: 0, remaining: L };
+  if (L > 0 && M > 0) return { state: "PARTIEL", commercialPrice: round(L + M), paid: M, remaining: L };
+  return { state: "À VÉRIFIER", commercialPrice: null, paid: M, remaining: L };
 }
 function parseAmount(value: unknown): number | null { const text = String(value ?? "").replace(/\s/g, "").replace(",", ".").replace(/[^\d.-]/g, ""); const number = Number(text); return text && Number.isFinite(number) ? number : null; }
 function parseFirstAmount(...values: unknown[]) { for (const value of values) { const parsed = parseAmount(value); if (parsed !== null) return parsed; } return null; }
