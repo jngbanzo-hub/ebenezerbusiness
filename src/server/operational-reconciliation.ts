@@ -5,6 +5,7 @@ export type OperationalStatus = "NOUVEAU" | "A_VERIFIER" | "CONFIRME" | "RESOLU"
 export type OperationalCategory = "CAISSE" | "ENCAISSEMENTS" | "STOCKAGE" | "ORCHESTRATION" | "CONTINUITE" | "DEPENSES" | "PERFORMANCE" | "PAGINATION" | "DOUBLON";
 export type OperationalTemporalClass = "HISTORIQUE" | "NOUVELLE_APRES_PROTECTIONS";
 export const OPERATIONAL_PROTECTIONS_DEPLOYED_AT = "2026-09-12T02:39:40.000Z";
+const EFFECTLESS_PENDING_INFORMATION_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 export type OperationalAnomaly = {
   id: string;
@@ -123,7 +124,13 @@ export function reconcileOperations(input: {
     }
     if (stage === "COMPLETED") continue;
     if (stage === "PENDING" && !hasCanonicalPayment && !row.lastError) {
-      information.push({ ...anomaly(row, "ORCHESTRATION", "ORCHESTRATION_EN_ATTENTE_LEGITIME", null, "Aucune action : aucun paiement canonique n’existe pour cette tentative.", input.now, "INFO"), status: "INFORMATION" });
+      const createdAt = new Date(row.createdAt).getTime();
+      const canonicallyAbsent = canonicalStatus === "ABSENT" || (canonicalStatus === undefined && available.payments);
+      const effectsAbsent = available.cash && available.storage && !row.cashEventId && !row.storageEventId
+        && effectsFor(row.requestId, row, cash).length === 0 && effectsFor(row.requestId, row, storage).length === 0;
+      const expired = row.state === "PENDING" && !row.paymentCreated && canonicallyAbsent && effectsAbsent
+        && Number.isFinite(createdAt) && input.now.getTime() - createdAt > EFFECTLESS_PENDING_INFORMATION_RETENTION_MS;
+      if (!expired) information.push({ ...anomaly(row, "ORCHESTRATION", "ORCHESTRATION_EN_ATTENTE_LEGITIME", null, "Aucune action : aucun paiement canonique n’existe pour cette tentative.", input.now, "INFO"), status: "INFORMATION" });
       continue;
     }
     if (stage === "ATTENTION" || (hasCanonicalPayment && ageSeconds(row.updatedAt, input.now) >= 30) || age >= pendingMinutes) {

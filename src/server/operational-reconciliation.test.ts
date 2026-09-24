@@ -63,6 +63,34 @@ test("un PENDING sans paiement canonique devient une information légitime", () 
   assert.equal(result.metrics.legitimatePending, 1);
 });
 
+test("une tentative PENDING sans effet reste visible jusqu'à 24 h, puis expire de l'affichage", () => {
+  const requestId = "7d292f89-55bd-4d79-8101-0c7ebf98df29";
+  const createdAt = "2026-09-23T18:41:54.431Z";
+  const pending = { ...orchestration, requestId, trackingCode: "SE33826", paymentCreated: false, createdAt, updatedAt: createdAt };
+  const input = { payments: [], cash: [], storage: [], orchestrations: [pending], closures: [], canonicalPaymentStatus: new Map([[requestId, "ABSENT" as const]]) };
+  assert.equal(reconcileOperations({ ...input, now: new Date("2026-09-24T18:41:54.431Z") }).information.length, 1);
+  const expired = reconcileOperations({ ...input, now: new Date("2026-09-24T18:41:54.432Z") });
+  assert.equal(expired.information.length, 0);
+  assert.equal(expired.anomalies.length, 0);
+});
+
+test("la rétention ne masque jamais un paiement, un effet Caisse/Stockage ou une lecture incertaine", () => {
+  const createdAt = "2026-09-23T00:00:00Z";
+  const pending = { ...orchestration, paymentCreated: false, createdAt, updatedAt: createdAt };
+  const old = new Date("2026-09-25T00:00:00Z");
+  const base = { payments: [], cash: [], storage: [], orchestrations: [pending], closures: [], now: old };
+  const payment = { requestId: "r1", trackingCode: "AT00126", agency: "LSHI" as const, amountUsd: 30, occurredAt: createdAt };
+  assert.ok(reconcileOperations({ ...base, payments: [payment] }).anomalies.some((row) => row.type === "ORCHESTRATION_PENDING_TROP_LONGTEMPS"));
+  const cash = { ...payment, eventId: "cash-1" };
+  assert.ok(reconcileOperations({ ...base, cash: [cash] }).anomalies.some((row) => row.type === "CASH_EVENT_SANS_PAIEMENT_CANONIQUE"));
+  const storage = { requestId: "r1", eventId: "storage-1", agency: "LSHI" as const, trackingCode: "AT00126", weightKg: 3, occurredAt: createdAt };
+  assert.ok(reconcileOperations({ ...base, storage: [storage] }).anomalies.some((row) => row.type === "SORTIE_SANS_PAIEMENT_CANONIQUE"));
+  assert.ok(reconcileOperations({ ...base, availability: { payments: false } }).anomalies.some((row) => row.type === "PAIEMENT_CANONIQUE_NON_CERTIFIE"));
+  assert.equal(reconcileOperations({ ...base, availability: { cash: false } }).information.length, 1);
+  assert.equal(reconcileOperations({ ...base, availability: { storage: false } }).information.length, 1);
+  assert.equal(reconcileOperations({ ...base, canonicalPaymentStatus: new Map([["r1", "UNKNOWN" as const]]) }).information.length, 0);
+});
+
 test("le compteur distingue alertes techniques, dossiers réels et période", () => {
   const payment = { requestId: "r1", trackingCode: "AT00126", agency: "LSHI" as const, amountUsd: 30, occurredAt: "2026-09-10T10:00:00Z", parcelId: "parcel-1" };
   const result = reconcileOperations({ payments: [payment], cash: [], storage: [], orchestrations: [{ ...orchestration, parcelId: "parcel-1", updatedAt: payment.occurredAt }], closures: [], now, protectionsDeployedAt: new Date("2026-09-12T02:39:40Z") });
