@@ -52,6 +52,52 @@ export class CashDashboardSource {
     });
   }
 
+  async readDirectionBalances(businessDate: string): Promise<Readonly<Record<CashAgency, Readonly<{ openingBalance: number; currentBalance: number }>>>> {
+    const [accounts, opening, daily, ...closures] = await Promise.all([
+      this.select("cash_accounts", "agency,status"),
+      this.select("cash_events", "agency,amount", { event_type: "OPENING_BALANCE_RECORDED" }),
+      readAllCashLedgerPages(async (from, to) => {
+        const { data, error } = await this.client.schema("public").from("cash_current_day")
+          .select("agency,business_date,payments_total,expenses_total,corrections_net")
+          .lte("business_date", businessDate).order("business_date", { ascending: true }).order("agency", { ascending: true }).range(from, to);
+        if (error || !Array.isArray(data)) throw new CashDashboardSourceError("CASH_READ_FAILED");
+        return data as Record<string, unknown>[];
+      }, (row) => `${text(row.agency)}:${text(row.business_date)}`),
+      ...CASH_AGENCIES.map(async (agency) => {
+        const { data, error } = await this.client.schema("public").from("cash_daily_closures")
+          .select("business_date,closing_balance").eq("agency", agency).eq("status", "CLOSED")
+          .lt("business_date", businessDate).order("business_date", { ascending: false }).order("version", { ascending: false }).limit(1);
+        if (error || !Array.isArray(data)) throw new CashDashboardSourceError("CASH_READ_FAILED");
+        return data[0] as Record<string, unknown> | undefined;
+      })
+    ]);
+    return Object.freeze(Object.fromEntries(CASH_AGENCIES.map((agency, index) => {
+      const accountRows = accounts.filter((row) => row.agency === agency);
+      if (accountRows.length !== 1) throw new CashDashboardSourceError("CASH_ACCOUNT_NOT_FOUND");
+      accountStatus(accountRows[0].status);
+      const previous = closures[index];
+      const previousClosedDay = previous ? { businessDate: text(previous.business_date), closingBalance: money(previous.closing_balance) } : undefined;
+      const firstOpening = opening.find((row) => row.agency === agency);
+      const initialBalance = firstOpening ? money(firstOpening.amount) : null;
+      const days = daily.filter((row) => row.agency === agency);
+      const ledger = days.flatMap((row) => {
+        const date = text(row.business_date);
+        const corrections = money(row.corrections_net);
+        return [
+          { eventType: "PAYMENT_CREDIT_RECORDED", businessDate: date, amount: money(row.payments_total), direction: "CREDIT" as const },
+          { eventType: "EXPENSE_DEBIT_RECORDED", businessDate: date, amount: money(row.expenses_total), direction: "DEBIT" as const },
+          { eventType: "ADMIN_ADJUSTMENT_RECORDED", businessDate: date, amount: Math.abs(corrections), direction: corrections >= 0 ? "CREDIT" as const : "DEBIT" as const }
+        ];
+      });
+      const openingBalance = resolveCashOpeningBalance({ businessDate, initialBalance, previousClosedDay, ledger });
+      const current = days.find((row) => row.business_date === businessDate);
+      const paymentsTotal = money(current?.payments_total ?? 0);
+      const expensesTotal = money(current?.expenses_total ?? 0);
+      const correctionsNet = money(current?.corrections_net ?? 0);
+      return [agency, Object.freeze({ openingBalance, currentBalance: cents(openingBalance + paymentsTotal - expensesTotal + correctionsNet) })];
+    }))) as Readonly<Record<CashAgency, Readonly<{ openingBalance: number; currentBalance: number }>>>;
+  }
+
   private async readAgency(agency: CashAgency, businessDate: string): Promise<CashDashboard> {
     const [accounts, currentDay, totals, agents, history, anomalies, opening, ledger] = await Promise.all([
       this.select("cash_accounts", "agency,currency,status", { agency }),

@@ -6,7 +6,7 @@ const source = readFileSync(new URL("./direction-summary.ts", import.meta.url), 
 const auth = readFileSync(new URL("./direction-summary-auth.ts", import.meta.url), "utf8");
 
 test("le résumé réutilise exclusivement les quatre sources officielles", () => {
-  assert.match(source, /createServerCashDashboardSource\(\)\.readAdmin\(businessDate\)/);
+  assert.match(source, /createServerCashDashboardSource\(\)\.readDirectionBalances\(businessDate\)/);
   assert.match(source, /readAdminExpenses/);
   assert.match(source, /buildDailyAgencyReport/);
   assert.match(source, /buildAdminBilan\(query, SERVICE_ACTOR\)/);

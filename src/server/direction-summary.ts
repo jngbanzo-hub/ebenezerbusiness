@@ -89,11 +89,9 @@ export async function readDirectionSummary(now = new Date()): Promise<DirectionS
 }
 
 async function readCash(businessDate: string) {
-  const dashboard = await createServerCashDashboardSource().readAdmin(businessDate);
+  const balances = await createServerCashDashboardSource().readDirectionBalances(businessDate);
   return Object.fromEntries(CASH_AGENCIES.map((agency) => {
-    const row = dashboard.agencies.find((item) => item.agency === agency);
-    if (!row) throw new Error("CASH_AGENCY_MISSING");
-    return [agency, Object.freeze({ status: "AVAILABLE" as const, balance: row.currentBalance, currency: "USD" as const })];
+    return [agency, Object.freeze({ status: "AVAILABLE" as const, balance: balances[agency].currentBalance, currency: "USD" as const })];
   })) as Record<(typeof CASH_AGENCIES)[number], CashValue>;
 }
 
