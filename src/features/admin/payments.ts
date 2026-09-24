@@ -10,6 +10,7 @@ import {
 } from "@/features/admin/types";
 import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { authenticatedRead } from "@/features/auth/authenticated-fetch";
+import { parsePaymentSheetDate } from "@/features/admin/payment-sheet-date";
 
 const EMPTY_STATS: AdminPaymentStats = {
   montantTotal: 0,
@@ -165,7 +166,7 @@ export function parseAdminPaymentRow(
     return null;
   }
 
-  const parsedDate = parseSheetDate(row[0]);
+  const parsedDate = parsePaymentSheetDate(row[0]);
   const codeColis = normalizeText(row[1]).toUpperCase();
   const montantPaye = parseNumber(row[4]);
   const agenceEncaissement = normalizeSite(row[6]);
@@ -222,72 +223,10 @@ export function formatAdminDateTime(value: string) {
   }
 
   return new Intl.DateTimeFormat("fr-FR", {
-    timeZone: "UTC",
+    timeZone: "Africa/Porto-Novo",
     dateStyle: "short",
     timeStyle: "short"
   }).format(date);
-}
-
-function parseSheetDate(value: unknown): { dateTime: string; dateKey: string } | null {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    const milliseconds = Math.round((value - 25569) * 86_400_000);
-    const date = new Date(milliseconds);
-
-    if (Number.isNaN(date.getTime())) {
-      return null;
-    }
-
-    return {
-      dateTime: date.toISOString(),
-      dateKey: date.toISOString().slice(0, 10)
-    };
-  }
-
-  if (typeof value !== "string" || !value.trim()) {
-    return null;
-  }
-
-  const normalized = value.trim();
-  const frenchDate = normalized.match(
-    /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/
-  );
-
-  if (frenchDate) {
-    const [, day, month, year, hour = "0", minute = "0", second = "0"] = frenchDate;
-    const date = new Date(
-      Date.UTC(
-        Number(year),
-        Number(month) - 1,
-        Number(day),
-        Number(hour),
-        Number(minute),
-        Number(second)
-      )
-    );
-
-    if (
-      date.getUTCFullYear() !== Number(year) ||
-      date.getUTCMonth() !== Number(month) - 1 ||
-      date.getUTCDate() !== Number(day)
-    ) {
-      return null;
-    }
-
-    return {
-      dateTime: date.toISOString(),
-      dateKey: date.toISOString().slice(0, 10)
-    };
-  }
-
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-
-  return {
-    dateTime: date.toISOString(),
-    dateKey: date.toISOString().slice(0, 10)
-  };
 }
 
 function normalizeSite(value: unknown): AdminSite | null {
