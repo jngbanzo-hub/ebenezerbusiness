@@ -10,7 +10,7 @@ import { withBilanCohorts } from "@/features/admin/bilan/cohort-registry";
 import { readBilanOriginMonths } from "@/server/bilan-origin-months";
 import type { BilanApiQuery } from "@/features/admin/bilan/bilan-api-query";
 import { resolveDirectionScope } from "@/server/direction-summary-scope";
-import { observeDirectionSource } from "@/server/direction-summary-diagnostics";
+import { DIRECTION_EXPENSES_TODAY_TIMEOUT_MS, observeDirectionSource } from "@/server/direction-summary-diagnostics";
 
 const CASH_AGENCIES = ["FIH", "LSHI", "KLZ"] as const;
 const SERVICE_ACTOR: Extract<AdminAuthorizationResult, { authorized: true }> = Object.freeze({
@@ -56,7 +56,7 @@ export async function readDirectionSummary(now = new Date()): Promise<DirectionS
 
   const [cash, expenses, profit, storage] = await Promise.all([
     observeDirectionSource("CAISSE", () => readCash(businessDate)),
-    observeDirectionSource("DEPENSES", () => readExpenses(businessDate)),
+    observeDirectionSource("DEPENSES", () => readExpenses(businessDate), { timeoutMs: DIRECTION_EXPENSES_TODAY_TIMEOUT_MS }),
     observeDirectionSource("BENEFICE", async () => {
       const definitions = await readBilanOriginMonths();
       scope = resolveDirectionScope(businessDate, definitions);

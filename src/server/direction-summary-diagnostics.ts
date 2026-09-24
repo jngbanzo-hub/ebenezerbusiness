@@ -1,4 +1,5 @@
 export const DIRECTION_SOURCE_TIMEOUT_MS = 4_500;
+export const DIRECTION_EXPENSES_TODAY_TIMEOUT_MS = 6_000;
 export const DIRECTION_SOURCES = ["CAISSE", "DEPENSES", "STOCK", "BENEFICE"] as const;
 export type DirectionSource = (typeof DIRECTION_SOURCES)[number];
 
