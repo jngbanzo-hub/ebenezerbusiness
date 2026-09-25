@@ -101,7 +101,7 @@ async function readPhysicalIdentities(codes: readonly string[]) {
       return result.data ?? [];
     }, { identity: (row) => String(row.request_id) }))),
     Promise.all(chunks.map((chunk) => readExhaustivePages(async (from, to) => {
-      const result = await client.from("stockage_events").select("event_id,event_type,agency,occurred_at,business_date,tracking_code,arrival_reference,metadata").in("tracking_code", chunk).order("event_id", { ascending: true }).range(from, to);
+      const result = await client.from("stockage_events").select("event_id,event_type,agency,occurred_at,business_date,tracking_code,arrival_reference,source_type,source_request_id,metadata").in("tracking_code", chunk).order("event_id", { ascending: true }).range(from, to);
       if (result.error) throw result.error;
       return result.data ?? [];
     }, { identity: (row) => String(row.event_id) })))
@@ -113,8 +113,32 @@ async function readPhysicalIdentities(codes: readonly string[]) {
   const orchestrations = orchestrationPages.flatMap((page) => page.rows) as Array<Record<string, unknown>>;
   const events = eventPages.flatMap((page) => page.rows) as Array<Record<string, unknown>>;
   const forwardingById = new Map(forwardings.map((row) => [String(row.forwarding_id), row]));
+  const parcelById = new Map(parcels.map((row) => [String(row.parcel_id), row]));
   const orchestrationRows = (orchestrations ?? []) as Array<Record<string, unknown>>;
   const eventRows = events;
+  const eventIdentity = (event: Record<string, unknown>) => {
+    const metadata = event.metadata && typeof event.metadata === "object" && !Array.isArray(event.metadata)
+      ? event.metadata as Record<string, unknown> : {};
+    const isForwardingEvent = event.source_type === "INTER_AGENCY_FORWARDING";
+    const parcelId = String(metadata.parcelId ?? "").trim();
+    const claimedForwardingId = String(isForwardingEvent ? event.source_request_id ?? "" : metadata.forwardingId ?? "").trim();
+    const parcel = parcelById.get(parcelId);
+    const forwarding = forwardingById.get(claimedForwardingId);
+    const sameAgency = (value: unknown) => String(value ?? "").trim().toUpperCase() === String(event.agency ?? "").trim().toUpperCase();
+    const sameCode = (value: unknown) => exactCode(value) === exactCode(event.tracking_code);
+    const verifiedParcelId = parcel && sameAgency(parcel.agency) && sameCode(parcel.tracking_code) ? parcelId : null;
+    const verifiedForwardingId = forwarding && sameAgency(forwarding.destination_agency) && sameCode(forwarding.original_tracking_code) ? claimedForwardingId : null;
+    // A forwarding event's parcel metadata cannot turn it into native evidence.
+    // An unverified or contradictory identity remains unattached (fail-closed).
+    if (isForwardingEvent) return { parcelId: null, forwardingId: verifiedForwardingId };
+    if (verifiedParcelId && verifiedForwardingId && String(parcel?.forwarding_id ?? "") !== verifiedForwardingId) {
+      return { parcelId: null, forwardingId: null };
+    }
+    return {
+      parcelId: verifiedParcelId,
+      forwardingId: verifiedForwardingId
+    };
+  };
   const matches = (parcels ?? []).map((row) => {
     const forwarding = row.forwarding_id ? forwardingById.get(String(row.forwarding_id)) : null;
     const matchingOrchestrations = orchestrationRows.filter((candidate) =>
@@ -123,7 +147,11 @@ async function readPhysicalIdentities(codes: readonly string[]) {
       && String(candidate.forwarding_id ?? "") === String(row.forwarding_id ?? "")
     );
     const orchestration = matchingOrchestrations.length === 1 ? matchingOrchestrations[0] : null;
-    const rowEvents = eventRows.filter((event) => String(event.agency ?? "").toUpperCase() === String(row.agency ?? "").toUpperCase() && exactCode(event.tracking_code) === exactCode(row.tracking_code));
+    const rowEvents = eventRows.filter((event) => {
+      const identity = eventIdentity(event);
+      return (identity.parcelId !== null && identity.parcelId === String(row.parcel_id))
+        || (identity.forwardingId !== null && identity.forwardingId === String(row.forwarding_id ?? ""));
+    });
     return {
       agency: String(row.agency ?? ""), trackingCode: String(row.tracking_code ?? ""), parcelId: row.parcel_id ? String(row.parcel_id) : null,
       forwardingId: row.forwarding_id ? String(row.forwarding_id) : null,
@@ -144,15 +172,22 @@ async function readPhysicalIdentities(codes: readonly string[]) {
   const historicalOnly = eventRows.filter((event) => {
     const agency = String(event.agency ?? "").toUpperCase();
     const code = exactCode(event.tracking_code);
-    return PHYSICAL_ARRIVAL_EVENTS.has(String(event.event_type ?? "").toUpperCase()) && agency && code && !matches.some((match) => match.agency.toUpperCase() === agency && exactCode(match.trackingCode) === code);
-  }).map((event) => ({
-    agency: String(event.agency ?? ""), trackingCode: exactCode(event.tracking_code), parcelId: null, forwardingId: null,
-    originAgency: null, destinationAgency: String(event.agency ?? ""), weightKg: null,
-    deliveryStatus: String(event.event_type ?? ""), paymentRequestId: null, orchestrationState: null, createdAt: null,
-    currentlyPresent: false, everPresent: true,
-    arrivalDate: String(event.occurred_at ?? event.business_date ?? "") || null,
-    historicallyReceived: true, physicalEvidence: [String(event.event_type ?? "STORAGE_EVENT")]
-  } satisfies PhysicalIdentity));
+    const identity = eventIdentity(event);
+    return PHYSICAL_ARRIVAL_EVENTS.has(String(event.event_type ?? "").toUpperCase()) && agency && code
+      && !matches.some((match) => (identity.parcelId !== null && match.parcelId === identity.parcelId)
+        || (identity.forwardingId !== null && match.forwardingId === identity.forwardingId));
+  }).map((event) => {
+    const identity = eventIdentity(event);
+    const forwarding = identity.forwardingId ? forwardingById.get(identity.forwardingId) : null;
+    return {
+      agency: String(event.agency ?? ""), trackingCode: exactCode(event.tracking_code), parcelId: identity.parcelId, forwardingId: identity.forwardingId,
+      originAgency: forwarding?.origin_agency ? String(forwarding.origin_agency) : null, destinationAgency: String(event.agency ?? ""), weightKg: null,
+      deliveryStatus: String(event.event_type ?? ""), paymentRequestId: null, orchestrationState: null, createdAt: null,
+      currentlyPresent: false, everPresent: true,
+      arrivalDate: String(event.occurred_at ?? event.business_date ?? "") || null,
+      historicallyReceived: true, physicalEvidence: [String(event.event_type ?? "STORAGE_EVENT")]
+    } satisfies PhysicalIdentity;
+  });
   return { state: "FOUND" as const, matches: [...matches, ...historicalOnly] };
 }
 
@@ -487,7 +522,7 @@ function buildModernManifestAudit(manifests: readonly ManifestShipperRow[], paym
     // A native parcel and a forwarding (or two parcel/forwarding IDs) are
     // distinct physical identities, even if their tracking code is identical.
     const physicalKinds = new Set(physical.map((match) => match.forwardingId ? `FORWARDING:${match.forwardingId}:${match.parcelId ?? "NO_PARCEL"}` : match.parcelId ? `NATIVE:${match.parcelId}` : "HISTORICAL_ONLY"));
-    const physicalIdentityAmbiguous = physicalKinds.size > 1;
+    const physicalIdentityAmbiguous = physicalKinds.size > 1 || physicalKinds.has("HISTORICAL_ONLY");
     let state: ModernFinancialState = "À VÉRIFIER";
     let reason = "IDENTITE_OU_MONTANT_NON_CERTIFIABLE";
     if (matches.length !== 1) reason = "IDENTITE_MANIFESTE_DUPLIQUEE";

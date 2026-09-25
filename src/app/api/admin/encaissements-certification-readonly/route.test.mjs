@@ -267,3 +267,44 @@ test("le suffixe du code et l'agence P1 ne sont jamais fusionnés", () => {
   assert.equal(klz.transactions.length, 0);
   assert.equal(klz.physicalMatches.length, 1);
 });
+
+function loadPhysicalReader(fixtures) {
+  const start = route.indexOf("async function readPhysicalIdentities(");
+  const end = route.indexOf("\nfunction buildReport(", start);
+  assert.ok(start >= 0 && end > start);
+  const source = `${route.slice(start, end)}\nglobalThis.readPhysicalIdentities = readPhysicalIdentities;`;
+  const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
+  const context = {
+    process: { env: { NEXT_PUBLIC_SUPABASE_URL: "https://local.invalid", SUPABASE_SERVICE_ROLE_KEY: "local-test" } },
+    exactCode: value => String(value ?? "").trim().toUpperCase(),
+    PHYSICAL_ARRIVAL_EVENTS: new Set(["MANUAL_ARRIVAL_RECORDED", "ARRIVAGE_ACHEMINEMENT", "ARRIVAL_CONFIRMED", "FORWARDING_ARRIVED"]),
+    createClient: () => ({ schema: () => ({ from: table => ({
+      select() { return this; }, in() { return this; }, order() { return this; },
+      async range() { return { data: fixtures[table] ?? [], error: null }; }
+    }) }) }),
+    readExhaustivePages: async fetchPage => ({ rows: await fetchPage(0, 999) })
+  };
+  vm.runInNewContext(compiled, context);
+  return context.readPhysicalIdentities;
+}
+
+test("même agence/code : événement forwarding et colis natif gardent deux preuves distinctes", async () => {
+  const read = loadPhysicalReader({
+    stockage_parcels: [{ parcel_id: "native-1", forwarding_id: null, tracking_code: "AT02326", agency: "FIH", canonical_weight_kg: 4, delivery_status: "AVAILABLE", created_at: "2026-08-10" }],
+    stockage_forwardings: [{ forwarding_id: "forwarding-1", original_tracking_code: "AT02326", origin_agency: "LSHI", destination_agency: "FIH" }],
+    stockage_payment_orchestrations: [],
+    stockage_events: [{ event_id: "arrival-1", event_type: "ARRIVAGE_ACHEMINEMENT", agency: "FIH", tracking_code: "AT02326", source_type: "INTER_AGENCY_FORWARDING", source_request_id: "forwarding-1", occurred_at: "2026-08-11", metadata: { parcelId: "native-1" } }]
+  });
+  const result = await read(["AT02326"]);
+  const native = result.matches.find(match => match.parcelId === "native-1");
+  const forwarded = result.matches.find(match => match.forwardingId === "forwarding-1");
+  assert.equal(result.state, "FOUND");
+  assert.equal(result.matches.length, 2);
+  assert.equal(native.forwardingId, null);
+  assert.equal(native.physicalEvidence.includes("ARRIVAGE_ACHEMINEMENT"), false);
+  assert.equal(forwarded.parcelId, null);
+  assert.equal(forwarded.physicalEvidence.includes("ARRIVAGE_ACHEMINEMENT"), true);
+  const audit = loadModernAudit()([manifest("FIH", "AT02326", 2026, 20, 0)], [], result.matches);
+  assert.equal(audit.rows[0].reason, "IDENTITE_NATIVE_FORWARDING_AMBIGUE");
+  assert.equal(audit.rows[0].state, "CAS_ISOLE_PREUVE_PHYSIQUE_INSUFFISANTE");
+});
