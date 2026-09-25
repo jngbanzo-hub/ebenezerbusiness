@@ -8,6 +8,46 @@ const client = readFileSync("src/features/admin/bilan/bilan-client.ts", "utf8");
 const page = readFileSync("src/app/admin/bilan/page.tsx", "utf8");
 const nav = readFileSync("src/features/admin/admin-workspace.tsx", "utf8");
 
+test("la synthèse certifiée reste additive et distincte des compteurs officiels", () => {
+  const service = readFileSync("src/features/admin/bilan/bilan-service.ts", "utf8");
+  assert.ok(service.includes("aggregateCohortPayments(paymentsRead.rows, query.cohort.id)"));
+  assert.ok(ui.includes("data.payments.receivedAmount"));
+  assert.ok(ui.includes("data.payments.paymentCount"));
+  assert.ok(ui.includes("data.payments.completePayments"));
+  assert.ok(ui.includes("data.payments.partialPayments"));
+  assert.ok(ui.includes("<CertifiedAgencySummary audit={audit}/>"));
+  assert.ok(ui.includes("<ModernPaymentsCardsExisting audit={audit}/>"));
+});
+
+test("la synthèse lit directement les champs certifiés par agence sans recalcul métier", () => {
+  const summary = ui.split("function CertifiedAgencySummary")[1].split("function ModernPaymentsCardsExisting")[0];
+  for (const field of ["total", "settled", "partial", "unpaidCertified", "toVerify", "currentDebts", "futureDebts", "isolatedPhysical", "certifiedPaidUsd", "certifiedRemainingUsd"]) {
+    assert.ok(summary.includes(`item.${field}`), field);
+  }
+  assert.ok(summary.includes("agencies.map((agency) =>"));
+  assert.ok(summary.includes("audit.activeCohortId"));
+  for (const forbidden of [".reduce(", "expectedUsd", "manifestF", "manifestL", "manifestM", "receivedAmount", "paymentCount", "completePayments", "partialPayments", "physicalMatches"]) {
+    assert.ok(!summary.includes(forbidden), forbidden);
+  }
+});
+
+test("prix commercial absent et NULL restent visibles sans zéro inventé", () => {
+  const summary = ui.split("function CertifiedAgencySummary")[1].split("function ModernPaymentsCardsExisting")[0];
+  assert.ok(summary.includes("<dt>TOTAL PRIX COMMERCIAL</dt><dd>MANQUANT</dd>"));
+  assert.ok(summary.includes('item.certifiedRemainingUsd === null ? "NON CERTIFIABLE" : usd(item.certifiedRemainingUsd)'));
+  assert.ok(!summary.includes("?? 0"));
+  assert.ok(!summary.includes("|| 0"));
+});
+
+test("une certification moderne indisponible reste isolée du Bilan officiel", () => {
+  assert.ok(ui.includes('data.meta.cohortId >= "2026-08"'));
+  assert.ok(ui.includes('audit.activeCohortId < "2026-08"'));
+  assert.ok(ui.includes("hasUsableModernAudit(payload.modernManifestAudit, data.meta.cohortId)"));
+  assert.ok(ui.includes('setAudit(null); setError("DONNÉES CERTIFIÉES INDISPONIBLES")'));
+  assert.ok(ui.includes("{data ? <BilanView data={data}/> : null}"));
+  assert.ok(ui.includes('error?<p role="alert"'));
+});
+
 test("page Admin et navigation Bilan sont additives",()=>{assert.match(page,/AdminBilanPage/);assert.match(nav,/href: "\/admin\/bilan"/);assert.match(ui,/getAdminProfile/);});
 test("les cohortes et le mois automatique viennent du registre persistant unique",()=>{const registry=readFileSync("src/features/admin/bilan/cohort-registry.ts","utf8");assert.doesNotMatch(registry,/cohort\("(?:JL|AT|SE)"/);assert.match(ui,/loadOriginMonths\(session.access_token\)/);assert.match(ui,/definitions.map/);assert.doesNotMatch(ui,/periodMonth|type="month"/);assert.match(ui,/AUTOMATIQUE/);assert.match(contracts,/startDate/);assert.match(contracts,/endDate/);});
 test("zone de pilotage distingue mois d’origine et période d’analyse",()=>{for(const text of ["Zone de pilotage du bilan","Mois d’origine","Période","Afficher le bilan","Le préfixe du code détermine le mois d’origine du colis. La période d’analyse ne change jamais son mois d’origine."])assert.match(ui,new RegExp(text));assert.match(ui,/grid gap-5 md:grid-cols-2/);assert.doesNotMatch(ui,/Cohorte comptable/);});
