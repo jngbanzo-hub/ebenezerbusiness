@@ -146,15 +146,54 @@ type ModernDebtRow = { code:string; exactPrefix:string; sourceSheet:string; date
 type ModernAudit = { startDate:string; endDate:string; activeCohortId:string|null; rows:ModernDebtRow[]; byAgency:Record<string,{total:number;settled:number;partial:number;unpaidCertified:number;currentDebts:number;futureDebts:number;isolatedPhysical:number;toVerify:number;certifiedPaidUsd:number;certifiedRemainingUsd:number|null;debts:ModernDebtRow[];futureDebtRows:ModernDebtRow[];isolatedPhysicalRows:ModernDebtRow[]}>; byCohort:Record<string,{total:number;settled:number;partial:number;unpaidCertified:number;isolatedPhysical:number;toVerify:number}>; conservation:Record<string,string> };
 type FZeroPayload = { fZeroAudit?: Record<"FIH" | "LSHI" | "KLZ", FZeroAgency>; modernManifestAudit?: ModernAudit };
 
+function hasUsableModernAudit(audit: ModernAudit | undefined, cohortId: string): audit is ModernAudit {
+  if (!audit || audit.activeCohortId !== cohortId || !Array.isArray(audit.rows) || !audit.byCohort || !audit.byAgency) return false;
+  const requiredCounts = ["total", "settled", "partial", "unpaidCertified", "toVerify", "currentDebts", "futureDebts", "isolatedPhysical", "certifiedPaidUsd"] as const;
+  return agencies.every((agency) => {
+    const item = audit.byAgency[agency];
+    return item && requiredCounts.every((field) => typeof item[field] === "number" && Number.isFinite(item[field]))
+      && (item.certifiedRemainingUsd === null || (typeof item.certifiedRemainingUsd === "number" && Number.isFinite(item.certifiedRemainingUsd)))
+      && Array.isArray(item.debts) && Array.isArray(item.futureDebtRows) && Array.isArray(item.isolatedPhysicalRows);
+  });
+}
+
 function PaymentsDetail({ data }: { data: BilanPayload }) {
   const [audit, setAudit] = useState<FZeroPayload | null>(null);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
-  useEffect(() => { const controller = new AbortController(); void (async () => { try { const response = await authenticatedRead(getSupabaseBrowserClient().auth, `/api/admin/encaissements-certification-readonly?cohortId=${encodeURIComponent(data.meta.cohortId)}`, { signal: controller.signal }); const payload = await response.json() as FZeroPayload; if (!response.ok || !payload.fZeroAudit) throw new Error("Rapprochement Encaissements temporairement indisponible."); setAudit(payload); } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Rapprochement Encaissements temporairement indisponible."); } })(); return () => controller.abort(); }, [data.meta.cohortId]);
+  useEffect(() => { const controller = new AbortController(); void (async () => { try { const response = await authenticatedRead(getSupabaseBrowserClient().auth, `/api/admin/encaissements-certification-readonly?cohortId=${encodeURIComponent(data.meta.cohortId)}`, { signal: controller.signal }); const payload = await response.json() as FZeroPayload; const modern = data.meta.cohortId >= "2026-08"; if (!response.ok || !payload?.fZeroAudit || (modern && !hasUsableModernAudit(payload.modernManifestAudit, data.meta.cohortId))) throw new Error("DONNÉES CERTIFIÉES INDISPONIBLES"); if (!controller.signal.aborted) { setAudit(payload); setError(""); } } catch { if (!controller.signal.aborted) { setAudit(null); setError("DONNÉES CERTIFIÉES INDISPONIBLES"); } } })(); return () => controller.abort(); }, [data.meta.cohortId]);
   return <><div className="grid gap-4 md:grid-cols-3"><Metric title="Montant encaissé" value={usd(data.payments.receivedAmount)} lines={[`${data.payments.paymentCount} paiements`,`${data.payments.completePayments} complets · ${data.payments.partialPayments} partiels`,`${data.payments.unmatchedPayments} non rapprochés`]}/>{data.payments.historicalRevenueStatus==="CERTIFIE"?<><Metric title="Montant attendu enregistré" value={usd(data.payments.recordedExpectedAmount)}/><Metric title="Reste / taux" value={`${usd(data.payments.remainingAmount??0)} · ${percent(data.payments.collectionRate)}`}/></>:<Metric title="MONTANT ATTENDU NON CERTIFIÉ" value="Reste non calculé" lines={["Encaissements ≠ chiffre d’affaires."]}/>}</div><section className="mt-8" aria-label="Encaissements par agence"><h3 className="text-lg font-semibold">ENCAISSEMENTS PAR AGENCE</h3><p className="mt-1 text-sm text-muted-foreground">Identités financières certifiées par destination commerciale. Les dettes modernes sont affichées en lecture seule et ne modifient pas les compteurs financiers officiels.</p>{error?<p role="alert" className="mt-3 text-sm text-amber-200">{error}</p>:!audit?<p className="mt-3 text-sm text-muted-foreground">Chargement du rapprochement read-only…</p>:audit.modernManifestAudit?<ModernPaymentsCards audit={audit.modernManifestAudit}/>:<div className="mt-4 grid gap-4 xl:grid-cols-3">{agencies.map(agency=><FZeroAgencyCard key={agency} agency={agency} data={audit.fZeroAudit?.[agency]} expanded={expanded===agency} onToggle={()=>setExpanded(expanded===agency?null:agency)}/>)}</div>}</section></>;
 }
 
 function ModernPaymentsCards({ audit }: { audit: ModernAudit }) {
+  return <><CertifiedAgencySummary audit={audit}/><ModernPaymentsCardsExisting audit={audit}/></>;
+}
+
+function CertifiedAgencySummary({ audit }: { audit: ModernAudit }) {
+  if (!audit.activeCohortId || audit.activeCohortId < "2026-08") return null;
+  return <section className="mt-4" aria-label="Synthèse certifiée par agence">
+    <h4 className="text-base font-semibold">Rapport certifié des identités colis — lecture seule</h4>
+    <p className="mt-1 text-xs text-muted-foreground">Distinct des compteurs officiels de transactions du Bilan. Les dettes actuelles, futures et les cas isolés sont des sous-classifications des créances.</p>
+    <div className="mt-4 grid gap-4 xl:grid-cols-3">{agencies.map((agency) => {
+      const item = audit.byAgency[agency];
+      return <GlassPanel key={agency} className="p-5"><h5 className="font-semibold text-accent">AGENCE : {agency}</h5><p className="mt-1 text-xs text-muted-foreground">COHORTE : {audit.activeCohortId}</p><dl className="mt-4 space-y-2 text-sm">
+        <div className="flex justify-between gap-3"><dt>TOTAL COLIS</dt><dd>{item.total}</dd></div>
+        <div className="flex justify-between gap-3"><dt>SOLDÉS</dt><dd>{item.settled}</dd></div>
+        <div className="flex justify-between gap-3"><dt>PARTIELS</dt><dd>{item.partial}</dd></div>
+        <div className="flex justify-between gap-3"><dt>NON PAYÉS</dt><dd>{item.unpaidCertified}</dd></div>
+        <div className="flex justify-between gap-3"><dt>À VÉRIFIER FINANCIER</dt><dd>{item.toVerify}</dd></div>
+        <div className="flex justify-between gap-3 border-t border-white/10 pt-2"><dt>DETTE ACTUELLE</dt><dd>{item.currentDebts}</dd></div>
+        <div className="flex justify-between gap-3"><dt>FUTURE DETTE</dt><dd>{item.futureDebts}</dd></div>
+        <div className="flex justify-between gap-3"><dt>CAS ISOLÉS PHYSIQUES</dt><dd>{item.isolatedPhysical}</dd></div>
+        <div className="flex justify-between gap-3 border-t border-white/10 pt-2"><dt>TOTAL PRIX COMMERCIAL</dt><dd>MANQUANT</dd></div>
+        <div className="flex justify-between gap-3"><dt>TOTAL PAYÉ CERTIFIÉ</dt><dd>{usd(item.certifiedPaidUsd)}</dd></div>
+        <div className="flex justify-between gap-3"><dt>TOTAL RESTANT CERTIFIÉ</dt><dd>{item.certifiedRemainingUsd === null ? "NON CERTIFIABLE" : usd(item.certifiedRemainingUsd)}</dd></div>
+      </dl></GlassPanel>;
+    })}</div>
+  </section>;
+}
+
+function ModernPaymentsCardsExisting({ audit }: { audit: ModernAudit }) {
   const [showIsolated, setShowIsolated] = useState(false);
   const isolatedRows = audit.rows.filter((row) => row.state === "CAS_ISOLE_PREUVE_PHYSIQUE_INSUFFISANTE" && (!audit.activeCohortId || row.cohort === audit.activeCohortId));
   return <><section className="mt-4 rounded-lg border border-amber-400/30 bg-amber-950/20 p-4" aria-label="Cas isolés physiques"><div className="flex flex-wrap items-center justify-between gap-3"><div><h4 className="font-semibold text-amber-200">CAS ISOLÉS PHYSIQUES</h4><p className="mt-1 text-sm text-muted-foreground">Preuve physique FIH insuffisante — sous-classification des créances, sans modification de l’état financier F/L/M.</p></div><Button type="button" variant="outline" onClick={() => setShowIsolated((value) => !value)} disabled={!isolatedRows.length}>{showIsolated ? "Masquer les cas isolés" : `Afficher les cas isolés (${isolatedRows.length})`}</Button></div><div className="mt-3 grid gap-2 text-sm md:grid-cols-3">{agencies.map((agency) => <div key={agency} className="flex justify-between rounded border border-white/10 px-3 py-2"><span>{agency}</span><strong>{audit.byAgency[agency]?.isolatedPhysical ?? 0}</strong></div>)}</div>{showIsolated && <div className="mt-4 max-h-[32rem] space-y-2 overflow-auto">{isolatedRows.map((row) => <div key={`${row.sourceSheet}:${row.cohort}:${row.code}`} className="rounded border border-white/10 p-3 text-xs"><p className="font-semibold">{row.code} · {row.sourceSheet} · {row.cohort ?? "NON CERTIFIABLE"}</p><p className="mt-1">Poids : {row.weightKg === null ? "NON DISPONIBLE" : `${row.weightKg} kg`} · Prix commercial : {row.expectedUsd === null ? "NON CERTIFIABLE" : usd(row.expectedUsd)} · Payé : {usd(row.paidUsd)} · Reste : {row.remainingUsd === null ? "NON CERTIFIABLE" : usd(row.remainingUsd)}</p><p className="mt-1">État financier : {row.financialState} · Motif : {row.reason}</p><p className="mt-1">Stockage V2 : {row.physicalMatches?.length ? row.physicalMatches.map((match) => `${match.agency} · ${match.currentlyPresent ? "PRÉSENT" : match.everPresent ? "HISTORIQUE" : "AUCUNE PREUVE"}`).join(" | ") : "AUCUNE PREUVE PHYSIQUE"}</p></div>)}</div>}</section><ModernPaymentsCardsLegacy audit={audit}/></>;
