@@ -23,7 +23,7 @@ test("machine credential is separate and never falls back to Admin or Direction"
   assert.match(auth, /REMINDER_BILAN_READER_TOKEN/);
   assert.match(auth, /timingSafeEqual/);
   assert.doesNotMatch(auth, /WHATSAPP_DIRECTION_READER_TOKEN|SUPABASE_SERVICE_ROLE_KEY|authorizeAdminRequest/);
-  assert.doesNotMatch(route, /SUPABASE_SERVICE_ROLE_KEY|D360_API_KEY|phone|telephone/i);
+  assert.doesNotMatch(route, /SUPABASE_SERVICE_ROLE_KEY|D360_API_KEY/);
 });
 test("certified source is shared, not copied", () => {
   assert.match(source, /export async function readCertifiedSnapshot/);
@@ -52,8 +52,8 @@ test("GET refuses unauthenticated calls and projects certified candidates only",
   const compiled = ts.transpileModule(route, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   const exports = {};
   const row = { cohort: "2026-09", code: "TEST001", sourceSheet: "FIH", state: "PARTIEL", remainingUsd: 12,
-    sender: "Sender", beneficiary: "Recipient", physicalMatches: [{ parcelId: "p1", forwardingId: null, agency: "FIH" }], phone: "must-not-leak" };
-  const snapshot = { modernManifestAudit: { conservation: { FIH: "PASS", LSHI: "PASS", KLZ: "PASS" }, rows: [row, { ...row, state: "SOLDÉ" }] } };
+    sender: "Sender 22912345678", beneficiary: "Recipient 243123456789", physicalMatches: [{ parcelId: "p1", forwardingId: null, agency: "FIH" }], phone: "must-not-leak" };
+  const snapshot = { modernManifestAudit: { conservation: { FIH: "PASS", LSHI: "PASS", KLZ: "PASS" }, rows: [row, { ...row, code: "TEST002", state: "FUTURE DETTE", beneficiary: "No phone" }, { ...row, state: "SOLDÉ" }] } };
   const require = name => {
     if (name === "next/server") return { NextResponse: { json: (body, init = {}) => ({ body, status: init.status ?? 200, headers: init.headers }) } };
     if (name === "@/server/reminder-bilan-machine-auth") return { authorizeReminderBilanRead: request => request.headers.get("Authorization") === "Bearer valid-test-token" };
@@ -64,8 +64,18 @@ test("GET refuses unauthenticated calls and projects certified candidates only",
   assert.equal((await exports.GET(new Request("https://example.invalid/internal"))).status, 401);
   const response = await exports.GET(new Request("https://example.invalid/internal", { headers: { Authorization: "Bearer valid-test-token" } }));
   assert.equal(response.status, 200);
-  assert.equal(response.body.candidates.length, 1);
+  assert.equal(response.body.candidates.length, 2);
   assert.equal(response.body.candidates[0].code, "TEST001");
+  assert.equal(response.body.candidates[0].category, "CURRENT");
+  assert.equal(response.body.candidates[0].financialCertified, true);
+  assert.equal(response.body.candidates[0].sender.phone, "22912345678");
+  assert.equal(response.body.candidates[0].beneficiary.phone, "243123456789");
+  assert.equal(response.body.candidates[0].nature, "NATIF");
+  assert.equal(response.body.candidates[0].destinationLabel, "FIH");
+  assert.equal(response.body.candidates[0].currentAgencyLabel, "FIH");
+  assert.equal(response.body.candidates[1].category, "FUTURE");
+  assert.equal(response.body.candidates[1].beneficiary.phone, null);
+  assert.equal(response.body.candidates[1].beneficiary.eligible, false);
   assert.equal(JSON.stringify(response.body).includes("must-not-leak"), false);
   snapshot.modernManifestAudit.conservation.KLZ = "FAIL";
   assert.equal((await exports.GET(new Request("https://example.invalid/internal", { headers: { Authorization: "Bearer valid-test-token" } }))).status, 503);
