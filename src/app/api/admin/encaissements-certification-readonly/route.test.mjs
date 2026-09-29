@@ -5,10 +5,12 @@ import assert from "node:assert/strict";
 import vm from "node:vm";
 import ts from "typescript";
 
-const route = readFileSync(join(process.cwd(), "src/app/api/admin/encaissements-certification-readonly/route.ts"), "utf8");
+const route = readFileSync(join(process.cwd(), "src/server/reminder-certified-source.ts"), "utf8");
+const adminRoute = readFileSync(join(process.cwd(), "src/app/api/admin/encaissements-certification-readonly/route.ts"), "utf8");
 const facade = readFileSync(join(process.cwd(), "src/features/admin/encaissements-certification-readonly-page.tsx"), "utf8");
 
 test("façade certification est Admin, GET-only et server-side", () => {
+  assert.match(adminRoute, /export \{ GET \} from "@\/server\/reminder-certified-source"/);
   assert.match(route, /authorizeAdminRequest\(request\)/);
   assert.match(route, /export async function GET\(request: Request\)/);
   assert.match(route, /readCanonicalPaymentManifestRows\(\)/);
