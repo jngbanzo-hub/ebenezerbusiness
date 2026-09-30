@@ -11,6 +11,7 @@ import { readBilanOriginMonths } from "@/server/bilan-origin-months";
 import type { BilanApiQuery } from "@/features/admin/bilan/bilan-api-query";
 import { resolveDirectionScope } from "@/server/direction-summary-scope";
 import { DIRECTION_EXPENSES_TODAY_TIMEOUT_MS, observeDirectionSource } from "@/server/direction-summary-diagnostics";
+import { countRows, logDirectionSubread, measureDirectionSubread, traceDirectionSource } from "@/server/direction-subread-telemetry";
 
 const CASH_AGENCIES = ["FIH", "LSHI", "KLZ"] as const;
 const SERVICE_ACTOR: Extract<AdminAuthorizationResult, { authorized: true }> = Object.freeze({
@@ -55,15 +56,15 @@ export async function readDirectionSummary(now = new Date()): Promise<DirectionS
   let scope = resolveDirectionScope<import("@/features/admin/bilan/bilan-contracts").CohortDefinition>(businessDate, []);
 
   const [cash, expenses, profit, storage] = await Promise.all([
-    observeDirectionSource("CAISSE", () => readCash(businessDate)),
-    observeDirectionSource("DEPENSES", () => readExpenses(businessDate), { timeoutMs: DIRECTION_EXPENSES_TODAY_TIMEOUT_MS }),
-    observeDirectionSource("BENEFICE", async () => {
-      const definitions = await readBilanOriginMonths();
+    observeDirectionSource("CAISSE", () => traceDirectionSource("CAISSE", () => readCash(businessDate))),
+    observeDirectionSource("DEPENSES", () => traceDirectionSource("DEPENSES", () => readExpenses(businessDate)), { timeoutMs: DIRECTION_EXPENSES_TODAY_TIMEOUT_MS }),
+    observeDirectionSource("BENEFICE", () => traceDirectionSource("BENEFICE", async () => {
+      const definitions = await measureDirectionSubread("bilan_origin_months", () => readBilanOriginMonths(), countRows);
       scope = resolveDirectionScope(businessDate, definitions);
       const { cohort, analysisPeriod: period } = scope;
       return cohort ? withBilanCohorts(definitions, () => readProfit({ cohort, period })) : null;
-    }),
-    observeDirectionSource("STOCK", readStorage)
+    })),
+    observeDirectionSource("STOCK", () => traceDirectionSource("STOCK", readStorage))
   ]);
   const { cohort, analysisPeriod: period } = scope;
 
@@ -97,17 +98,20 @@ async function readCash(businessDate: string) {
 
 async function readExpenses(businessDate: string) {
   const rows = await readAllExpenses(businessDate);
-  return Object.fromEntries(REPORT_AGENCIES.map((agency) => {
+  const startedAt = Date.now();
+  const result = Object.fromEntries(REPORT_AGENCIES.map((agency) => {
     const report = buildDailyAgencyReport({ agency, payments: [], expenses: rows, storageEvents: [], cash: null });
     return [agency, Object.freeze({ status: "AVAILABLE" as const, count: report.expenseCount, byCurrency: report.expensesByCurrency })];
   })) as Record<ReportAgency, ExpenseValue>;
+  logDirectionSubread("aggregation_finale", startedAt, "SUCCESS", { rows: rows.length });
+  return result;
 }
 
 async function readAllExpenses(businessDate: string) {
   const filters = { dateDebut: businessDate, dateFin: businessDate, page: 1, pageSize: 100 } as const;
-  const first = await readAdminExpenses(SERVICE_ACTOR, filters);
+  const first = await measureDirectionSubread("depenses_page_1", () => readAdminExpenses(SERVICE_ACTOR, filters), (value) => ({ pages: 1, rows: value.depenses.length }));
   if (first.pagination.totalPages <= 1) return first.depenses;
-  const rest = await Promise.all(Array.from({ length: first.pagination.totalPages - 1 }, (_, index) => readAdminExpenses(SERVICE_ACTOR, { ...filters, page: index + 2 })));
+  const rest = await Promise.all(Array.from({ length: first.pagination.totalPages - 1 }, (_, index) => measureDirectionSubread(`depenses_page_${index + 2}`, () => readAdminExpenses(SERVICE_ACTOR, { ...filters, page: index + 2 }), (value) => ({ pages: 1, rows: value.depenses.length }))));
   return [...first.depenses, ...rest.flatMap((page: AdminExpenseListResponse) => page.depenses)];
 }
 
@@ -126,12 +130,15 @@ async function readProfit(query: BilanApiQuery) {
 async function readStorage() {
   const payload = await readAdminStorage();
   if (!Array.isArray(payload.accounts)) throw new Error("STORAGE_CONTRACT_INVALID");
-  return Object.fromEntries(CASH_AGENCIES.map((agency) => {
+  const startedAt = Date.now();
+  const result = Object.fromEntries(CASH_AGENCIES.map((agency) => {
     const row = payload.accounts.find((item: Record<string, unknown>) => item.agency === agency) as Record<string, unknown> | undefined;
     const parcels = row?.current_parcel_count; const weightKg = row?.current_weight_kg;
     if (typeof parcels !== "number" || typeof weightKg !== "number") throw new Error("STORAGE_CONTRACT_INVALID");
     return [agency, Object.freeze({ status: "AVAILABLE" as const, parcels, weightKg })];
   })) as Record<(typeof CASH_AGENCIES)[number], StockValue>;
+  logDirectionSubread("aggregation_compteurs", startedAt, "SUCCESS", { rows: payload.accounts.length });
+  return result;
 }
 
 function sumCurrencies(rows: readonly CurrencyTotals[]) { const totals: Record<string, number> = {}; for (const row of rows) for (const [currency, amount] of Object.entries(row)) totals[currency] = (totals[currency] ?? 0) + amount; return Object.freeze(totals); }

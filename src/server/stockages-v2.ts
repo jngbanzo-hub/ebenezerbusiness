@@ -1,4 +1,5 @@
 import "server-only";
+import { countRows, measureDirectionSubread } from "@/server/direction-subread-telemetry";
 import { MAX_ARRIVAL_PARCELS } from "@/features/stockages/arrival-capacity";
 
 import { createClient } from "@supabase/supabase-js";
@@ -87,11 +88,11 @@ export async function readAgentStorage(agency: StorageAgency, trace?: OperationP
 export async function readAdminStorage() {
   const client = serviceClient();
   const [accounts, events, activity, anomalies, audit] = await Promise.all([
-    client.from("stockage_accounts").select("agency,status,current_parcel_count,current_weight_kg,version,opened_business_date,updated_at").order("agency"),
-    client.from("stockage_events").select("event_id,event_type,agency,business_date,occurred_at,parcel_count_delta,weight_kg_delta,tracking_code,arrival_reference,actor_name,account_version_after").order("occurred_at", { ascending: false }).limit(100),
-    client.from("stockage_agent_activity").select("agency,business_date,actor_id,actor_name,arrivals,deliveries,arrived_weight_kg,delivered_weight_kg").order("business_date", { ascending: false }).limit(100),
-    client.from("stockage_anomalies").select("anomaly_id,agency,tracking_code,anomaly_type,status,details,created_at,resolved_at,resolution_reason").order("created_at", { ascending: false }).limit(100),
-    client.from("stockage_admin_audit").select("audit_id,action,agency,admin_name,old_value,new_value,reason,target_event_id,occurred_at").order("occurred_at", { ascending: false }).limit(100)
+    measureDirectionSubread("stockage_accounts", () => client.from("stockage_accounts").select("agency,status,current_parcel_count,current_weight_kg,version,opened_business_date,updated_at").order("agency"), countRows),
+    measureDirectionSubread("stockage_events", () => client.from("stockage_events").select("event_id,event_type,agency,business_date,occurred_at,parcel_count_delta,weight_kg_delta,tracking_code,arrival_reference,actor_name,account_version_after").order("occurred_at", { ascending: false }).limit(100), countRows),
+    measureDirectionSubread("stockage_agent_activity", () => client.from("stockage_agent_activity").select("agency,business_date,actor_id,actor_name,arrivals,deliveries,arrived_weight_kg,delivered_weight_kg").order("business_date", { ascending: false }).limit(100), countRows),
+    measureDirectionSubread("stockage_anomalies", () => client.from("stockage_anomalies").select("anomaly_id,agency,tracking_code,anomaly_type,status,details,created_at,resolved_at,resolution_reason").order("created_at", { ascending: false }).limit(100), countRows),
+    measureDirectionSubread("stockage_admin_audit", () => client.from("stockage_admin_audit").select("audit_id,action,agency,admin_name,old_value,new_value,reason,target_event_id,occurred_at").order("occurred_at", { ascending: false }).limit(100), countRows)
   ]);
   if ([accounts, events, activity, anomalies, audit].some((result) => result.error)) throw new StockagesV2Error("STORAGE_ADMIN_READ_FAILED", 503);
   return { mode: "V2" as const, accounts: accounts.data ?? [], events: events.data ?? [], activity: activity.data ?? [], anomalies: anomalies.data ?? [], audit: audit.data ?? [] };

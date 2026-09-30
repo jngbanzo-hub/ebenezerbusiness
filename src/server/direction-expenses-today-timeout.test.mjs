@@ -56,6 +56,12 @@ function directionFixture(readExpenses, { simulateTimeout = false } = {}) {
           logger: () => {}
         });
       }
+    },
+    "@/server/direction-subread-telemetry": {
+      traceDirectionSource: (_source, reader) => reader(),
+      measureDirectionSubread: (_name, reader) => reader(),
+      logDirectionSubread: () => {},
+      countRows: (value) => ({ rows: Array.isArray(value) ? value.length : 0 })
     }
   };
   const source = readFileSync(new URL("./direction-summary.ts", import.meta.url), "utf8");

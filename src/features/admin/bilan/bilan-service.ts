@@ -22,6 +22,7 @@ import { calculateAgencyProfits, calculateAutomaticKlzShipmentCost, calculateCer
 import { calculateDeclarantDirectCosts, calculateLshiDhlDeclarantDirectCosts, calculateTransitDirectCosts, summarizeOfficialTransit, summarizeShipmentStructure } from "./shipment-aggregations";
 import { aggregateShipmentByAgency } from "./shipment-by-agency";
 import { getBilanCohorts } from "./cohort-registry";
+import { countRows, logDirectionSubread, measureDirectionSubread } from "@/server/direction-subread-telemetry";
 
 type AuthorizedAdmin = Extract<AdminAuthorizationResult, { authorized: true }>;
 
@@ -36,11 +37,17 @@ export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdm
   const official = getBilanCohorts().find(item => item.id === query.cohort.id);
   if (!official || official.id !== query.cohort.id || official.year !== query.cohort.year || official.month !== query.cohort.month) throw new Error("BILAN_REGISTRY_INVALID");
   const [fih, lshi, klz, shipmentsRead, officialRead, airFreightRead, paymentsRead, expensesRead, bonusRows] = await Promise.all([
-    readBilanManifestParcels(sheetsSource, "FIH"), readBilanManifestParcels(sheetsSource, "LSHI"), readBilanManifestParcels(sheetsSource, "KLZ"),
-    readBilanShipments(sheetsSource), readBilanOfficialTransit(sheetsSource), readBilanAirFreight(sheetsSource), readBilanPayments(() => readAdminPayments()),
-    query.period ? readBilanExpenses(() => readAllExpenses(admin, query.period!)) : Promise.resolve({ rows: [], anomalies: [] } as const),
-    readMonthlyAgentBonuses(`${query.cohort.year}-${String(query.cohort.month).padStart(2, "0")}`)
+    measureDirectionSubread("FIH", () => readBilanManifestParcels(sheetsSource, "FIH"), countRows),
+    measureDirectionSubread("LSHI", () => readBilanManifestParcels(sheetsSource, "LSHI"), countRows),
+    measureDirectionSubread("KLZ", () => readBilanManifestParcels(sheetsSource, "KLZ"), countRows),
+    measureDirectionSubread("expeditions", () => readBilanShipments(sheetsSource), countRows),
+    measureDirectionSubread("transit_officiel", () => readBilanOfficialTransit(sheetsSource), countRows),
+    measureDirectionSubread("fret_aerien", () => readBilanAirFreight(sheetsSource), countRows),
+    measureDirectionSubread("encaissements", () => readBilanPayments(() => readAdminPayments()), countRows),
+    query.period ? measureDirectionSubread("depenses", () => readBilanExpenses(() => readAllExpenses(admin, query.period!)), countRows) : Promise.resolve({ rows: [], anomalies: [] } as const),
+    measureDirectionSubread("primes", () => readMonthlyAgentBonuses(`${query.cohort.year}-${String(query.cohort.month).padStart(2, "0")}`), countRows)
   ]);
+  const aggregationStartedAt = Date.now();
   if ([fih, lshi, klz, shipmentsRead, officialRead, airFreightRead, paymentsRead, expensesRead].some((read) => read.anomalies.some((anomaly) => anomaly.code === "SOURCE_INDISPONIBLE"))) {
     throw new Error("BILAN_SOURCE_UNAVAILABLE");
   }
@@ -78,7 +85,7 @@ export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdm
   const monthlyBonuses = aggregateMonthlyAgentBonuses(`${query.cohort.year}-${String(query.cohort.month).padStart(2, "0")}`, bonusRows);
   const profitAfterBonuses = applyMonthlyBonuses(agencyProfits, monthlyBonuses);
   const finalProfit = calculateFinalProfit(profitAfterBonuses, airFreight);
-  return deepFreeze({
+  const result = deepFreeze({
     meta: {
       cohort: query.cohort.prefix, cohortId: query.cohort.id, cohortYear: query.cohort.year, cohortMonth: query.cohort.month,
       period: query.period, calculatedAt: new Date().toISOString(), status: globalStatus,
@@ -120,6 +127,8 @@ export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdm
     },
     dataQuality: quality
   });
+  logDirectionSubread("aggregation_finale", aggregationStartedAt, "SUCCESS");
+  return result;
 }
 
 function calculateFinalProfit(
@@ -138,9 +147,9 @@ function calculateFinalProfit(
 
 async function readAllExpenses(admin: AuthorizedAdmin, period: { from: string; to: string }) {
   const identity = { userId: admin.userId, email: admin.email, agency: admin.agency };
-  const first = await readAdminExpenses(identity, { dateDebut: period.from, dateFin: period.to, page: 1, pageSize: 100 });
+  const first = await measureDirectionSubread("depenses_bilan_page_1", () => readAdminExpenses(identity, { dateDebut: period.from, dateFin: period.to, page: 1, pageSize: 100 }), (value) => ({ pages: 1, rows: value.depenses.length }));
   if (first.pagination.totalPages <= 1) return first.depenses;
-  const rest = await Promise.all(Array.from({ length: first.pagination.totalPages - 1 }, (_, index) => readAdminExpenses(identity, { dateDebut: period.from, dateFin: period.to, page: index + 2, pageSize: 100 })));
+  const rest = await Promise.all(Array.from({ length: first.pagination.totalPages - 1 }, (_, index) => measureDirectionSubread(`depenses_bilan_page_${index + 2}`, () => readAdminExpenses(identity, { dateDebut: period.from, dateFin: period.to, page: index + 2, pageSize: 100 }), (value) => ({ pages: 1, rows: value.depenses.length }))));
   return [...first.depenses, ...rest.flatMap((page) => page.depenses)];
 }
 

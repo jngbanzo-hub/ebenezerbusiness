@@ -2,6 +2,7 @@ import "server-only";
 
 import { resolveCashOpeningBalance } from "@/features/daily-report/cash-period";
 import { readAllCashLedgerPages } from "@/server/cash-ledger-pagination";
+import { countRows, logDirectionSubread, measureDirectionSubread } from "@/server/direction-subread-telemetry";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
@@ -53,25 +54,32 @@ export class CashDashboardSource {
   }
 
   async readDirectionBalances(businessDate: string): Promise<Readonly<Record<CashAgency, Readonly<{ openingBalance: number; currentBalance: number }>>>> {
+    let historyPages = 0;
     const [accounts, opening, daily, ...closures] = await Promise.all([
-      this.select("cash_accounts", "agency,status"),
-      this.select("cash_events", "agency,amount", { event_type: "OPENING_BALANCE_RECORDED" }),
-      readAllCashLedgerPages(async (from, to) => {
+      measureDirectionSubread("cash_accounts", () => this.select("cash_accounts", "agency,status"), countRows),
+      measureDirectionSubread("cash_events", () => this.select("cash_events", "agency,amount", { event_type: "OPENING_BALANCE_RECORDED" }), countRows),
+      measureDirectionSubread("cash_current_day_history", () => readAllCashLedgerPages(async (from, to) => {
+        historyPages += 1;
+        return measureDirectionSubread(`cash_current_day_page_${historyPages}`, async () => {
         const { data, error } = await this.client.schema("public").from("cash_current_day")
           .select("agency,business_date,payments_total,expenses_total,corrections_net")
           .lte("business_date", businessDate).order("business_date", { ascending: true }).order("agency", { ascending: true }).range(from, to);
         if (error || !Array.isArray(data)) throw new CashDashboardSourceError("CASH_READ_FAILED");
         return data as Record<string, unknown>[];
-      }, (row) => `${text(row.agency)}:${text(row.business_date)}`),
+        }, countRows);
+      }, (row) => `${text(row.agency)}:${text(row.business_date)}`), (rows) => ({ pages: historyPages, rows: rows.length })),
       ...CASH_AGENCIES.map(async (agency) => {
+        return measureDirectionSubread(`derniere_cloture_${agency}`, async () => {
         const { data, error } = await this.client.schema("public").from("cash_daily_closures")
           .select("business_date,closing_balance").eq("agency", agency).eq("status", "CLOSED")
           .lt("business_date", businessDate).order("business_date", { ascending: false }).order("version", { ascending: false }).limit(1);
         if (error || !Array.isArray(data)) throw new CashDashboardSourceError("CASH_READ_FAILED");
         return data[0] as Record<string, unknown> | undefined;
+        }, (row) => ({ rows: row ? 1 : 0 }));
       })
     ]);
-    return Object.freeze(Object.fromEntries(CASH_AGENCIES.map((agency, index) => {
+    const aggregationStartedAt = Date.now();
+    const result = Object.freeze(Object.fromEntries(CASH_AGENCIES.map((agency, index) => {
       const accountRows = accounts.filter((row) => row.agency === agency);
       if (accountRows.length !== 1) throw new CashDashboardSourceError("CASH_ACCOUNT_NOT_FOUND");
       accountStatus(accountRows[0].status);
@@ -96,6 +104,8 @@ export class CashDashboardSource {
       const correctionsNet = money(current?.corrections_net ?? 0);
       return [agency, Object.freeze({ openingBalance, currentBalance: cents(openingBalance + paymentsTotal - expensesTotal + correctionsNet) })];
     }))) as Readonly<Record<CashAgency, Readonly<{ openingBalance: number; currentBalance: number }>>>;
+    logDirectionSubread("aggregation_finale", aggregationStartedAt, "SUCCESS", { rows: daily.length });
+    return result;
   }
 
   private async readAgency(agency: CashAgency, businessDate: string): Promise<CashDashboard> {

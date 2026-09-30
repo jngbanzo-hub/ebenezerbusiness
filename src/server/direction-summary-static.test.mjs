@@ -24,7 +24,7 @@ test("le bénéfice officiel est projeté sans formule parallèle", () => {
 test("le mois métier résout une cohorte existante et sa période complète", () => {
   assert.match(source, /businessDatePortoNovo\(now\)/);
   assert.match(source, /resolveDirectionScope\(businessDate, definitions\)/);
-  assert.match(source, /await readBilanOriginMonths\(\)/);
+  assert.match(source, /measureDirectionSubread\("bilan_origin_months", \(\) => readBilanOriginMonths\(\)/);
   assert.match(source, /cohort \? withBilanCohorts/);
   assert.doesNotMatch(source, /month\s*-\s*1|fallback.*cohort/i);
 });
