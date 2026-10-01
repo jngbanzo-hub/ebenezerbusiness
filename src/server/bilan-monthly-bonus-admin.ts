@@ -14,7 +14,29 @@ export async function readMonthlyBonusAdmin(monthOrigin: string) {
 export async function saveMonthlyBonusAdmin(input: Readonly<{ monthOrigin: string; actorId: string; certify: boolean; decisions: readonly { beneficiaryId: string; amountUsd: number | null; note?: string }[] }>) {
   const client = serviceClient();
   const status = input.certify ? "CERTIFIEE" : "A_DEFINIR";
-  const rows = input.decisions.map((item) => ({ month_origin: `${input.monthOrigin}-01`, beneficiary_id: item.beneficiaryId, amount_usd: input.certify ? item.amountUsd : null, status, decided_at: input.certify ? new Date().toISOString() : null, decided_by: input.certify ? input.actorId : null, note: item.note?.trim() || null, updated_at: new Date().toISOString() }));
+  const ids = input.decisions.map((item) => item.beneficiaryId);
+  let agencyByBeneficiary = new Map<string, string>();
+  if (input.certify) {
+    if (new Set(ids).size !== ids.length) throw new Error("BILAN_BONUS_INVALID_BENEFICIARY");
+    const { data, error } = await client.from("bilan_bonus_beneficiaries")
+      .select("beneficiary_id,agency").in("beneficiary_id", ids).eq("active", true);
+    if (error) throw new Error("BILAN_BONUS_SOURCE_UNAVAILABLE");
+    agencyByBeneficiary = new Map((data ?? []).map((person) => [person.beneficiary_id, person.agency]));
+    if (agencyByBeneficiary.size !== ids.length || ids.some((id) => !agencyByBeneficiary.get(id)?.trim())) {
+      throw new Error("BILAN_BONUS_INVALID_BENEFICIARY");
+    }
+  }
+  const rows = input.decisions.map((item) => ({
+    month_origin: `${input.monthOrigin}-01`,
+    beneficiary_id: item.beneficiaryId,
+    ...(input.certify ? { agency: agencyByBeneficiary.get(item.beneficiaryId) } : {}),
+    amount_usd: input.certify ? item.amountUsd : null,
+    status,
+    decided_at: input.certify ? new Date().toISOString() : null,
+    decided_by: input.certify ? input.actorId : null,
+    note: item.note?.trim() || null,
+    updated_at: new Date().toISOString()
+  }));
   if (input.certify && rows.some((row) => row.amount_usd === null || row.amount_usd < 0)) throw new Error("BILAN_BONUS_INCOMPLETE");
   const { error } = await client.from("bilan_monthly_agent_bonuses").upsert(rows, { onConflict: "month_origin,beneficiary_id" });
   if (error) throw new Error("BILAN_BONUS_SAVE_FAILED");
