@@ -8,6 +8,15 @@ const client = readFileSync("src/features/admin/bilan/bilan-client.ts", "utf8");
 const page = readFileSync("src/app/admin/bilan/page.tsx", "utf8");
 const nav = readFileSync("src/features/admin/admin-workspace.tsx", "utf8");
 
+test("le détail Trésorerie affiche seulement TF Bénin par agence",()=>{
+  const detail=ui.split('if(section==="treasury")')[1].split('if(section==="agency-profits")')[0];
+  assert.match(detail,/TF Bénin — \$\{agency\}/);
+  assert.match(detail,/tfBeninByAgencyUsd\[agency\]/);
+  assert.match(detail,/tfBeninAgencyBreakdownComplete/);
+  assert.doesNotMatch(detail,/CurrencyCards/);
+  assert.ok(ui.includes('lines:data.treasury?["TF Bénin",currencyLine(data.treasury.tfBeninByCurrency)]'));
+});
+
 test("la synthèse certifiée reste additive et distincte des compteurs officiels", () => {
   const service = readFileSync("src/features/admin/bilan/bilan-service.ts", "utf8");
   assert.ok(service.includes("aggregateCohortPayments(paymentsRead.rows, query.cohort.id)"));

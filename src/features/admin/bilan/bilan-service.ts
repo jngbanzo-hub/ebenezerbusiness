@@ -116,7 +116,7 @@ export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdm
     airFreight,
     transit: { ...transit, rateUsdPerKg: 1.7, cohortAllocatedAmountUsd: cents(cohortCosts.filter((cost) => cost.kind === "TRANSIT_FIH_LSHI")), status: reconciliation.missing.length || reconciliation.ambiguous.length ? "PARTIEL" : "CERTIFIE", additionalFihProofRequired: false },
     periodExpenses: periodExpenses ? { byCategoryAndCurrency: periodExpenses.operationalByCategoryAndCurrency, byCurrency: periodExpenses.operationalByCurrency, deductibleByCategoryAndCurrency: periodExpenses.deductibleOperationalByCategoryAndCurrency, deductibleByCurrency: periodExpenses.deductibleOperationalByCurrency, deductibleByAgencyAndCurrency: periodExpenses.deductibleOperationalByAgencyAndCurrency, deductibleConnectionByAgencyAndCurrency: periodExpenses.deductibleConnectionByAgencyAndCurrency, deductibleUnallocatedByCurrency: periodExpenses.deductibleOperationalUnallocatedByCurrency, excludedFromProfitByCategoryAndCurrency: periodExpenses.excludedFromProfitByCategoryAndCurrency } : null,
-    treasury: periodExpenses ? { tfBeninByCurrency: periodExpenses.tfBeninByCurrency, revenue: false, deductibleExpense: false, treasury: true, remainingToTransfer: null } : null,
+    treasury: periodExpenses ? { tfBeninByCurrency: periodExpenses.tfBeninByCurrency, tfBeninByAgencyUsd: periodExpenses.tfBeninByAgencyUsd, tfBeninAgencyBreakdownComplete: periodExpenses.tfBeninAgencyBreakdownComplete, revenue: false, deductibleExpense: false, treasury: true, remainingToTransfer: null } : null,
     results: {
       realRevenue: revenue,
       theoreticalReceivableUsd: calculateTheoreticalReceivable(revenue.totalUsd, payments.receivedAmount),

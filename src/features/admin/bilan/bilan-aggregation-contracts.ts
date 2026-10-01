@@ -70,6 +70,8 @@ export type PeriodExpenseSummary = Readonly<{
   deductibleOperationalUnallocatedByCurrency: Readonly<Record<string, number>>;
   excludedFromProfitByCategoryAndCurrency: Readonly<Record<string, Readonly<Record<string, number>>>>;
   tfBeninByCurrency: Readonly<Record<string, number>>;
+  tfBeninByAgencyUsd: Readonly<Record<"FIH" | "LSHI" | "KLZ", number>>;
+  tfBeninAgencyBreakdownComplete: boolean;
   directCostsAllocated: readonly CohortDirectCost[];
   directCostsUnallocated: readonly CohortDirectCost[];
   anomalies: readonly AggregatedQualityIssue[];

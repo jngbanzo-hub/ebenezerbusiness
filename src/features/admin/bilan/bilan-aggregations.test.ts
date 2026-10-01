@@ -180,7 +180,29 @@ test("Expédition KLZ historique reste visible sans double déduction ni charge 
 test("TF Bénin est trésorerie séparée et exclue des charges", () => {
   const result = aggregatePeriodExpenses([expense({ category: "TF Bénin", amount: 100 }), expense({ sourceReference: "DEP:2", category: "Connexion", amount: 20 })], august);
   assert.equal(result.tfBeninByCurrency.USD, 100);
+  assert.deepEqual(result.tfBeninByAgencyUsd, { FIH: 100, LSHI: 0, KLZ: 0 });
+  assert.equal(result.tfBeninAgencyBreakdownComplete, true);
   assert.equal(result.operationalByCurrency.USD, 20);
+});
+
+test("TF Bénin USD est ventilé par agence sans changer son total ni inclure les dépenses hors période", () => {
+  const rows = [
+    expense({ category: "TF Bénin", agency: "FIH", amount: 2400 }),
+    expense({ category: "TF Bénin", agency: "LSHI", amount: 17000, sourceReference: "DEP:2" }),
+    expense({ category: "TF Bénin", agency: "KLZ", amount: 3300, sourceReference: "DEP:3" }),
+    expense({ category: "TF Bénin", agency: "KLZ", amount: 500, date: "2026-09-01", sourceReference: "DEP:4" }),
+    expense({ category: "TF Bénin", agency: "FIH", amount: 700, cancelled: true, sourceReference: "DEP:5" })
+  ];
+  const result = aggregatePeriodExpenses(rows, august);
+  assert.deepEqual(result.tfBeninByAgencyUsd, { FIH: 2400, LSHI: 17000, KLZ: 3300 });
+  assert.deepEqual(result.tfBeninByCurrency, { USD: 22700 });
+  assert.equal(result.tfBeninAgencyBreakdownComplete, true);
+});
+
+test("une agence TF Bénin inconnue ne produit pas une ventilation trompeuse", () => {
+  const result = aggregatePeriodExpenses([expense({ category: "TF Bénin", agency: "COO", amount: 50 })], august);
+  assert.equal(result.tfBeninByCurrency.USD, 50);
+  assert.equal(result.tfBeninAgencyBreakdownComplete, false);
 });
 
 test("conserve des totaux séparés par devise sans conversion", () => {
