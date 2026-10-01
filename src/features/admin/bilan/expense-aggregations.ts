@@ -16,6 +16,7 @@ export function aggregatePeriodExpenses(
   const deductibleOperationalUnallocatedByCurrency: Record<string, number> = {};
   const excludedFromProfitByCategoryAndCurrency: Record<string, Record<string, number>> = {};
   const tfBeninByCurrency: Record<string, number> = {};
+  const tfBeninByAgencyUsd = { FIH: 0, LSHI: 0, KLZ: 0 };
   const directCostsAllocated: CohortDirectCost[] = [];
   const directCostsUnallocated: CohortDirectCost[] = [];
   const anomalies: AggregatedQualityIssue[] = [];
@@ -27,6 +28,8 @@ export function aggregatePeriodExpenses(
     }
     if (expense.category === "TF Bénin") {
       add(tfBeninByCurrency, expense.currency, expense.amount);
+      const agency = expenseAgency(expense.agency);
+      if (expense.currency === "USD" && agency && agency !== "COO") tfBeninByAgencyUsd[agency] = money(tfBeninByAgencyUsd[agency] + expense.amount);
       continue;
     }
     add(operationalByCurrency, expense.currency, expense.amount);
@@ -54,7 +57,7 @@ export function aggregatePeriodExpenses(
       } else add(deductibleOperationalUnallocatedByCurrency, expense.currency, expense.amount);
     }
   }
-  return Object.freeze({ period, operationalByCurrency: freezeRecord(operationalByCurrency), operationalByCategoryAndCurrency: freezeNested(operationalByCategoryAndCurrency), deductibleOperationalByCurrency: freezeRecord(deductibleOperationalByCurrency), deductibleOperationalByCategoryAndCurrency: freezeNested(deductibleOperationalByCategoryAndCurrency), deductibleOperationalByAgencyAndCurrency: freezeNested(deductibleOperationalByAgencyAndCurrency), deductibleConnectionByAgencyAndCurrency: freezeNested(deductibleConnectionByAgencyAndCurrency), deductibleOperationalUnallocatedByCurrency: freezeRecord(deductibleOperationalUnallocatedByCurrency), excludedFromProfitByCategoryAndCurrency: freezeNested(excludedFromProfitByCategoryAndCurrency), tfBeninByCurrency: freezeRecord(tfBeninByCurrency), directCostsAllocated: Object.freeze(directCostsAllocated), directCostsUnallocated: Object.freeze(directCostsUnallocated), anomalies: Object.freeze(anomalies) });
+  return Object.freeze({ period, operationalByCurrency: freezeRecord(operationalByCurrency), operationalByCategoryAndCurrency: freezeNested(operationalByCategoryAndCurrency), deductibleOperationalByCurrency: freezeRecord(deductibleOperationalByCurrency), deductibleOperationalByCategoryAndCurrency: freezeNested(deductibleOperationalByCategoryAndCurrency), deductibleOperationalByAgencyAndCurrency: freezeNested(deductibleOperationalByAgencyAndCurrency), deductibleConnectionByAgencyAndCurrency: freezeNested(deductibleConnectionByAgencyAndCurrency), deductibleOperationalUnallocatedByCurrency: freezeRecord(deductibleOperationalUnallocatedByCurrency), excludedFromProfitByCategoryAndCurrency: freezeNested(excludedFromProfitByCategoryAndCurrency), tfBeninByCurrency: freezeRecord(tfBeninByCurrency), tfBeninByAgencyUsd: Object.freeze(tfBeninByAgencyUsd), tfBeninAgencyBreakdownComplete: money(tfBeninByAgencyUsd.FIH + tfBeninByAgencyUsd.LSHI + tfBeninByAgencyUsd.KLZ) === (tfBeninByCurrency.USD ?? 0), directCostsAllocated: Object.freeze(directCostsAllocated), directCostsUnallocated: Object.freeze(directCostsUnallocated), anomalies: Object.freeze(anomalies) });
 }
 
 export function resultOperationalPeriodUsd(receivedUsd: number, expenses: PeriodExpenseSummary) {
