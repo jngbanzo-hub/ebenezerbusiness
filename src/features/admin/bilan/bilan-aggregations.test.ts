@@ -5,10 +5,10 @@ import { aggregateCohortActivity } from "./activity-aggregations";
 import type { CohortDirectCost } from "./bilan-aggregation-contracts";
 import type { BilanExpense, BilanManifestParcel, BilanPayment, BilanShipment } from "./bilan-readers-contracts";
 import { calculateDirectMargin, aggregatePeriodExpenses, resultOperationalPeriodUsd } from "./expense-aggregations";
-import { adaptOfficialTransitRows, adaptShipmentRows, reconcileOfficialTransit } from "./manifest-readers";
+import { adaptFihDhlOfficialRows, adaptOfficialTransitRows, adaptShipmentRows, reconcileFihDhlOfficial, reconcileOfficialTransit } from "./manifest-readers";
 import { aggregateCohortPayments, aggregatePeriodReceiptsUsd } from "./payment-aggregations";
 import { aggregateReadAnomalies } from "./quality-aggregations";
-import { aggregateCohortShipment, calculateDeclarantDirectCosts, calculateLshiDhlDeclarantDirectCosts, calculateTransitDirectCosts, summarizeOfficialTransit } from "./shipment-aggregations";
+import { aggregateCohortShipment, calculateDeclarantDirectCosts, calculateFihDhlDeclarantDirectCosts, calculateLshiDhlDeclarantDirectCosts, calculateTransitDirectCosts, summarizeOfficialTransit } from "./shipment-aggregations";
 
 const august = { from: "2026-08-01", to: "2026-08-31" };
 
@@ -84,11 +84,34 @@ test("Déclarant LSHI 58 et FIH standard 40 sont ventilés sans perte de centime
   assert.equal(sumCents(fih), 4000);
 });
 
-test("Déclarant FIH DHL applique uniquement 2,8 USD/kg", () => {
-  const costs = calculateDeclarantDirectCosts(shipmentRows([["01/08/2026", "DHL", "FIH", 1, 10, "GROUPAGE 1\nAT10026 : 10kgs"]]));
+test("Déclarant FIH DHL utilise le poids officiel E à 2,8 USD/kg, jamais le détail F", () => {
+  const shipments = shipmentRows([["01/08/2026", "DHL", "FIH", 1, 10, "GROUPAGE 1\nAT10026 : 10kgs"]]);
+  const official = adaptFihDhlOfficialRows([["01/08/2026", "DHL", "FIH", 1, 12, "GROUPAGE 1\nAT10026 : 10kgs"]]).rows;
+  const costs = calculateFihDhlDeclarantDirectCosts(reconcileFihDhlOfficial(official, shipments).matches);
+  assert.equal(calculateDeclarantDirectCosts(shipments).some(({ kind }) => kind === "DECLARANT_FIH_DHL_WEIGHT"), false);
   assert.equal(costs.length, 1);
   assert.equal(costs[0].kind, "DECLARANT_FIH_DHL_WEIGHT");
-  assert.equal(costs[0].amountCents, 2800);
+  assert.equal(costs[0].amountCents, 3360);
+  assert.equal(costs[0].sourceReference, "STATISTIQUES DES EXPÉDITIONS!2");
+});
+
+test("Déclarant FIH DHL répartit le montant officiel entre cohortes sans modifier les autres charges", () => {
+  const shipments = shipmentRows([["01/08/2026", "DHL", "FIH", 1, 3, "GROUPAGE 1\nJL10026 : 1kgs\nAT10026 : 2kgs"]]);
+  const official = adaptFihDhlOfficialRows([["01/08/2026", "DHL", "FIH", 1, 10, "GROUPAGE 1\nJL10026 : 1kgs\nAT10026 : 2kgs"]]).rows;
+  const costs = calculateFihDhlDeclarantDirectCosts(reconcileFihDhlOfficial(official, shipments).matches);
+  assert.deepEqual(costs.map(({ amountCents }) => amountCents), [933, 1867]);
+  assert.equal(sumCents(costs), 2800);
+  assert.equal(calculateDeclarantDirectCosts(shipments).length, 0);
+  assert.equal(calculateTransitDirectCosts(reconcileOfficialTransit(adaptOfficialTransitRows([["01/08/2026", "DHL", "FIH", 1, 10, "GROUPAGE 1"]]).rows, shipments).matches).length, 0);
+});
+
+test("Déclarant FIH DHL ne remplace pas un poids officiel absent par le poids de F", () => {
+  const shipments = shipmentRows([["01/08/2026", "DHL", "FIH", 1, 10, "GROUPAGE 1\nAT10026 : 10kgs"]]);
+  const official = adaptFihDhlOfficialRows([["01/08/2026", "DHL", "FIH", 1, "", "GROUPAGE 1\nAT10026 : 10kgs"]]);
+  assert.equal(official.rows.length, 0);
+  assert.equal(official.anomalies[0].code, "POIDS_INVALIDE");
+  assert.equal(calculateFihDhlDeclarantDirectCosts(reconcileFihDhlOfficial(official.rows, shipments).matches).length, 0);
+  assert.equal(calculateDeclarantDirectCosts(shipments).length, 0);
 });
 
 test("DHL LSHI applique Déclarant 2,8/kg et Transit 1,7/kg comme deux charges distinctes", () => {

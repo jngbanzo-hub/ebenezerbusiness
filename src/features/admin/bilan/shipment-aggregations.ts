@@ -4,7 +4,7 @@ import type { BilanOfficialTransitRow, BilanShipment } from "./bilan-readers-con
 import { allocateUsdByWeight, usdToCents } from "./allocations";
 import { declarantGroupCostUsd, transitFihLshiTotalUsd } from "./direct-costs";
 import { deduplicateShipmentParcels } from "./shipment-groups";
-import type { ShipmentTransitMatch } from "./manifest-readers";
+import type { FihDhlShipmentMatch, ShipmentTransitMatch } from "./manifest-readers";
 
 export function aggregateCohortShipment(
   shipments: readonly BilanShipment[], cohortId: CohortId, registeredWeightKg: number
@@ -29,11 +29,25 @@ export function calculateDeclarantDirectCosts(shipments: readonly BilanShipment[
     const sourceReference = group.identityKey;
     if (shipment.destination === "LSHI" && shipment.company !== "DHL") {
       costs.push(...allocateCost("DECLARANT_LSHI_GROUP", 58, weights, sourceReference));
-    } else if (shipment.destination === "FIH" && shipment.company === "DHL") {
-      for (const entry of weights) costs.push(certifiedCost("DECLARANT_FIH_DHL_WEIGHT", entry.key as CohortId, declarantGroupCostUsd("FIH", "DHL", entry.weightKg), sourceReference));
-    } else if (shipment.destination === "FIH") {
+    } else if (shipment.destination === "FIH" && shipment.company !== "DHL") {
       costs.push(...allocateCost("DECLARANT_FIH_STANDARD_GROUP", 40, weights, sourceReference));
     }
+  }
+  return Object.freeze(costs);
+}
+
+export function calculateFihDhlDeclarantDirectCosts(matches: readonly FihDhlShipmentMatch[]): readonly CohortDirectCost[] {
+  const costs: CohortDirectCost[] = [];
+  for (const match of matches) {
+    const totalUsd = declarantGroupCostUsd("FIH", "DHL", match.official.officialWeightKg);
+    const parcels = match.shipment.groups.flatMap((group) => deduplicateShipmentParcels(group).parcels);
+    const weights = weightsByCohort(parcels.filter((parcel) => parcel.identity.agency === "FIH"));
+    const sourceReference = `${match.official.sourceSheet}!${match.official.sourceRow}`;
+    if (!weights.length) {
+      costs.push(Object.freeze({ kind: "DECLARANT_FIH_DHL_WEIGHT", cohortId: null, amountCents: usdToCents(totalUsd), status: "NON IMPUTÉ", sourceReference }));
+      continue;
+    }
+    costs.push(...allocateCost("DECLARANT_FIH_DHL_WEIGHT", totalUsd, weights, sourceReference));
   }
   return Object.freeze(costs);
 }
@@ -94,7 +108,6 @@ export function summarizeShipmentStructure(shipments: readonly BilanShipment[], 
 function allocateCost(kind: CohortDirectCost["kind"], totalUsd: number, weights: readonly { key: string; weightKg: number }[], sourceReference: string) {
   return allocateUsdByWeight(totalUsd, weights).map((allocation) => Object.freeze({ kind, cohortId: allocation.key as CohortId, amountCents: allocation.amountCents, status: "CERTIFIÉ" as const, sourceReference }));
 }
-function certifiedCost(kind: CohortDirectCost["kind"], cohortId: CohortId, amountUsd: number, sourceReference: string): CohortDirectCost { return Object.freeze({ kind, cohortId, amountCents: usdToCents(amountUsd), status: "CERTIFIÉ", sourceReference }); }
 function weightsByCohort(parcels: readonly ShipmentParcel[]) {
   const weights = new Map<CohortId, number>();
   for (const parcel of parcels) if (parcel.identity.cohort.state === "RESOLVED") weights.set(parcel.identity.cohort.definition.id, (weights.get(parcel.identity.cohort.definition.id) ?? 0) + parcel.weightKg);

@@ -69,6 +69,10 @@ export async function readBilanOfficialTransit(source: BilanRangeReader) {
   return readSafely(() => source.read({ spreadsheet: "MANIFESTE_PUBLIC", range: "'STATISTIQUES DES EXPÉDITIONS'!A2:F" }), "STATISTIQUES DES EXPÉDITIONS", (rows) => adaptOfficialTransitRows(rows, 2));
 }
 
+export async function readBilanFihDhlOfficial(source: BilanRangeReader) {
+  return readSafely(() => source.read({ spreadsheet: "MANIFESTE_PUBLIC", range: "'STATISTIQUES DES EXPÉDITIONS'!A2:F" }), "STATISTIQUES DES EXPÉDITIONS", (rows) => adaptFihDhlOfficialRows(rows, 2));
+}
+
 export async function readBilanAirFreight(source: BilanRangeReader) {
   return readSafely(() => source.read({ spreadsheet: "MANIFESTE_PUBLIC", range: "'STATISTIQUES DES EXPÉDITIONS'!A2:H" }), "STATISTIQUES DES EXPÉDITIONS", (rows) => adaptAirFreightRows(rows, 2));
 }
@@ -124,7 +128,62 @@ export function adaptOfficialTransitRows(rows: readonly (readonly unknown[])[], 
   return freezeResult(result, anomalies);
 }
 
+export function adaptFihDhlOfficialRows(rows: readonly (readonly unknown[])[], firstRow = 2): BilanReadResult<BilanFihDhlOfficialRow> {
+  const result: BilanFihDhlOfficialRow[] = [];
+  const anomalies: BilanReadAnomaly[] = [];
+  rows.forEach((row, index) => {
+    const sourceRow = firstRow + index;
+    if (text(row[1]).toUpperCase() !== "DHL" || text(row[2]).toUpperCase() !== "FIH") return;
+    const date = sheetDate(row[0]);
+    const officialWeightKg = numeric(row[4]);
+    if (!date) anomalies.push(anomaly("CHAMP_MANQUANT", "STATISTIQUES DES EXPÉDITIONS", sourceRow, "Date absente ou invalide."));
+    if (officialWeightKg === null || officialWeightKg <= 0) anomalies.push(anomaly("POIDS_INVALIDE", "STATISTIQUES DES EXPÉDITIONS", sourceRow, "Poids officiel colonne E invalide."));
+    if (!date || officialWeightKg === null || officialWeightKg <= 0) return;
+    const details = text(row[5]).toUpperCase();
+    result.push(Object.freeze({
+      date,
+      company: "DHL",
+      destination: "FIH",
+      groupIdentifiers: Object.freeze(Array.from(details.matchAll(/(?:GROUPAGE|GRP)\s*[- ]?\s*\d+/g), (match) => match[0].replace(/\s+/g, " "))),
+      officialWeightKg,
+      parcelCodes: Object.freeze(extractParcelCodes(details)),
+      sourceSheet: "STATISTIQUES DES EXPÉDITIONS",
+      sourceRow
+    }));
+  });
+  return freezeResult(result, anomalies);
+}
+
 export type ShipmentTransitMatch = Readonly<{ official: BilanOfficialTransitRow; shipment: BilanShipment }>;
+export type BilanFihDhlOfficialRow = Readonly<Omit<BilanOfficialTransitRow, "destination"> & { destination: "FIH" }>;
+export type FihDhlShipmentMatch = Readonly<{ official: BilanFihDhlOfficialRow; shipment: BilanShipment }>;
+
+export function reconcileFihDhlOfficial(
+  officialRows: readonly BilanFihDhlOfficialRow[],
+  shipments: readonly BilanShipment[]
+): Readonly<{ matches: readonly FihDhlShipmentMatch[]; ambiguous: readonly BilanFihDhlOfficialRow[]; missing: readonly BilanFihDhlOfficialRow[]; unmatchedShipments: readonly BilanShipment[] }> {
+  const matches: FihDhlShipmentMatch[] = [];
+  const ambiguous: BilanFihDhlOfficialRow[] = [];
+  const missing: BilanFihDhlOfficialRow[] = [];
+  const tentative: FihDhlShipmentMatch[] = [];
+  for (const official of officialRows) {
+    const candidates = shipments.filter((shipment) =>
+      shipment.date === official.date && shipment.company === official.company && shipment.destination === official.destination &&
+      sameIdentifiers(official.groupIdentifiers, shipment.groups.map((group) => group.canonicalLabel))
+    );
+    if (candidates.length === 1) tentative.push(Object.freeze({ official, shipment: candidates[0] }));
+    else if (candidates.length > 1) ambiguous.push(official);
+    else missing.push(official);
+  }
+  const counts = new Map<BilanShipment, number>();
+  for (const match of tentative) counts.set(match.shipment, (counts.get(match.shipment) ?? 0) + 1);
+  for (const match of tentative) {
+    if (counts.get(match.shipment) === 1) matches.push(match);
+    else ambiguous.push(match.official);
+  }
+  const unmatchedShipments = shipments.filter((shipment) => shipment.company === "DHL" && shipment.destination === "FIH" && !matches.some((match) => match.shipment === shipment));
+  return Object.freeze({ matches: Object.freeze(matches), ambiguous: Object.freeze(ambiguous), missing: Object.freeze(missing), unmatchedShipments: Object.freeze(unmatchedShipments) });
+}
 
 export function reconcileOfficialTransit(
   officialRows: readonly BilanOfficialTransitRow[],

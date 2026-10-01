@@ -13,13 +13,13 @@ import type { BilanRangeRead, BilanRangeReader } from "./bilan-readers-contracts
 import { aggregatePeriodExpenses, calculateDirectMargin, resultOperationalPeriodUsd } from "./expense-aggregations";
 import { calculateMonthlyFixedCosts } from "./fixed-cost-aggregations";
 import { readBilanExpenses, readBilanPayments } from "./financial-readers";
-import { readBilanAirFreight, readBilanManifestParcels, readBilanOfficialTransit, readBilanShipments, reconcileOfficialTransit } from "./manifest-readers";
+import { readBilanAirFreight, readBilanFihDhlOfficial, readBilanManifestParcels, readBilanOfficialTransit, readBilanShipments, reconcileFihDhlOfficial, reconcileOfficialTransit } from "./manifest-readers";
 import { aggregateMonthlyAgentBonuses, applyMonthlyBonuses } from "./monthly-bonus-aggregations";
 import { readMonthlyAgentBonuses } from "./monthly-bonus-reader";
 import { aggregateCohortPayments, aggregatePeriodReceiptsUsd } from "./payment-aggregations";
 import { aggregateReadAnomalies } from "./quality-aggregations";
 import { calculateAgencyProfits, calculateAutomaticKlzShipmentCost, calculateCertifiedCohortRevenue, calculateRealProfit, calculateTheoreticalReceivable } from "./revenue-aggregations";
-import { calculateDeclarantDirectCosts, calculateLshiDhlDeclarantDirectCosts, calculateTransitDirectCosts, summarizeOfficialTransit, summarizeShipmentStructure } from "./shipment-aggregations";
+import { calculateDeclarantDirectCosts, calculateFihDhlDeclarantDirectCosts, calculateLshiDhlDeclarantDirectCosts, calculateTransitDirectCosts, summarizeOfficialTransit, summarizeShipmentStructure } from "./shipment-aggregations";
 import { aggregateShipmentByAgency } from "./shipment-by-agency";
 import { getBilanCohorts } from "./cohort-registry";
 import { countRows, logDirectionSubread, measureDirectionSubread } from "@/server/direction-subread-telemetry";
@@ -36,19 +36,20 @@ const sheetsSource: BilanRangeReader = Object.freeze({
 export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdmin) {
   const official = getBilanCohorts().find(item => item.id === query.cohort.id);
   if (!official || official.id !== query.cohort.id || official.year !== query.cohort.year || official.month !== query.cohort.month) throw new Error("BILAN_REGISTRY_INVALID");
-  const [fih, lshi, klz, shipmentsRead, officialRead, airFreightRead, paymentsRead, expensesRead, bonusRows] = await Promise.all([
+  const [fih, lshi, klz, shipmentsRead, officialRead, fihDhlOfficialRead, airFreightRead, paymentsRead, expensesRead, bonusRows] = await Promise.all([
     measureDirectionSubread("FIH", () => readBilanManifestParcels(sheetsSource, "FIH"), countRows),
     measureDirectionSubread("LSHI", () => readBilanManifestParcels(sheetsSource, "LSHI"), countRows),
     measureDirectionSubread("KLZ", () => readBilanManifestParcels(sheetsSource, "KLZ"), countRows),
     measureDirectionSubread("expeditions", () => readBilanShipments(sheetsSource), countRows),
     measureDirectionSubread("transit_officiel", () => readBilanOfficialTransit(sheetsSource), countRows),
+    measureDirectionSubread("fih_dhl_officiel", () => readBilanFihDhlOfficial(sheetsSource), countRows),
     measureDirectionSubread("fret_aerien", () => readBilanAirFreight(sheetsSource), countRows),
     measureDirectionSubread("encaissements", () => readBilanPayments(() => readAdminPayments()), countRows),
     query.period ? measureDirectionSubread("depenses", () => readBilanExpenses(() => readAllExpenses(admin, query.period!)), countRows) : Promise.resolve({ rows: [], anomalies: [] } as const),
     measureDirectionSubread("primes", () => readMonthlyAgentBonuses(`${query.cohort.year}-${String(query.cohort.month).padStart(2, "0")}`), countRows)
   ]);
   const aggregationStartedAt = Date.now();
-  if ([fih, lshi, klz, shipmentsRead, officialRead, airFreightRead, paymentsRead, expensesRead].some((read) => read.anomalies.some((anomaly) => anomaly.code === "SOURCE_INDISPONIBLE"))) {
+  if ([fih, lshi, klz, shipmentsRead, officialRead, fihDhlOfficialRead, airFreightRead, paymentsRead, expensesRead].some((read) => read.anomalies.some((anomaly) => anomaly.code === "SOURCE_INDISPONIBLE"))) {
     throw new Error("BILAN_SOURCE_UNAVAILABLE");
   }
   const manifestRows = [...fih.rows, ...lshi.rows, ...klz.rows];
@@ -59,13 +60,14 @@ export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdm
   const airFreight = aggregateAirFreight(airFreightRead.rows, shipmentsRead.rows, query.cohort.id);
   const payments = aggregateCohortPayments(paymentsRead.rows, query.cohort.id);
   const reconciliation = reconcileOfficialTransit(officialRead.rows, shipmentsRead.rows);
+  const fihDhlReconciliation = reconcileFihDhlOfficial(fihDhlOfficialRead.rows, shipmentsRead.rows);
   const transit = summarizeOfficialTransit(officialRead.rows);
-  const directCosts = [...calculateDeclarantDirectCosts(shipmentsRead.rows), ...calculateLshiDhlDeclarantDirectCosts(reconciliation.matches), ...calculateTransitDirectCosts(reconciliation.matches), calculateAutomaticKlzShipmentCost(shipment.KLZ.registeredWeightKg, query.cohort.id)];
+  const directCosts = [...calculateDeclarantDirectCosts(shipmentsRead.rows), ...calculateFihDhlDeclarantDirectCosts(fihDhlReconciliation.matches), ...calculateLshiDhlDeclarantDirectCosts(reconciliation.matches), ...calculateTransitDirectCosts(reconciliation.matches), calculateAutomaticKlzShipmentCost(shipment.KLZ.registeredWeightKg, query.cohort.id)];
   const periodExpenses = query.period ? aggregatePeriodExpenses(expensesRead.rows, query.period) : null;
-  const quality = collectQuality(query, { fih, lshi, klz, shipmentsRead, officialRead, airFreightRead, paymentsRead, expensesRead }, activity.anomalies, shipment.qualityIssues, payments.anomalies, periodExpenses?.anomalies ?? []);
+  const quality = collectQuality(query, { fih, lshi, klz, shipmentsRead, officialRead, fihDhlOfficialRead, airFreightRead, paymentsRead, expensesRead }, activity.anomalies, shipment.qualityIssues, payments.anomalies, periodExpenses?.anomalies ?? []);
   const cohortCosts = directCosts.filter((cost) => cost.cohortId === query.cohort.id);
   const unallocated = [...directCosts.filter((cost) => cost.status === "NON IMPUTÉ"), ...(periodExpenses?.directCostsUnallocated ?? [])];
-  const globalStatus = reconciliation.missing.length || reconciliation.ambiguous.length ? "PARTIEL" : "PROVISOIRE";
+  const globalStatus = reconciliation.missing.length || reconciliation.ambiguous.length || fihDhlReconciliation.missing.length || fihDhlReconciliation.ambiguous.length || fihDhlReconciliation.unmatchedShipments.length ? "PARTIEL" : "PROVISOIRE";
   const receivedPeriodUsd = query.period ? aggregatePeriodReceiptsUsd(paymentsRead.rows, query.period) : null;
   const directCostsSummary = summarizeDirectCosts(cohortCosts, unallocated);
   const fixedCosts = calculateMonthlyFixedCosts();

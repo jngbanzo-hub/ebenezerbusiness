@@ -5,7 +5,7 @@ import type { AdminExpense } from "../expenses";
 import type { AdminPayment } from "../types";
 import { adaptExpenses, adaptPayments, readBilanExpenses, readBilanPayments } from "./financial-readers";
 import { createBilanGoogleSheetsRangeReader } from "./google-sheets-read-only";
-import { adaptManifestParcelRows, adaptOfficialTransitRows, adaptShipmentRows, readBilanOfficialTransit, reconcileOfficialTransit } from "./manifest-readers";
+import { adaptFihDhlOfficialRows, adaptManifestParcelRows, adaptOfficialTransitRows, adaptShipmentRows, readBilanFihDhlOfficial, readBilanOfficialTransit, reconcileFihDhlOfficial, reconcileOfficialTransit } from "./manifest-readers";
 
 test("lit FIH, LSHI et KLZ avec date, code, colonne E et montant attendu", () => {
   for (const agency of ["FIH", "LSHI", "KLZ"] as const) {
@@ -52,6 +52,34 @@ test("MANIFESTE PUBLIC conserve uniquement DHL + LSHI et le poids officiel colon
   assert.equal(result.rows.length, 1);
   assert.equal(result.rows[0].officialWeightKg, 775);
   assert.deepEqual(result.rows[0].groupIdentifiers, ["GROUPAGE 1"]);
+});
+
+test("FIH DHL lit seulement DHL/FIH et le poids officiel colonne E en lecture seule", async () => {
+  const rows = [
+    ["01/08/2026", "DHL", "FIH", 1, 12, "GROUPAGE 1 AT10026 : 10kgs"],
+    ["01/08/2026", "DHL", "LSHI", 1, 20, "GROUPAGE 2 AT10126 : 20kgs"],
+    ["01/08/2026", "ASKY", "FIH", 1, 30, "GROUPAGE 3 AT10226 : 30kgs"]
+  ];
+  const requests: unknown[] = [];
+  const source = { mode: "READ_ONLY" as const, read: async (request: unknown) => { requests.push(request); return rows; } };
+  const result = await readBilanFihDhlOfficial(source);
+  assert.deepEqual(requests, [{ spreadsheet: "MANIFESTE_PUBLIC", range: "'STATISTIQUES DES EXPÉDITIONS'!A2:F" }]);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].officialWeightKg, 12);
+  assert.equal(adaptFihDhlOfficialRows(rows).rows[0].destination, "FIH");
+  const shipments = adaptShipmentRows([["01/08/2026", "DHL", "FIH", 1, 10, "GROUPAGE 1 AT10026 : 10kgs"]]).rows;
+  assert.equal(reconcileFihDhlOfficial(result.rows, shipments).matches.length, 1);
+  assert.equal(adaptOfficialTransitRows(rows).rows[0].destination, "LSHI");
+});
+
+test("FIH DHL signale une expédition sans poids officiel et refuse le double rapprochement", () => {
+  const shipments = adaptShipmentRows([["01/08/2026", "DHL", "FIH", 1, 10, "GROUPAGE 1 AT10026 : 10kgs"]]).rows;
+  const official = adaptFihDhlOfficialRows([["01/08/2026", "DHL", "FIH", 1, 12, "GROUPAGE 1 AT10026 : 10kgs"]]).rows;
+  assert.equal(reconcileFihDhlOfficial([], shipments).unmatchedShipments.length, 1);
+  const duplicate = reconcileFihDhlOfficial([...official, ...official], shipments);
+  assert.equal(duplicate.matches.length, 0);
+  assert.equal(duplicate.ambiguous.length, 2);
+  assert.equal(duplicate.unmatchedShipments.length, 1);
 });
 
 test("rapproche 23/23 lignes août DHL LSHI sans ambiguïté", () => {
