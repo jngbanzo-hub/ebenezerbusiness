@@ -1,5 +1,6 @@
 export const SHIPMENT_STATISTICS_SHEET = "STATISTIQUES DES EXPÉDITIONS";
 const AGENCY_SCOPED_IDENTITY_START_DATE = "2026-08-01";
+const TRANSIT_GROUPAGE_STATUSES = new Set(["EN TRANSIT A ADDIS", "EN TRANSIT A LIBREVILLE"]);
 
 export type ShipmentStatisticRow = {
   id: string; date: string; company: string; destination: string; groupages: number;
@@ -58,7 +59,11 @@ export function filterShipmentStatistics(rows: ShipmentStatisticRow[], filters: 
     (!filters.from || row.date >= filters.from) && (!filters.to || row.date <= filters.to) &&
     (!filters.company || filters.company === "ALL" || row.company === filters.company) &&
     (!filters.destination || filters.destination === "ALL" || row.destination === filters.destination) &&
-    (!filters.status || filters.status === "ALL" || normalize(row.status) === filters.status) &&
+    (!filters.status || filters.status === "ALL" || (filters.status === "EN TRANSIT"
+      ? TRANSIT_GROUPAGE_STATUSES.has(normalizeGroupageStatus(row.status))
+      : filters.status === "EN VOL"
+        ? normalizeGroupageStatus(row.status) === "EN VOL"
+        : normalize(row.status) === filters.status)) &&
     (!filters.arrival || filters.arrival === "ALL" || (filters.arrival === "ARRIVED" ? Boolean(row.arrivedGroupages || row.arrivalDate) : !row.arrivedGroupages && !row.arrivalDate)) &&
     (!search || normalize(`${row.groupageCodes} ${row.arrivedGroupages}`).includes(search))
   ));
@@ -165,3 +170,4 @@ function parseParcelDetails(value: unknown) {
   });
 }
 function normalize(value: unknown) { return text(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim().replace(/\s+/g, " "); }
+function normalizeGroupageStatus(value: unknown) { return text(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\s+/g, " "); }
