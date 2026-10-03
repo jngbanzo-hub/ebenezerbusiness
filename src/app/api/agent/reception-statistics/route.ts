@@ -25,7 +25,7 @@ export async function GET(request: Request) {
     const search = (params.get("search") ?? "").trim();
     if (params.has("destination") || (year && !/^\d{4}$/.test(year)) || month === false || (month !== null && !year)
       || !["ALL", "ASKY", "ETHIOPIAN", "DHL", "AIR CONGO"].includes(company)
-      || !["ALL", "ARRIVE", "EN ATTENTE"].includes(status)
+      || !["ALL", "ARRIVE", "EN ATTENTE", "EN VOL", "EN TRANSIT"].includes(status)
       || !["ALL", "ARRIVED", "NOT_ARRIVED"].includes(arrival) || search.length > 100) {
       return failure("INVALID_FILTERS", 400);
     }

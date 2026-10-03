@@ -44,7 +44,8 @@ export function projectReceptionStatistics(
   agency: ReceptionAgency,
   filters: ReceptionFilters = {},
 ): ReceptionStatistics {
-  const filtered = filterShipmentStatistics(shipments, filters).shipments;
+  const filtered = filterShipmentStatistics(shipments, filters.status === "EN TRANSIT" ? { ...filters, status: "ALL" } : filters)
+    .shipments.filter((shipment) => filters.status !== "EN TRANSIT" || isTransitGroupageStatus(shipment.status));
   const seenCodes = new Set<string>();
   const selectedParcels = new Map<string, ReceptionParcel>();
   const copyValidationErrors = new Set<string>();
@@ -103,6 +104,11 @@ export function projectReceptionStatistics(
     parcels,
     copyValidationErrors: Array.from(copyValidationErrors),
   };
+}
+
+function isTransitGroupageStatus(value: string) {
+  const normalized = value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").toUpperCase();
+  return normalized === "EN TRANSIT" || normalized.startsWith("EN TRANSIT ");
 }
 
 function projectShipment(row: ShipmentStatisticRow, agency: ReceptionAgency) {

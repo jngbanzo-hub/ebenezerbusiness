@@ -96,3 +96,61 @@ test("les cartes correspondent exactement à la sélection unique copiée", () =
   assert.equal(reception.totals.parcels, reception.parcels.length);
   assert.equal(reception.totals.weightKg, reception.parcels.reduce((sum, parcel) => sum + parcel.weightKg, 0));
 });
+
+const statusCases = [
+  { status: "Arrivé", weight: 1 },
+  { status: "En Attente", weight: 2 },
+  { status: "En Vol", weight: 3 },
+  { status: "En Transit à Addis", weight: 4 },
+  { status: " en transit à Libreville ", weight: 5 },
+];
+
+for (const agency of ["FIH", "LSHI", "KLZ"] as const) {
+  test(`filtre les cinq statuts et conserve l'isolation ${agency}`, () => {
+    const source = parseShipmentStatistics([
+      ["Date"],
+      ...(["FIH", "LSHI", "KLZ"] as const).flatMap((site) => statusCases.map(({ status, weight }, index) => {
+        const code = `${site}${String(index + 1).padStart(3, "0")}26${site === "KLZ" ? "KLZ" : ""}`;
+        return [`0${index + 1}/09/2026`, site === "FIH" ? "ASKY" : "ETHIOPIAN", site === "KLZ" ? "LSHI" : site,
+          1, weight, `GROUPAGE ${site}-${index + 1}\n${code}: ${weight}kgs`, 0, 0, `${weight} kg`, "1 COLIS", status];
+      })),
+    ]).shipments;
+    const expected = [
+      { status: "ALL", parcels: 5, weightKg: 15, rows: 5 },
+      { status: "ARRIVE", parcels: 1, weightKg: 1, rows: 1 },
+      { status: "EN ATTENTE", parcels: 1, weightKg: 2, rows: 1 },
+      { status: "EN VOL", parcels: 1, weightKg: 3, rows: 1 },
+      { status: "EN TRANSIT", parcels: 2, weightKg: 9, rows: 2 },
+    ];
+    for (const selection of expected) {
+      const result = projectReceptionStatistics(source, agency, { status: selection.status });
+      assert.equal(result.agency, agency);
+      assert.equal(result.totals.parcels, selection.parcels, selection.status);
+      assert.equal(result.totals.weightKg, selection.weightKg, selection.status);
+      assert.equal(result.rows.length, selection.rows, selection.status);
+      assert.ok(result.parcels.every((parcel) => parcel.code.startsWith(agency)), selection.status);
+      assert.equal(result.copyValidationErrors.length, 0, selection.status);
+    }
+    const combined = projectReceptionStatistics(source, agency, {
+      status: "EN VOL", from: "2026-09-03", to: "2026-09-03",
+      company: agency === "FIH" ? "ASKY" : "ETHIOPIAN",
+      arrival: "NOT_ARRIVED", search: `GROUPAGE ${agency}-3`,
+    });
+    assert.equal(combined.totals.parcels, 1);
+    assert.equal(combined.totals.weightKg, 3);
+    assert.equal(projectReceptionStatistics(source, agency, { status: "EN VOL", company: "DHL" }).totals.parcels, 0);
+    assert.equal(projectReceptionStatistics(source, agency, { status: "EN TRANSIT", to: "2026-09-04" }).totals.parcels, 1);
+  });
+}
+
+test("En transit accepte un nouveau lieu sans confondre les autres statuts", () => {
+  const source = parseShipmentStatistics([
+    ["Date"],
+    ["06/09/2026", "ASKY", "FIH", 1, 2, "FIH00626: 2kgs", 0, 0, "2 kg", "1 COLIS", " EN TRANSIT À KINSHASA "],
+    ["06/09/2026", "ASKY", "FIH", 1, 3, "FIH00726: 3kgs", 0, 0, "3 kg", "1 COLIS", "Arrivé à KLZ"],
+    ["06/09/2026", "ASKY", "FIH", 1, 4, "FIH00826: 4kgs", 0, 0, "4 kg", "1 COLIS", "Transit confirmé"],
+  ]).shipments;
+  const transit = projectReceptionStatistics(source, "FIH", { status: "EN TRANSIT" });
+  assert.deepEqual(transit.parcels.map((parcel) => parcel.code), ["FIH00626"]);
+  assert.equal(transit.totals.weightKg, 2);
+});
