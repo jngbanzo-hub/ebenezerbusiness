@@ -82,7 +82,7 @@ test("the resume path never generates or substitutes a request id", () => {
 test("an uncertain Edge failure re-reads the same orchestration and attempts canonical recovery", () => {
   const payload = source.indexOf("const payload = await response.json()");
   const uncertain = source.indexOf("isUncertainPaidExitFailure(response.status, code)", payload);
-  const reread = source.indexOf("await readPaymentOrchestration(input.paymentRequestId)", uncertain);
+  const reread = source.indexOf("await readPaymentOrchestration(effectiveInput.paymentRequestId)", uncertain);
   const refusal = source.indexOf("const status = code ===", reread);
   assert.ok(payload >= 0 && uncertain > payload && reread > uncertain && refusal > reread);
   assert.match(source.slice(uncertain, refusal), /resumePendingPaidDestination/);

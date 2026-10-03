@@ -5,7 +5,8 @@ import { createHmac } from "crypto";
 import { createClient } from "@supabase/supabase-js";
 
 import type { Parcel } from "@/features/agent/types";
-import { readAdminPayments } from "@/server/admin-payments-sheets";
+import { readAdminPaymentNextRow, readAdminPaymentWindow, readAdminPayments, readCanonicalPaymentsByRequestIds } from "@/server/admin-payments-sheets";
+import { destinationPaymentFingerprint, originalPendingRequestId } from "@/server/destination-payment-retry-guard";
 import { StockagesV2Error, type StorageAgency } from "@/server/stockages-v2";
 import type { OperationPerformanceTrace } from "@/server/operation-performance";
 import { parseForwardingAlias, storageParcelDisplayCode, type StorageParcelIdentity } from "@/server/storage-parcel-identity";
@@ -99,6 +100,7 @@ export async function recordDestinationPayment(input: {
   observation: string;
   paymentRequestId: string;
   agentAccessToken: string;
+  agentUserId: string;
   parcelId?: string;
 }, trace?: OperationPerformanceTrace) {
   validateUuid(input.paymentRequestId);
@@ -132,7 +134,7 @@ export async function recordDestinationPayment(input: {
     parcelId: parcel.parcelId,
     ...(parcel.forwardingId ? { forwardingId: parcel.forwardingId } : {})
   } as const;
-  const body = JSON.stringify({
+  const paymentCommand = {
     codeColis: parcel.codeColis,
     destinationCode: input.agency,
     montantPaye: parcel.soldeRestant,
@@ -141,7 +143,12 @@ export async function recordDestinationPayment(input: {
     observation: clean(input.observation),
     paymentRequestId: input.paymentRequestId,
     operationContext
-  });
+  };
+  const originalRequestId = !existing && !parcel.forwardingId
+    ? await resolveOriginalPendingRequestId(input, parcel, paymentCommand)
+    : null;
+  const effectiveInput = originalRequestId ? { ...input, paymentRequestId: originalRequestId } : input;
+  const body = JSON.stringify({ ...paymentCommand, paymentRequestId: effectiveInput.paymentRequestId });
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const secret = process.env.PAYMENTS_ORCHESTRATION_HMAC_SECRET?.trim();
   if (!url || !secret || !input.agentAccessToken) throw new StockagesV2Error("AGENT_SERVICE_UNAVAILABLE", 503, undefined, "recordDestinationPayment");
@@ -167,10 +174,10 @@ export async function recordDestinationPayment(input: {
     const code = typeof payload?.error === "string" ? payload.error : typeof payload?.code === "string" ? payload.code : "AGENT_SERVICE_UNAVAILABLE";
     if (isUncertainPaidExitFailure(response.status, code)) {
       const resumed = await resumePendingPaidDestination(
-        input,
+        effectiveInput,
         parcel,
         paymentMode,
-        await readPaymentOrchestration(input.paymentRequestId),
+        await readPaymentOrchestration(effectiveInput.paymentRequestId),
         trace
       ).catch((cause) => {
         if (cause instanceof StockagesV2Error && cause.code === "CANONICAL_PAYMENT_NOT_CERTIFIED") return null;
@@ -189,6 +196,80 @@ export async function recordDestinationPayment(input: {
     payment: payload,
     forwardingId: parcel.forwardingId ?? null
   });
+}
+
+async function resolveOriginalPendingRequestId(
+  input: { agency: StorageAgency; paymentRequestId: string; agentUserId: string },
+  parcel: Readonly<Parcel>,
+  command: {
+    codeColis: string; destinationCode: string; montantPaye: number; modePaiement: string;
+    referencePaiement: string; observation: string; operationContext: Record<string, unknown>;
+  }
+): Promise<string | null> {
+  const client = serviceClient();
+  const fingerprint = destinationPaymentFingerprint({
+    actorUserId: input.agentUserId, agency: input.agency, ...command
+  });
+  const { data: row, error: lookupError } = await client.from("stockage_payment_orchestrations")
+    .select("request_id,actor_id,agency,tracking_code,parcel_id,forwarding_id,expected_amount,paid_amount,command_fingerprint,state,payment_created,payment_response,cash_event_id,stockage_event_id,created_at")
+    .eq("command_fingerprint", fingerprint).maybeSingle();
+  if (lookupError) throw new StockagesV2Error("STORAGE_READ_FAILED", 503, undefined, "resolveOriginalPendingRequestId");
+  if (!row) return null;
+  const refuse = () => { throw new StockagesV2Error("IDEMPOTENCY_CONFLICT", 409, undefined, "resolveOriginalPendingRequestId"); };
+  if (!parcel.parcelId || !row.created_at || !Number.isFinite(Date.parse(row.created_at))) return refuse();
+
+  const requestIds = [row.request_id, input.paymentRequestId];
+  const [canonical, payments, cashByRequest, cashByFingerprint, storageEvents, completed] = await Promise.all([
+    readCanonicalPaymentsByRequestIds(requestIds),
+    readCompleteAgencyPayments(input.agency),
+    client.from("cash_events").select("event_id").eq("source_type", "PAYMENT_ENGINE").in("source_request_id", requestIds).limit(1),
+    client.from("cash_events").select("event_id").eq("source_type", "PAYMENT_ENGINE").contains("metadata", { commandFingerprint: fingerprint }).limit(1),
+    client.from("stockage_events").select("event_id").in("request_id", requestIds).limit(1),
+    client.from("stockage_payment_orchestrations").select("request_id").eq("agency", input.agency)
+      .eq("tracking_code", parcel.codeColis).eq("state", "COMPLETED").limit(1)
+  ]);
+  if (cashByRequest.error || cashByFingerprint.error || storageEvents.error || completed.error ||
+      requestIds.some((id) => canonical.get(id.toLowerCase())?.status !== "ABSENT")) return refuse();
+  const createdAt = Date.parse(row.created_at);
+  const sheetsPayment = payments.some((payment) => {
+    if (requestIds.some((id) => payment.paymentRequestId?.toLowerCase() === id.toLowerCase())) return true;
+    if (normalizeTrackingCode(payment.codeColis) !== parcel.codeColis || payment.agenceEncaissement !== input.agency) return false;
+    const paidAt = Date.parse(payment.dateTime);
+    return !Number.isFinite(paidAt) || paidAt >= createdAt;
+  });
+  const requestId = originalPendingRequestId({
+    actorId: input.agentUserId, agency: input.agency, trackingCode: parcel.codeColis,
+    parcelId: parcel.parcelId, expectedAmount: parcel.soldeRestant,
+    paidAmount: parcel.soldeRestant, fingerprint
+  }, {
+    requestId: row.request_id, actorId: row.actor_id, agency: row.agency,
+    trackingCode: row.tracking_code, parcelId: row.parcel_id, forwardingId: row.forwarding_id,
+    expectedAmount: Number(row.expected_amount), paidAmount: Number(row.paid_amount),
+    fingerprint: row.command_fingerprint, state: row.state,
+    paymentCreated: row.payment_created, paymentResponse: row.payment_response,
+    cashEventId: row.cash_event_id, storageEventId: row.stockage_event_id
+  }, {
+    canonicalPayment: false, sheetsPayment,
+    cashEvent: Boolean(cashByRequest.data?.length || cashByFingerprint.data?.length),
+    storageEvent: Boolean(storageEvents.data?.length),
+    concurrentCompleted: Boolean(completed.data?.length)
+  });
+  return requestId ?? refuse();
+}
+
+async function readCompleteAgencyPayments(agency: StorageAgency) {
+  const lastRow = await readAdminPaymentNextRow(agency);
+  const payments: Awaited<ReturnType<typeof readAdminPaymentWindow>>["payments"] = [];
+  for (let row = 2; row < lastRow;) {
+    const expected = Math.min(300, lastRow - row);
+    const page = await readAdminPaymentWindow(agency, row, expected);
+    if (page.scannedRows !== expected || page.nextRow !== row + expected) {
+      throw new StockagesV2Error("CANONICAL_PAYMENT_READ_INCOMPLETE", 503, undefined, "readCompleteAgencyPayments");
+    }
+    payments.push(...page.payments);
+    row = page.nextRow;
+  }
+  return payments;
 }
 
 function isUncertainPaidExitFailure(status: number, code: string) {
