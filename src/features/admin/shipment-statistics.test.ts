@@ -38,6 +38,47 @@ test("combine mois, destination, compagnie, statut et arrivée", () => {
   assert.equal(filterShipmentStatistics(parsed.shipments, { from: "2026-04-01", to: "2026-04-30", destination: "KLZ", company: "ASKY", status: "ARRIVE", arrival: "ARRIVED" }).shipments.length, 1);
 });
 
+test("filtre les statuts réels de la colonne K et recalcule toutes les statistiques", () => {
+  const row = (date: string, company: string, destination: string, status: string, code: string, weight: number) =>
+    [date, company, destination, 1, weight, code, 5, weight * 5, `${weight} kg`, "1 COLIS", status, "", ""];
+  const source = parseShipmentStatistics([
+    ["Date", "Compagnie", "Destination", "Groupages", "Poids", "Codes", "Prix", "Montant", "Poids manifeste", "Colis", "Statut"],
+    row("01/09/2026", "ASKY", "FIH", "En Vol", "SE00126", 10),
+    row("02/09/2026", "DHL", "LSHI", " en vol ", "SE00226", 20),
+    row("03/09/2026", "DHL", "KLZ", "EN VOL", "SE00326", 30),
+    row("01/09/2026", "ASKY", "FIH", "En Transit à Addis", "SE00426", 15),
+    row("02/09/2026", "DHL", "LSHI", " en  transit à addis ", "SE00526", 25),
+    row("03/09/2026", "DHL", "KLZ", "En Transit à Libreville", "SE00626", 35),
+    row("02/09/2026", "ASKY", "FIH", "Arrivé", "SE00726", 5),
+    row("02/09/2026", "ASKY", "FIH", " En attente ", "SE00826", 6),
+    row("02/09/2026", "DHL", "KLZ", "Arrivé à KLZ", "SE00926", 7),
+    row("02/09/2026", "DHL", "LSHI", "", "SE01026", 8)
+  ]);
+  const all = filterShipmentStatistics(source.shipments, { status: "ALL" });
+  assert.equal(all.totals.shipments, 10);
+  assert.equal(filterShipmentStatistics(source.shipments, { status: "ARRIVE" }).totals.shipments, 1);
+  assert.equal(filterShipmentStatistics(source.shipments, { status: "EN ATTENTE" }).totals.shipments, 1);
+  const inFlight = filterShipmentStatistics(source.shipments, { status: "EN VOL" });
+  assert.deepEqual({ shipments: inFlight.totals.shipments, groupages: inFlight.totals.groupages, weightKg: inFlight.totals.weightKg, manifestWeightKg: inFlight.totals.manifestWeightKg, parcels: inFlight.totals.parcels, amountUsd: inFlight.totals.amountUsd },
+    { shipments: 3, groupages: 3, weightKg: 60, manifestWeightKg: 60, parcels: 3, amountUsd: 300 });
+  assert.deepEqual(inFlight.byDestination.map(({ label, shipments }) => [label, shipments]), [["FIH", 1], ["KLZ", 1], ["LSHI", 1]]);
+  const inTransit = filterShipmentStatistics(source.shipments, { status: "EN TRANSIT" });
+  assert.deepEqual({ shipments: inTransit.totals.shipments, groupages: inTransit.totals.groupages, weightKg: inTransit.totals.weightKg, manifestWeightKg: inTransit.totals.manifestWeightKg, parcels: inTransit.totals.parcels, amountUsd: inTransit.totals.amountUsd },
+    { shipments: 3, groupages: 3, weightKg: 75, manifestWeightKg: 75, parcels: 3, amountUsd: 375 });
+  assert.deepEqual(inTransit.byCompany.map(({ label, shipments }) => [label, shipments]), [["ASKY", 1], ["DHL", 2]]);
+  for (const status of ["EN VOL", "EN TRANSIT"]) {
+    for (const destination of ["FIH", "LSHI", "KLZ"]) {
+      assert.equal(filterShipmentStatistics(source.shipments, { status, destination }).totals.shipments, 1);
+    }
+  }
+  assert.equal(filterShipmentStatistics(source.shipments, { status: "EN VOL", company: "ASKY" }).totals.shipments, 1);
+  assert.equal(filterShipmentStatistics(source.shipments, { status: "EN TRANSIT", company: "DHL" }).totals.shipments, 2);
+  assert.equal(filterShipmentStatistics(source.shipments, { status: "EN VOL", from: "2026-09-02", to: "2026-09-02" }).totals.shipments, 1);
+  assert.equal(filterShipmentStatistics(source.shipments, { status: "EN TRANSIT", from: "2026-09-03", to: "2026-09-03" }).totals.shipments, 1);
+  assert.equal(filterShipmentStatistics(source.shipments, { status: "EN TRANSIT", arrival: "ARRIVED" }).totals.shipments, 0);
+  assert.equal(filterShipmentStatistics(source.shipments, { status: "EN TRANSIT", search: "SE00426" }).totals.shipments, 1);
+});
+
 test("calcule le poids manifeste et sépare les colis Ethiopian LSHI/KLZ sans doublon", () => {
   const parsed = parseShipmentStatistics([
     ["Date"],

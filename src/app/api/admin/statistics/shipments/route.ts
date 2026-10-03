@@ -17,7 +17,7 @@ export async function GET(request: Request) {
     const year = params.get("year") ?? ""; const month = parseOptionalInteger(params.get("month"), 1, 12);
     const company = clean(params.get("company")) || "ALL"; const destination = clean(params.get("destination")) || "ALL"; const status = clean(params.get("status")) || "ALL"; const arrival = clean(params.get("arrival")) || "ALL"; const search = (params.get("search") ?? "").trim();
     const page = parseInteger(params.get("page"), 1, 100000, 1); const pageSize = parseInteger(params.get("pageSize"), 10, 100, 25);
-    if ((year && !/^\d{4}$/.test(year)) || month === false || (month !== null && !year) || !["ALL", "ASKY", "ETHIOPIAN", "DHL", "AIR CONGO"].includes(company) || !["ALL", "FIH", "LSHI", "KLZ"].includes(destination) || !["ALL", "ARRIVE", "EN ATTENTE"].includes(status) || !["ALL", "ARRIVED", "NOT_ARRIVED"].includes(arrival) || search.length > 100 || page === false || pageSize === false) return failure("Filtres invalides.", 400);
+    if ((year && !/^\d{4}$/.test(year)) || month === false || (month !== null && !year) || !["ALL", "ASKY", "ETHIOPIAN", "DHL", "AIR CONGO"].includes(company) || !["ALL", "FIH", "LSHI", "KLZ"].includes(destination) || !["ALL", "ARRIVE", "EN ATTENTE", "EN VOL", "EN TRANSIT"].includes(status) || !["ALL", "ARRIVED", "NOT_ARRIVED"].includes(arrival) || search.length > 100 || page === false || pageSize === false) return failure("Filtres invalides.", 400);
     const resolvedRange = resolveShipmentDateRange({ year, month, from, to });
     if (resolvedRange === false) return failure("Filtres invalides.", 400);
     ({ from, to } = resolvedRange);
