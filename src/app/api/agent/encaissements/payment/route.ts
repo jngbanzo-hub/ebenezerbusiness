@@ -38,6 +38,7 @@ export async function POST(request: Request) {
       paymentReference: String(body.paymentReference ?? ""),
       observation: String(body.observation ?? ""),
       paymentRequestId: String(body.paymentRequestId ?? ""),
+      agentUserId: auth.identity.userId,
       agentAccessToken: (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "")
     }, trace);
     const result = outcome.payment;
