@@ -152,7 +152,9 @@ function parseManifestWeight(value: unknown) {
 }
 function parseParcelCodes(value: unknown) {
   const matches = text(value).toUpperCase().match(/[A-Z]{1,10}[ \t]*-?[ \t]*\d{2,}(?:[ \t]*[A-Z]{1,5})?/g) ?? [];
-  return Array.from(new Set(matches.map((code) => code.replace(/[^A-Z0-9]/g, "")).filter((code) => !/^(?:GROUPAGE|GRP)\d+$/.test(code))));
+  return Array.from(new Set(matches.map((code) => code.replace(/[^A-Z0-9]/g, "")).filter((code) =>
+    /^[A-Z]{1,10}\d{2,}[A-Z]*$/.test(code) && !/^(?:GROU?PAGE|GRP|SAC)\d/.test(code)
+  )));
 }
 function parseParcelDetails(value: unknown) {
   const raw = text(value).toUpperCase();
@@ -160,10 +162,8 @@ function parseParcelDetails(value: unknown) {
   return Array.from(raw.matchAll(pattern)).flatMap((match) => {
     const code = match[1].replace(/[^A-Z0-9]/g, "");
     const weightKg = Number(match[2].replace(",", "."));
-    // Groupage titles can carry the destination suffix (for example
-    // GROUPAGE081KLZ). They are not parcel-code/weight pairs and must not
-    // inflate the ventilated KLZ count. Keep the broader parcel-code parser
-    // unchanged so the historical global parcel total remains stable.
+    // Groupage titles can carry a suffix (for example GROUPAGE081KLZ).
+    // They are not parcel-code/weight pairs and must not inflate the weight.
     return code && !/^(?:GROUPAGE|GRP)\d+[A-Z]*$/.test(code) && Number.isFinite(weightKg) && weightKg > 0
       ? [{ code, weightKg }]
       : [];
