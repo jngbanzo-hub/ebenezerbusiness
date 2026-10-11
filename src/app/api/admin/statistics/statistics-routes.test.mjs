@@ -22,3 +22,13 @@ test("les validations serveur couvrent tous les filtres et la pagination", () =>
   assert.match(shipments, /resolveShipmentDateRange/);
   assert.match(manifest, /readParcelStatusRows/); assert.match(shipments, /Page invalide/);
 });
+
+test("Tous garde la route et la réponse historiques sans dépendre du registre", () => {
+  const shipments = readFileSync(new URL("./shipments/route.ts", import.meta.url), "utf8");
+  const selected = shipments.indexOf("if (cohortId) {");
+  const all = shipments.indexOf("const totalPages = Math.max(1, Math.ceil(filtered.shipments.length / pageSize))", selected);
+  assert.ok(selected > 0 && all > selected);
+  assert.match(shipments.slice(selected, all), /readBilanOriginMonths\(\)/);
+  assert.doesNotMatch(shipments.slice(all), /readBilanOriginMonths|selectShipmentCohort|cohortStatistics/);
+  assert.match(shipments.slice(all), /NextResponse\.json\(\{ statistics, filters: \{ from, to, year, month, company, destination, status, arrival, search \} \}/);
+});

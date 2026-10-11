@@ -29,3 +29,13 @@ test("propose les cinq filtres groupage et les transmet à la route de lecture",
   assert.match(route, /\["ALL", "ARRIVE", "EN ATTENTE", "EN VOL", "EN TRANSIT"\]\.includes\(status\)/);
   assert.match(route, /filterShipmentStatistics\(source\.shipments, \{ from, to, company, destination, status, arrival, search \}\)/);
 });
+
+test("le filtre cohorte est dynamique et ne change pas la présentation Tous", () => {
+  assert.match(page, /loadOriginMonths\(token\.current\)/);
+  assert.match(page, /label="Mois d’origine \/ Cohorte"/);
+  assert.match(page, /options=\{\["ALL",\.\.\.cohorts\.map/);
+  assert.match(page, /<ShipmentView data=\{shipments\}/);
+  assert.match(page, /<ShipmentCohortView data=\{cohortShipments\}/);
+  assert.match(page, /Ventilation partielle/);
+  assert.match(page, /Poids officiel \(colonne E\), montant et groupages ne sont pas ventilés/);
+});

@@ -23,6 +23,16 @@ export type ShipmentStatistics = {
   byDestination: Array<{ label: string; shipments: number; weightKg: number }>;
 };
 
+export type ShipmentCohortStatistics = {
+  cohortId: string;
+  shipments: Array<{
+    id: string; date: string; company: string; destination: string;
+    parcelCodes: string[]; parcels: number | null; commercialWeightKg: number | null;
+  }>;
+  totals: { shipmentsContainingCohort: number; parcels: number; commercialWeightKg: number };
+  excludedRows: number;
+};
+
 export function parseShipmentStatistics(rows: unknown[][]): ShipmentStatistics {
   const shipments = rows.slice(1).flatMap((row, index) => {
     const date = normalizeDate(row[0]);
@@ -67,6 +77,58 @@ export function filterShipmentStatistics(rows: ShipmentStatisticRow[], filters: 
     (!filters.arrival || filters.arrival === "ALL" || (filters.arrival === "ARRIVED" ? Boolean(row.arrivedGroupages || row.arrivalDate) : !row.arrivedGroupages && !row.arrivalDate)) &&
     (!search || normalize(`${row.groupageCodes} ${row.arrivedGroupages}`).includes(search))
   ));
+}
+
+/** Called only for a selected registry cohort, after the existing shipment filters. */
+export function selectShipmentCohort(rows: ShipmentStatisticRow[], cohortId: string, resolveCohortId: (code: string) => string | null): ShipmentCohortStatistics {
+  const identities = new Set<string>();
+  const shipments: ShipmentCohortStatistics["shipments"] = [];
+  let commercialWeightKg = 0;
+  let excludedRows = 0;
+
+  for (const row of rows) {
+    const resolved = row.parcelCodes.map((code) => {
+      // KLZ is a physical destination annotation in this sheet, not part of
+      // the business tracking code. Keep any preceding B/C/D suffix intact.
+      const businessCode = code.endsWith("KLZ") ? code.slice(0, -3) : code;
+      return { code, cohortId: resolveCohortId(businessCode) };
+    });
+    const selected = resolved.filter((item) => item.cohortId === cohortId);
+    const unresolved = resolved.some((item) => item.cohortId === null);
+    const declaredCountConflicts = row.parcelCount !== null && row.parcelCount !== row.parcelCodes.length;
+    const countCertifiable = Boolean(resolved.length) && !unresolved && !declaredCountConflicts;
+    const sourceWeightIsPresent = row.manifestWeightKg > 0 &&
+      /\b\d+(?:[.,]\d+)?\s*(?:KGS?|KILOGRAMMES?)\b/i.test(row.groupageWeights);
+    const cohortIds = new Set(resolved.map((item) => item.cohortId));
+    let selectedWeight: number | null = null;
+
+    if (selected.length && !unresolved && sourceWeightIsPresent) {
+      if (cohortIds.size === 1) {
+        // The whole commercial weight in column I belongs to this cohort.
+        selectedWeight = row.manifestWeightKg;
+      } else {
+        const weights = new Map<string, number>();
+        for (const detail of row.parcelDetails ?? []) weights.set(detail.code, (weights.get(detail.code) ?? 0) + detail.weightKg);
+        const detailTotal = Array.from(weights.values()).reduce((sum, weight) => sum + weight, 0);
+        if (row.parcelCodes.every((code) => weights.has(code)) && weights.size === row.parcelCodes.length &&
+            Math.abs(detailTotal - row.manifestWeightKg) < 0.001) {
+          selectedWeight = selected.reduce((sum, item) => sum + (weights.get(item.code) ?? 0), 0);
+        }
+      }
+    }
+
+    if (!resolved.length || unresolved || declaredCountConflicts || !sourceWeightIsPresent ||
+        (selected.length && selectedWeight === null)) excludedRows += 1;
+    if (!selected.length) continue;
+    if (countCertifiable) for (const item of selected) identities.add(statisticalParcelIdentity(row, item.code));
+    if (selectedWeight !== null) commercialWeightKg += selectedWeight;
+    shipments.push({ id: row.id, date: row.date, company: row.company, destination: row.destination,
+      parcelCodes: selected.map((item) => item.code), parcels: countCertifiable ? selected.length : null,
+      commercialWeightKg: selectedWeight });
+  }
+
+  return { cohortId, shipments, totals: { shipmentsContainingCohort: shipments.length,
+    parcels: identities.size, commercialWeightKg }, excludedRows };
 }
 
 function summarizeShipments(shipments: ShipmentStatisticRow[]): ShipmentStatistics {

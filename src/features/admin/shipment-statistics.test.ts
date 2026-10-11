@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 // @ts-expect-error Node 22 exécute directement ce test TypeScript avec son extension explicite.
-import { filterShipmentStatistics, parseShipmentStatistics } from "./shipment-statistics.ts";
+import { filterShipmentStatistics, parseShipmentStatistics, selectShipmentCohort } from "./shipment-statistics.ts";
+
+const cohortOf = (code: string) => ({ AT: "2026-08", SE: "2026-09", OT: "2026-10", MR: "2026-03" })[code.slice(0, 2)] ?? null;
 
 test("ignore les lignes de formules vides et agrège les expéditions", () => {
   const parsed = parseShipmentStatistics([
@@ -284,4 +286,66 @@ test("certifie ETHIOPIAN ALL du 17/09/2026 à partir des seuls couples code et p
   assert.deepEqual(lshiFilter.totals.destinationManifestWeightKg, all.totals.destinationManifestWeightKg);
   assert.equal(klzFilter.totals.shipments, 0);
   assert.deepEqual(klzFilter.totals.destinationParcels, { fih: 0, lshi: 0, klz: 0 });
+});
+
+test("Tous conserve exactement la synthèse existante avant et après une sélection de cohorte", () => {
+  const rows = parseShipmentStatistics([["Date"],
+    ["07/09/2026", "DHL", "FIH", 1, 70, "AT19526 : 16kgs\nAT19726 : 6kgs\nAT24926 : 13kgs\nSE00426 : 10kgs\nSE00726 : 12kgs\nSE00626 : 9kgs\nSE02726 : 5kgs", 5, 350, "GROUPAGE 1 : 71Kgs", "7 COLIS", "EN VOL"]
+  ]).shipments;
+  const before = filterShipmentStatistics(rows, { status: "EN VOL" });
+  const at = selectShipmentCohort(before.shipments, "2026-08", cohortOf);
+  const se = selectShipmentCohort(before.shipments, "2026-09", cohortOf);
+  assert.deepEqual(filterShipmentStatistics(rows, { status: "EN VOL" }), before);
+  assert.equal(before.totals.weightKg, 70);
+  assert.equal(before.totals.manifestWeightKg, 71);
+  assert.equal(at.totals.parcels, 3); assert.equal(at.totals.commercialWeightKg, 35);
+  assert.equal(se.totals.parcels, 4); assert.equal(se.totals.commercialWeightKg, 36);
+  assert.equal(at.totals.commercialWeightKg + se.totals.commercialWeightKg, before.totals.manifestWeightKg);
+  assert.equal(at.excludedRows, 0); assert.equal(se.excludedRows, 0);
+});
+
+test("combine période, compagnie, destination et transit avant la ventilation", () => {
+  const rows = parseShipmentStatistics([["Date"],
+    ["03/10/2026", "DHL", "FIH", 1, 20, "SE10126 : 8kgs\nOT10226 : 12kgs", 0, 0, "20 kg", "2 COLIS", "En transit à Addis"],
+    ["03/10/2026", "DHL", "LSHI", 1, 5, "SE10126 : 5kgs", 0, 0, "5 kg", "1 COLIS", "EN VOL"],
+    ["03/10/2026", "ETHIOPIAN", "LSHI", 1, 7, "SE10126KLZ : 7kgs", 0, 0, "7 kg", "1 COLIS", "EN VOL"],
+    ["07/10/2026", "DHL", "FIH", 1, 10, "SE19926 : 10kgs", 0, 0, "10 kg", "1 COLIS", "Arrivé"]
+  ]).shipments;
+  const period = { from: "2026-10-01", to: "2026-10-05" };
+  const fih = selectShipmentCohort(filterShipmentStatistics(rows, { ...period, company: "DHL", destination: "FIH", status: "EN TRANSIT" }).shipments, "2026-09", cohortOf);
+  const lshi = selectShipmentCohort(filterShipmentStatistics(rows, { ...period, company: "DHL", destination: "LSHI", status: "EN VOL" }).shipments, "2026-09", cohortOf);
+  const klz = selectShipmentCohort(filterShipmentStatistics(rows, { ...period, company: "ETHIOPIAN", destination: "LSHI", status: "EN VOL" }).shipments, "2026-09", cohortOf);
+  assert.deepEqual([fih.totals.parcels, fih.totals.commercialWeightKg], [1, 8]);
+  assert.deepEqual([lshi.totals.parcels, lshi.totals.commercialWeightKg], [1, 5]);
+  assert.deepEqual([klz.totals.parcels, klz.totals.commercialWeightKg], [1, 7]);
+  assert.deepEqual(klz.shipments[0]?.parcelCodes, ["SE10126KLZ"]);
+});
+
+test("exclut GROUPAGE/SAC, déduplique les codes exacts et conserve les suffixes", () => {
+  const rows = parseShipmentStatistics([["Date"],
+    ["29/09/2026", "DHL", "LSHI", 1, 8, "GROUPAGE152SAC\nAT00826B : 3kgs\nAT00826 : 5kgs", 0, 0, "8 kg", "2 COLIS"],
+    ["30/09/2026", "DHL", "LSHI", 1, 3, "AT00826B : 3kgs", 0, 0, "3 kg", "1 COLIS"],
+    ["30/09/2026", "DHL", "FIH", 1, 3, "AT00826B : 3kgs", 0, 0, "3 kg", "1 COLIS"]
+  ]).shipments;
+  const selected = selectShipmentCohort(rows, "2026-08", cohortOf);
+  assert.equal(selected.totals.parcels, 3);
+  assert.equal(selected.totals.commercialWeightKg, 14);
+  assert.equal(selected.excludedRows, 0);
+  assert.deepEqual(selected.shipments[0]?.parcelCodes, ["AT00826B", "AT00826"]);
+});
+
+test("écarte seulement le comptage contesté et ne fabrique aucun poids individuel", () => {
+  const rows = parseShipmentStatistics([["Date"],
+    ["21/09/2026", "ETHIOPIAN", "LSHI", 1, 30, "SE10026 : 14kgs\nSE10126 : 19kgs", 0, 0, "30 kg", "1 COLIS"],
+    ["22/09/2026", "DHL", "FIH", 1, 10, "AT10026 : 4kgs\nSE10026 : 7kgs", 0, 0, "10 kg", "2 COLIS"],
+    ["23/09/2026", "DHL", "FIH", 1, 4, "SE20026 : poids inconnu", 0, 0, "", "1 COLIS"]
+  ]).shipments;
+  const se = selectShipmentCohort(rows, "2026-09", cohortOf);
+  assert.equal(se.totals.parcels, 2); // Only the uncontested mixed row and the code without weight.
+  assert.equal(se.totals.commercialWeightKg, 30); // Only single-cohort I is attributable; blank I is not zero.
+  assert.equal(se.excludedRows, 3);
+  assert.equal(se.shipments[0]?.parcels, null);
+  assert.equal(se.shipments[0]?.commercialWeightKg, 30); // Single-cohort I remains attributable.
+  assert.equal(se.shipments[1]?.commercialWeightKg, null);
+  assert.equal(se.shipments[2]?.commercialWeightKg, null);
 });
