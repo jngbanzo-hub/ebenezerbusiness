@@ -49,3 +49,18 @@ test("la ventilation agence n'existe que dans la vue Cohorte et signale les part
   assert.match(cohortView, /Poids commercial \$\{agency\.toUpperCase\(\)\}/);
   assert.doesNotMatch(allView, /unallocatedAgency|Poids commercial \$\{agency/);
 });
+
+test("Compagnie ALL rend les trois agences sans remplacer les six cartes globales ni la vue Cohorte", () => {
+  const allView = page.split("function ShipmentView")[1].split("function Breakdown")[0];
+  const cohortView = page.split("function ShipmentCohortView")[1].split("function ShipmentView")[0];
+  assert.match(allView, /hasLshiKlzBreakdown=hasEthiopianBreakdown\|\|hasDhlBreakdown\|\|company==="ALL"/);
+  assert.match(allView, /company==="ALL"\?<Metric label="Poids total FIH"/);
+  assert.match(allView, /label="Nombre de colis FIH"/);
+  assert.match(allView, /label="Nombre de colis LSHI"/);
+  assert.match(allView, /label="Nombre de colis KLZ"/);
+  for (const label of ["Expéditions filtrées", "Groupages filtrés", "Poids filtré", "Poids Manifeste filtré", "Nombre de colis filtrés", "Montant filtré"]) {
+    assert.match(allView, new RegExp(`label="${label}"`));
+  }
+  assert.match(allView, /Ventilation par agence non exhaustive/);
+  assert.doesNotMatch(cohortView, /destinationManifestWeightKg/);
+});

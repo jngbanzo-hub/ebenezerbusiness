@@ -17,7 +17,7 @@ export type ShipmentStatistics = {
     shipments: number; groupages: number; weightKg: number; manifestWeightKg: number;
     amountUsd: number; parcels: number;
     destinationParcels: { fih: number; lshi: number; klz: number };
-    destinationManifestWeightKg: { lshi: number; klz: number };
+    destinationManifestWeightKg: { fih: number; lshi: number; klz: number };
   };
   byCompany: Array<{ label: string; shipments: number; weightKg: number }>;
   byDestination: Array<{ label: string; shipments: number; weightKg: number }>;
@@ -193,8 +193,11 @@ function summarizeShipments(shipments: ShipmentStatisticRow[]): ShipmentStatisti
   const destinationCodes = { fih: new Set<string>(), lshi: new Set<string>(), klz: new Set<string>() };
   let fallbackParcels = 0;
   const fallbackDestinationParcels = { fih: 0, lshi: 0, klz: 0 };
-  const destinationManifestWeightKg = { lshi: 0, klz: 0 };
+  const destinationManifestWeightKg = { fih: 0, lshi: 0, klz: 0 };
   for (const row of shipments) {
+    if (["ASKY", "DHL"].includes(row.company) && row.destination === "FIH") {
+      destinationManifestWeightKg.fih += row.manifestWeightKg;
+    }
     if (row.parcelCodes.length) {
       for (const code of row.parcelCodes) {
         detailedCodes.add(statisticalParcelIdentity(row, code));
