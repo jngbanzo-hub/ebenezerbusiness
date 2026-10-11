@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { filterShipmentStatistics } from "@/features/admin/shipment-statistics";
+import { resolveCohort, withBilanCohorts } from "@/features/admin/bilan/cohort-registry";
+import { filterShipmentStatistics, selectShipmentCohort } from "@/features/admin/shipment-statistics";
 import { authorizeAdminRequest } from "@/server/admin-authorization";
 import { parseOptionalInteger, resolveShipmentDateRange } from "@/server/admin-statistics-filter-validation";
 import { readShipmentStatistics } from "@/server/admin-statistics-sheets";
+import { readBilanOriginMonths } from "@/server/bilan-origin-months";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,6 +18,7 @@ export async function GET(request: Request) {
     let from = params.get("from") ?? ""; let to = params.get("to") ?? "";
     const year = params.get("year") ?? ""; const month = parseOptionalInteger(params.get("month"), 1, 12);
     const company = clean(params.get("company")) || "ALL"; const destination = clean(params.get("destination")) || "ALL"; const status = clean(params.get("status")) || "ALL"; const arrival = clean(params.get("arrival")) || "ALL"; const search = (params.get("search") ?? "").trim();
+    const cohortId = (params.get("cohortId") ?? "").trim();
     const page = parseInteger(params.get("page"), 1, 100000, 1); const pageSize = parseInteger(params.get("pageSize"), 10, 100, 25);
     if ((year && !/^\d{4}$/.test(year)) || month === false || (month !== null && !year) || !["ALL", "ASKY", "ETHIOPIAN", "DHL", "AIR CONGO"].includes(company) || !["ALL", "FIH", "LSHI", "KLZ"].includes(destination) || !["ALL", "ARRIVE", "EN ATTENTE", "EN VOL", "EN TRANSIT"].includes(status) || !["ALL", "ARRIVED", "NOT_ARRIVED"].includes(arrival) || search.length > 100 || page === false || pageSize === false) return failure("Filtres invalides.", 400);
     const resolvedRange = resolveShipmentDateRange({ year, month, from, to });
@@ -24,6 +27,19 @@ export async function GET(request: Request) {
     if ((from && !isDate(from)) || (to && !isDate(to)) || (from && to && from > to)) return failure("Période invalide.", 400);
     const source = await readShipmentStatistics();
     const filtered = filterShipmentStatistics(source.shipments, { from, to, company, destination, status, arrival, search });
+    if (cohortId) {
+      if (!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(cohortId)) return failure("Cohorte invalide.", 400);
+      const months = await readBilanOriginMonths();
+      if (!months.some((item) => item.id === cohortId)) return failure("Cohorte absente du registre.", 400);
+      const selected = withBilanCohorts(months, () => selectShipmentCohort(filtered.shipments, cohortId, (code) => {
+        const resolution = resolveCohort(code);
+        return resolution.state === "RESOLVED" ? resolution.definition.id : null;
+      }));
+      const totalPages = Math.max(1, Math.ceil(selected.shipments.length / pageSize)); if (page > totalPages) return failure("Page invalide.", 400);
+      const cohortStatistics = { ...selected, shipments: selected.shipments.slice((page - 1) * pageSize, page * pageSize),
+        pagination: { page, pageSize, totalResults: selected.shipments.length, totalPages } };
+      return NextResponse.json({ cohortStatistics, filters: { from, to, year, month, company, destination, status, arrival, search, cohortId } }, { headers: privateHeaders() });
+    }
     const totalPages = Math.max(1, Math.ceil(filtered.shipments.length / pageSize)); if (page > totalPages) return failure("Page invalide.", 400);
     const statistics = { ...filtered, shipments: filtered.shipments.slice((page - 1) * pageSize, page * pageSize), pagination: { page, pageSize, totalResults: filtered.shipments.length, totalPages } };
     return NextResponse.json({ statistics, filters: { from, to, year, month, company, destination, status, arrival, search } }, { headers: privateHeaders() });
