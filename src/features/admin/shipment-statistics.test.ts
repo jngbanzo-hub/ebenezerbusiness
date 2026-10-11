@@ -154,7 +154,7 @@ test("reproduit les poids LSHI et KLZ certifiés pour août 2026", () => {
   assert.equal(filtered.totals.weightKg, 5457);
   assert.equal(filtered.totals.manifestWeightKg, 5615);
   assert.deepEqual(filtered.totals.destinationParcels, { fih: 0, lshi: 953, klz: 150 });
-  assert.deepEqual(filtered.totals.destinationManifestWeightKg, { lshi: 4808, klz: 807 });
+  assert.deepEqual(filtered.totals.destinationManifestWeightKg, { fih: 0, lshi: 4808, klz: 807 });
   assert.equal(filtered.totals.destinationManifestWeightKg.lshi + filtered.totals.destinationManifestWeightKg.klz, filtered.totals.manifestWeightKg);
 });
 
@@ -172,8 +172,8 @@ test("ignore les détails sans poids valide et retourne zéro sans résultat", (
     ["Date"],
     ["15/08/2026", "ETHIOPIAN", "LSHI", 1, 0, "AT10026 : poids inconnu\nAT10126klz : -3kgs", 0, 0, "", "2 COLIS"]
   ]);
-  assert.deepEqual(malformed.totals.destinationManifestWeightKg, { lshi: 0, klz: 0 });
-  assert.deepEqual(filterShipmentStatistics(malformed.shipments, { search: "ABSENT" }).totals.destinationManifestWeightKg, { lshi: 0, klz: 0 });
+  assert.deepEqual(malformed.totals.destinationManifestWeightKg, { fih: 0, lshi: 0, klz: 0 });
+  assert.deepEqual(filterShipmentStatistics(malformed.shipments, { search: "ABSENT" }).totals.destinationManifestWeightKg, { fih: 0, lshi: 0, klz: 0 });
 });
 
 test("recalcule les poids après les filtres date, compagnie, statut et recherche", () => {
@@ -183,7 +183,7 @@ test("recalcule les poids après les filtres date, compagnie, statut et recherch
     ["02/08/2026", "ETHIOPIAN", "LSHI", 1, 7, "GROUPAGE B\nAT10226 : 7kgs", 0, 0, "7 kg", "1 COLIS", "En Attente", "", ""]
   ]);
   const filtered = filterShipmentStatistics(parsed.shipments, { from: "2026-08-01", to: "2026-08-01", company: "ETHIOPIAN", destination: "LSHI", status: "ARRIVE", arrival: "ARRIVED", search: "GROUPAGE A" });
-  assert.deepEqual(filtered.totals.destinationManifestWeightKg, { lshi: 3, klz: 2 });
+  assert.deepEqual(filtered.totals.destinationManifestWeightKg, { fih: 0, lshi: 3, klz: 2 });
 });
 
 test("ventile DHL vers LSHI sans confondre AT102526 et AT102426", () => {
@@ -204,7 +204,7 @@ test("ventile DHL vers LSHI sans confondre AT102526 et AT102426", () => {
 
   assert.equal(filtered.totals.parcels, 148);
   assert.deepEqual(filtered.totals.destinationParcels, { fih: 0, lshi: 134, klz: 14 });
-  assert.deepEqual(filtered.totals.destinationManifestWeightKg, { lshi: 730, klz: 62 });
+  assert.deepEqual(filtered.totals.destinationManifestWeightKg, { fih: 0, lshi: 730, klz: 62 });
   assert.equal(filtered.totals.destinationManifestWeightKg.lshi + filtered.totals.destinationManifestWeightKg.klz, filtered.totals.manifestWeightKg);
 });
 
@@ -235,7 +235,7 @@ test("ignore les titres GROUPAGE/SAC sans retirer les vrais colis DHL LSHI du 29
   assert.equal(filtered.totals.shipments, 12);
   assert.equal(filtered.totals.parcels, 197);
   assert.deepEqual(filtered.totals.destinationParcels, { fih: 0, lshi: 162, klz: 35 });
-  assert.deepEqual(filtered.totals.destinationManifestWeightKg, { lshi: 768, klz: 152 });
+  assert.deepEqual(filtered.totals.destinationManifestWeightKg, { fih: 0, lshi: 768, klz: 152 });
   assert.equal(filtered.shipments.flatMap((shipment) => shipment.parcelCodes).filter((code) => code.startsWith("GROUPAGE")).length, 0);
 });
 
@@ -281,11 +281,51 @@ test("certifie ETHIOPIAN ALL du 17/09/2026 à partir des seuls couples code et p
   assert.equal(all.totals.manifestWeightKg, 603);
   assert.equal(all.totals.parcels, 116);
   assert.deepEqual(all.totals.destinationParcels, { fih: 0, lshi: 95, klz: 21 });
-  assert.deepEqual(all.totals.destinationManifestWeightKg, { lshi: 437, klz: 166 });
+  assert.deepEqual(all.totals.destinationManifestWeightKg, { fih: 0, lshi: 437, klz: 166 });
   assert.deepEqual(lshiFilter.totals.destinationParcels, all.totals.destinationParcels);
   assert.deepEqual(lshiFilter.totals.destinationManifestWeightKg, all.totals.destinationManifestWeightKg);
   assert.equal(klzFilter.totals.shipments, 0);
   assert.deepEqual(klzFilter.totals.destinationParcels, { fih: 0, lshi: 0, klz: 0 });
+});
+
+test("Compagnie ALL réutilise la ventilation FIH/LSHI/KLZ après les filtres sans changer les six totaux globaux", () => {
+  const rows = parseShipmentStatistics([["Date"],
+    ["01/09/2026", "ASKY", "FIH", 1, 4, "SE00126 : 4kgs", 5, 20, "4 kg", "1 COLIS"],
+    ["02/09/2026", "DHL", "LSHI", 1, 5, "SE00226 : 3kgs\nSE00326KLZ : 2kgs", 5, 25, "5 kg", "2 COLIS"],
+    ["03/09/2026", "ETHIOPIAN", "LSHI", 1, 6, "SE00426 : 6kgs", 5, 30, "6 kg", "1 COLIS"]
+  ]).shipments;
+  const all = filterShipmentStatistics(rows, { company: "ALL", destination: "ALL" });
+  assert.deepEqual([
+    all.totals.shipments, all.totals.groupages, all.totals.weightKg,
+    all.totals.manifestWeightKg, all.totals.parcels, all.totals.amountUsd
+  ], [3, 3, 15, 15, 4, 75]);
+  assert.deepEqual(all.totals.destinationParcels, { fih: 1, lshi: 2, klz: 1 });
+  assert.deepEqual(all.totals.destinationManifestWeightKg, { fih: 4, lshi: 9, klz: 2 });
+  assert.equal(Object.values(all.totals.destinationParcels).reduce((sum, value) => sum + value, 0), all.totals.parcels);
+  assert.equal(Object.values(all.totals.destinationManifestWeightKg).reduce((sum, value) => sum + value, 0), all.totals.manifestWeightKg);
+
+  const lshi = filterShipmentStatistics(rows, { company: "ALL", destination: "LSHI" });
+  assert.equal(lshi.totals.parcels, 3);
+  assert.deepEqual(lshi.totals.destinationParcels, { fih: 0, lshi: 2, klz: 1 });
+  assert.deepEqual(lshi.totals.destinationManifestWeightKg, { fih: 0, lshi: 9, klz: 2 });
+  const fih = filterShipmentStatistics(rows, { company: "ALL", destination: "FIH" });
+  assert.deepEqual(fih.totals.destinationParcels, { fih: 1, lshi: 0, klz: 0 });
+  assert.deepEqual(fih.totals.destinationManifestWeightKg, { fih: 4, lshi: 0, klz: 0 });
+  assert.equal(filterShipmentStatistics(rows, { company: "ALL", destination: "KLZ" }).totals.shipments, 0);
+
+  const dhl = filterShipmentStatistics(rows, { company: "DHL", destination: "LSHI" });
+  assert.deepEqual(dhl.totals.destinationParcels, { fih: 0, lshi: 1, klz: 1 });
+  assert.deepEqual(dhl.totals.destinationManifestWeightKg, { fih: 0, lshi: 3, klz: 2 });
+  const ethiopian = filterShipmentStatistics(rows, { company: "ETHIOPIAN", destination: "LSHI" });
+  assert.deepEqual(ethiopian.totals.destinationParcels, { fih: 0, lshi: 1, klz: 0 });
+  assert.deepEqual(ethiopian.totals.destinationManifestWeightKg, { fih: 0, lshi: 6, klz: 0 });
+  const cohort = selectShipmentCohort(all.shipments, "2026-09", cohortOf);
+  assert.deepEqual([cohort.totals.parcels, cohort.totals.commercialWeightKg], [4, 15]);
+  assert.deepEqual(cohort.totals.byAgency, {
+    fih: { parcels: 1, commercialWeightKg: 4 },
+    lshi: { parcels: 2, commercialWeightKg: 9 },
+    klz: { parcels: 1, commercialWeightKg: 2 }
+  });
 });
 
 test("Tous conserve exactement la synthèse existante avant et après une sélection de cohorte", () => {
