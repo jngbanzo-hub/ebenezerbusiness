@@ -321,6 +321,33 @@ test("combine période, compagnie, destination et transit avant la ventilation",
   assert.deepEqual(klz.shipments[0]?.parcelCodes, ["SE10126KLZ"]);
 });
 
+test("ventile la population cohorte existante par agence sans retirer KLZ des lignes LSHI", () => {
+  const rows = parseShipmentStatistics([["Date"],
+    ["03/10/2026", "ETHIOPIAN", "LSHI", 1, 7, "SE00126 : 3kgs\nSE00226KLZ : 2kgs", 0, 0, "5 kg", "2 COLIS", "EN VOL"],
+    ["03/10/2026", "DHL", "FIH", 1, 6, "SE00326 : 4kgs", 0, 0, "4 kg", "1 COLIS", "EN VOL"]
+  ]).shipments;
+  const allRows = filterShipmentStatistics(rows, { status: "EN VOL", destination: "ALL" });
+  const lshiRows = filterShipmentStatistics(rows, { status: "EN VOL", destination: "LSHI" });
+  const allCohort = selectShipmentCohort(allRows.shipments, "2026-09", cohortOf);
+  const lshiCohort = selectShipmentCohort(lshiRows.shipments, "2026-09", cohortOf);
+
+  assert.deepEqual([allCohort.totals.parcels, allCohort.totals.commercialWeightKg], [3, 9]);
+  assert.deepEqual(allCohort.totals.byAgency, {
+    fih: { parcels: 1, commercialWeightKg: 4 },
+    lshi: { parcels: 1, commercialWeightKg: 3 },
+    klz: { parcels: 1, commercialWeightKg: 2 }
+  });
+  assert.deepEqual([lshiCohort.totals.parcels, lshiCohort.totals.commercialWeightKg], [2, 5]);
+  assert.deepEqual(lshiCohort.totals.byAgency, {
+    fih: { parcels: 0, commercialWeightKg: 0 },
+    lshi: { parcels: 1, commercialWeightKg: 3 },
+    klz: { parcels: 1, commercialWeightKg: 2 }
+  });
+  assert.equal(Object.values(lshiCohort.totals.byAgency).reduce((sum, item) => sum + item.parcels, 0), lshiCohort.totals.parcels);
+  assert.equal(Object.values(lshiCohort.totals.byAgency).reduce((sum, item) => sum + item.commercialWeightKg, 0), lshiCohort.totals.commercialWeightKg);
+  assert.deepEqual(filterShipmentStatistics(rows, { status: "EN VOL", destination: "LSHI" }), lshiRows);
+});
+
 test("exclut GROUPAGE/SAC, déduplique les codes exacts et conserve les suffixes", () => {
   const rows = parseShipmentStatistics([["Date"],
     ["29/09/2026", "DHL", "LSHI", 1, 8, "GROUPAGE152SAC\nAT00826B : 3kgs\nAT00826 : 5kgs", 0, 0, "8 kg", "2 COLIS"],
@@ -330,6 +357,11 @@ test("exclut GROUPAGE/SAC, déduplique les codes exacts et conserve les suffixes
   const selected = selectShipmentCohort(rows, "2026-08", cohortOf);
   assert.equal(selected.totals.parcels, 3);
   assert.equal(selected.totals.commercialWeightKg, 14);
+  assert.deepEqual(selected.totals.byAgency, {
+    fih: { parcels: 1, commercialWeightKg: 3 },
+    lshi: { parcels: 2, commercialWeightKg: 11 },
+    klz: { parcels: 0, commercialWeightKg: 0 }
+  });
   assert.equal(selected.excludedRows, 0);
   assert.deepEqual(selected.shipments[0]?.parcelCodes, ["AT00826B", "AT00826"]);
 });
@@ -348,4 +380,20 @@ test("écarte seulement le comptage contesté et ne fabrique aucun poids individ
   assert.equal(se.shipments[0]?.commercialWeightKg, 30); // Single-cohort I remains attributable.
   assert.equal(se.shipments[1]?.commercialWeightKg, null);
   assert.equal(se.shipments[2]?.commercialWeightKg, null);
+});
+
+test("n'estime pas le poids par agence quand une ligne mêle LSHI et KLZ sans détail certifié", () => {
+  const rows = parseShipmentStatistics([["Date"],
+    ["04/10/2026", "DHL", "LSHI", 1, 12, "SE00426\nSE00526KLZ", 0, 0, "10 kg", "2 COLIS", "EN TRANSIT A ADDIS"]
+  ]).shipments;
+  const cohort = selectShipmentCohort(filterShipmentStatistics(rows, { company: "DHL", status: "EN TRANSIT", destination: "LSHI" }).shipments, "2026-09", cohortOf);
+  assert.equal(cohort.totals.parcels, 2);
+  assert.equal(cohort.totals.commercialWeightKg, 10);
+  assert.deepEqual(cohort.totals.byAgency, {
+    fih: { parcels: 0, commercialWeightKg: 0 },
+    lshi: { parcels: 1, commercialWeightKg: 0 },
+    klz: { parcels: 1, commercialWeightKg: 0 }
+  });
+  assert.deepEqual(cohort.totals.unallocatedAgency, { parcels: 0, commercialWeightKg: 10 });
+  assert.equal(cohort.excludedRows, 1);
 });

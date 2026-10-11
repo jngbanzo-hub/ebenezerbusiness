@@ -39,3 +39,13 @@ test("le filtre cohorte est dynamique et ne change pas la présentation Tous", (
   assert.match(page, /Ventilation partielle/);
   assert.match(page, /Poids officiel \(colonne E\), montant et groupages ne sont pas ventilés/);
 });
+
+test("la ventilation agence n'existe que dans la vue Cohorte et signale les parts non certifiables", () => {
+  const cohortView = page.split("function ShipmentCohortView")[1].split("function ShipmentView")[0];
+  const allView = page.split("function ShipmentView")[1].split("function Breakdown")[0];
+  assert.match(cohortView, /data\.totals\.byAgency\[agency\]\.parcels/);
+  assert.match(cohortView, /data\.totals\.byAgency\[agency\]\.commercialWeightKg/);
+  assert.match(cohortView, /Ventilation par agence incomplète/);
+  assert.match(cohortView, /Poids commercial \$\{agency\.toUpperCase\(\)\}/);
+  assert.doesNotMatch(allView, /unallocatedAgency|Poids commercial \$\{agency/);
+});

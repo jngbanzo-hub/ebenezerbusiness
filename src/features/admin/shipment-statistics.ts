@@ -29,7 +29,11 @@ export type ShipmentCohortStatistics = {
     id: string; date: string; company: string; destination: string;
     parcelCodes: string[]; parcels: number | null; commercialWeightKg: number | null;
   }>;
-  totals: { shipmentsContainingCohort: number; parcels: number; commercialWeightKg: number };
+  totals: {
+    shipmentsContainingCohort: number; parcels: number; commercialWeightKg: number;
+    byAgency: Record<"fih" | "lshi" | "klz", { parcels: number; commercialWeightKg: number }>;
+    unallocatedAgency: { parcels: number; commercialWeightKg: number };
+  };
   excludedRows: number;
 };
 
@@ -82,8 +86,15 @@ export function filterShipmentStatistics(rows: ShipmentStatisticRow[], filters: 
 /** Called only for a selected registry cohort, after the existing shipment filters. */
 export function selectShipmentCohort(rows: ShipmentStatisticRow[], cohortId: string, resolveCohortId: (code: string) => string | null): ShipmentCohortStatistics {
   const identities = new Set<string>();
+  const agencyByIdentity = new Map<string, "fih" | "lshi" | "klz" | null>();
+  const byAgency = {
+    fih: { parcels: 0, commercialWeightKg: 0 },
+    lshi: { parcels: 0, commercialWeightKg: 0 },
+    klz: { parcels: 0, commercialWeightKg: 0 }
+  };
   const shipments: ShipmentCohortStatistics["shipments"] = [];
   let commercialWeightKg = 0;
+  let unallocatedCommercialWeightKg = 0;
   let excludedRows = 0;
 
   for (const row of rows) {
@@ -100,35 +111,76 @@ export function selectShipmentCohort(rows: ShipmentStatisticRow[], cohortId: str
     const sourceWeightIsPresent = row.manifestWeightKg > 0 &&
       /\b\d+(?:[.,]\d+)?\s*(?:KGS?|KILOGRAMMES?)\b/i.test(row.groupageWeights);
     const cohortIds = new Set(resolved.map((item) => item.cohortId));
+    const weights = new Map<string, number>();
+    for (const detail of row.parcelDetails ?? []) weights.set(detail.code, (weights.get(detail.code) ?? 0) + detail.weightKg);
+    const detailTotal = Array.from(weights.values()).reduce((sum, weight) => sum + weight, 0);
+    const detailedWeightCertified = row.parcelCodes.every((code) => weights.has(code)) && weights.size === row.parcelCodes.length &&
+      Math.abs(detailTotal - row.manifestWeightKg) < 0.001;
     let selectedWeight: number | null = null;
 
     if (selected.length && !unresolved && sourceWeightIsPresent) {
       if (cohortIds.size === 1) {
         // The whole commercial weight in column I belongs to this cohort.
         selectedWeight = row.manifestWeightKg;
-      } else {
-        const weights = new Map<string, number>();
-        for (const detail of row.parcelDetails ?? []) weights.set(detail.code, (weights.get(detail.code) ?? 0) + detail.weightKg);
-        const detailTotal = Array.from(weights.values()).reduce((sum, weight) => sum + weight, 0);
-        if (row.parcelCodes.every((code) => weights.has(code)) && weights.size === row.parcelCodes.length &&
-            Math.abs(detailTotal - row.manifestWeightKg) < 0.001) {
-          selectedWeight = selected.reduce((sum, item) => sum + (weights.get(item.code) ?? 0), 0);
-        }
+      } else if (detailedWeightCertified) {
+        selectedWeight = selected.reduce((sum, item) => sum + (weights.get(item.code) ?? 0), 0);
       }
     }
 
-    if (!resolved.length || unresolved || declaredCountConflicts || !sourceWeightIsPresent ||
-        (selected.length && selectedWeight === null)) excludedRows += 1;
+    const originalExcluded = !resolved.length || unresolved || declaredCountConflicts || !sourceWeightIsPresent ||
+      (selected.length && selectedWeight === null);
+    if (originalExcluded) excludedRows += 1;
     if (!selected.length) continue;
-    if (countCertifiable) for (const item of selected) identities.add(statisticalParcelIdentity(row, item.code));
-    if (selectedWeight !== null) commercialWeightKg += selectedWeight;
+    const selectedAgencies = selected.map((item) => cohortParcelAgency(row, item.code));
+    let agencyCountUnallocated = false;
+    let agencyWeightUnallocated = false;
+    if (countCertifiable) for (const item of selected) {
+      const identity = statisticalParcelIdentity(row, item.code);
+      const agency = cohortParcelAgency(row, item.code);
+      identities.add(identity);
+      const prior = agencyByIdentity.get(identity);
+      agencyByIdentity.set(identity, prior === undefined || prior === agency ? agency : null);
+      if (!agency || (prior !== undefined && prior !== agency)) agencyCountUnallocated = true;
+    }
+    if (selectedWeight !== null) {
+      commercialWeightKg += selectedWeight;
+      const soleAgency = selectedAgencies[0];
+      if (soleAgency && selectedAgencies.every((agency) => agency === soleAgency)) {
+        byAgency[soleAgency].commercialWeightKg += selectedWeight;
+      } else if (detailedWeightCertified) {
+        for (const item of selected) {
+          const weight = weights.get(item.code) ?? 0;
+          const agency = cohortParcelAgency(row, item.code);
+          if (agency) byAgency[agency].commercialWeightKg += weight;
+          else { unallocatedCommercialWeightKg += weight; agencyWeightUnallocated = true; }
+        }
+      } else {
+        unallocatedCommercialWeightKg += selectedWeight;
+        agencyWeightUnallocated = true;
+      }
+    }
+    if (!originalExcluded && (agencyCountUnallocated || agencyWeightUnallocated)) excludedRows += 1;
     shipments.push({ id: row.id, date: row.date, company: row.company, destination: row.destination,
       parcelCodes: selected.map((item) => item.code), parcels: countCertifiable ? selected.length : null,
       commercialWeightKg: selectedWeight });
   }
 
+  let unallocatedParcels = 0;
+  agencyByIdentity.forEach((agency) => {
+    if (agency) byAgency[agency].parcels += 1;
+    else unallocatedParcels += 1;
+  });
   return { cohortId, shipments, totals: { shipmentsContainingCohort: shipments.length,
-    parcels: identities.size, commercialWeightKg }, excludedRows };
+    parcels: identities.size, commercialWeightKg, byAgency,
+    unallocatedAgency: { parcels: unallocatedParcels, commercialWeightKg: unallocatedCommercialWeightKg } }, excludedRows };
+}
+
+function cohortParcelAgency(row: ShipmentStatisticRow, code: string): "fih" | "lshi" | "klz" | null {
+  if (usesLshiKlzBreakdown(row)) return classifyLshiKlzParcel(code);
+  if (row.destination === "FIH") return "fih";
+  if (row.destination === "LSHI") return "lshi";
+  if (row.destination === "KLZ") return "klz";
+  return null;
 }
 
 function summarizeShipments(shipments: ShipmentStatisticRow[]): ShipmentStatistics {
