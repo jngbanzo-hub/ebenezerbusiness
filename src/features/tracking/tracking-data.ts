@@ -67,7 +67,7 @@ export const trackingDetailItems = [
   { key: "weight", label: "Poids", icon: Scale },
   { key: "amount", label: "Montant", icon: Banknote },
   { key: "status", label: "Statut", icon: Truck },
-  { key: "expectedDeliveryDate", label: "Date prévue / commentaire", icon: CalendarDays }
+  { key: "expectedDeliveryDate", label: "État du paiement", icon: CalendarDays }
 ] as const;
 
 export function createTrackingResultFromPublicRecord(
