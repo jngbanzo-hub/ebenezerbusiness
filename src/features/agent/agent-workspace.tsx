@@ -78,7 +78,9 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
   } | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isResumingOt12926, setIsResumingOt12926] = useState(false);
   const paymentLockRef = useRef(false);
+  const resumeOt12926LockRef = useRef(false);
   const searchLockRef = useRef(false);
   const activeSearchIdRef = useRef(0);
   const paymentAttemptRef = useRef<PaymentAttempt | null>(null);
@@ -415,6 +417,34 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
     }
   }
 
+  async function handleResumeOt12926() {
+    if (resumeOt12926LockRef.current || profile?.agence !== "FIH" ||
+        parcel?.codeColis !== "OT12926" || parcel.parcelId !== "8ad13a88-2790-482c-ab0e-53a42bccff33" ||
+        parcel.soldeRestant !== 0 || parcel.montantAttendu !== 72 || parcel.poidsKg !== 8) return;
+    resumeOt12926LockRef.current = true;
+    setIsResumingOt12926(true);
+    setMessage(null);
+    try {
+      const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
+      if (!session?.access_token) throw new Error("Session Agent requise.");
+      const response = await fetch("/api/agent/encaissements/resume-ot12926", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentRequestId: "c3e47de2-956c-4147-b60f-363ae5742b40" }),
+        cache: "no-store"
+      });
+      const result = await response.json().catch(() => null) as { success?: boolean; replayed?: boolean } | null;
+      if (!response.ok || result?.success !== true || result.replayed !== true) throw new Error("Reprise non certifiée. Aucun nouveau paiement à saisir.");
+      setMessage({ type: "success", text: "Reprise idempotente OT12926 terminée. Aucun nouveau paiement créé." });
+      setParcel(null);
+    } catch (error) {
+      setMessage({ type: "error", text: error instanceof Error ? error.message : "Reprise non certifiée." });
+    } finally {
+      resumeOt12926LockRef.current = false;
+      setIsResumingOt12926(false);
+    }
+  }
+
   const parsedAmount = Number(montantPaye.replace(",", "."));
   const exactBalance = parcel ? getExactBalance(parcel) : null;
   const isAmountValid =
@@ -584,6 +614,15 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
                 />
               </dl>
               <p className="mt-5 rounded-lg border border-accent/25 bg-accent/10 p-3 font-semibold text-accent">Statut : {parcelStatus(parcel, parcelAction)}</p>
+
+              {profile?.agence === "FIH" && parcel.codeColis === "OT12926" &&
+                parcel.parcelId === "8ad13a88-2790-482c-ab0e-53a42bccff33" &&
+                parcel.soldeRestant === 0 && parcel.montantAttendu === 72 && parcel.poidsKg === 8 ? (
+                  <Button type="button" variant="outline" className="mt-5" disabled={isResumingOt12926}
+                    onClick={() => void handleResumeOt12926()}>
+                    {isResumingOt12926 ? "Reprise en cours…" : "Finaliser la reprise OT12926 (sans nouveau paiement)"}
+                  </Button>
+                ) : null}
 
               {parcel.soldeRestant > 0 ? <form onSubmit={handlePayment} className="mt-7 grid gap-5">
                 <div className="grid gap-4 sm:grid-cols-2">
