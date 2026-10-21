@@ -78,9 +78,10 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
   } | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [isResumingOt12926, setIsResumingOt12926] = useState(false);
+  const [resumeEligibility, setResumeEligibility] = useState<{ parcelId: string; trackingCode: string; paymentRequestId: string } | null>(null);
+  const [isResumingDestination, setIsResumingDestination] = useState(false);
   const paymentLockRef = useRef(false);
-  const resumeOt12926LockRef = useRef(false);
+  const resumeDestinationLockRef = useRef(false);
   const searchLockRef = useRef(false);
   const activeSearchIdRef = useRef(0);
   const paymentAttemptRef = useRef<PaymentAttempt | null>(null);
@@ -161,6 +162,7 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
     const searchId = ++activeSearchIdRef.current;
     setMessage(null);
     setParcel(null);
+    setResumeEligibility(null);
     setStorageSearchResult(null);
     setManifestSearchResult(null);
     setParcelAction(null);
@@ -235,6 +237,9 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
         setParcel(foundParcel);
         setParcelAction(foundParcel.forwardingId ? null : await loadParcelAction(foundParcel.codeColis));
         setMontantPaye(String(foundParcel.soldeRestant));
+        if (foundParcel.soldeRestant === 0 && foundParcel.parcelId && !foundParcel.forwardingId) {
+          void loadResumeEligibility(foundParcel, searchId);
+        }
         return;
       }
 
@@ -417,31 +422,52 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
     }
   }
 
-  async function handleResumeOt12926() {
-    if (resumeOt12926LockRef.current || profile?.agence !== "FIH" ||
-        parcel?.codeColis !== "OT12926" || parcel.parcelId !== "8ad13a88-2790-482c-ab0e-53a42bccff33" ||
-        parcel.soldeRestant !== 0 || parcel.montantAttendu !== 72 || parcel.poidsKg !== 8) return;
-    resumeOt12926LockRef.current = true;
-    setIsResumingOt12926(true);
+  async function loadResumeEligibility(candidate: Parcel, searchId: number) {
+    try {
+      const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
+      if (!session?.access_token || !candidate.parcelId) return;
+      const params = new URLSearchParams({ trackingCode: candidate.codeColis, parcelId: candidate.parcelId });
+      const response = await fetch(`/api/agent/encaissements/resume?${params}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store"
+      });
+      const result = await response.json().catch(() => null) as { eligible?: boolean; paymentRequestId?: string } | null;
+      if (searchId === activeSearchIdRef.current && response.ok && result?.eligible === true && result.paymentRequestId) {
+        setResumeEligibility({ parcelId: candidate.parcelId, trackingCode: candidate.codeColis, paymentRequestId: result.paymentRequestId });
+      }
+    } catch {
+      // Failed certification is fail-closed: no resume button.
+    }
+  }
+
+  async function handleResumeDestination() {
+    if (resumeDestinationLockRef.current || !resumeEligibility || !parcel || !profile ||
+        profile.agence === "COTONOU" || parcel.parcelId !== resumeEligibility.parcelId ||
+        parcel.codeColis !== resumeEligibility.trackingCode || parcel.destinationCode !== profile.agence ||
+        parcel.soldeRestant !== 0 || parcel.forwardingId) return;
+    resumeDestinationLockRef.current = true;
+    setIsResumingDestination(true);
     setMessage(null);
     try {
       const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
       if (!session?.access_token) throw new Error("Session Agent requise.");
-      const response = await fetch("/api/agent/encaissements/resume-ot12926", {
+      const response = await fetch("/api/agent/encaissements/resume", {
         method: "POST",
         headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentRequestId: "c3e47de2-956c-4147-b60f-363ae5742b40" }),
+        body: JSON.stringify({ paymentRequestId: resumeEligibility.paymentRequestId }),
         cache: "no-store"
       });
       const result = await response.json().catch(() => null) as { success?: boolean; replayed?: boolean } | null;
       if (!response.ok || result?.success !== true || result.replayed !== true) throw new Error("Reprise non certifiée. Aucun nouveau paiement à saisir.");
-      setMessage({ type: "success", text: "Reprise idempotente OT12926 terminée. Aucun nouveau paiement créé." });
+      setMessage({ type: "success", text: "Reprise terminée. Aucun nouveau paiement créé." });
+      setResumeEligibility(null);
       setParcel(null);
+      setStorageSearchResult(null);
+      setParcelAction(null);
     } catch (error) {
       setMessage({ type: "error", text: error instanceof Error ? error.message : "Reprise non certifiée." });
     } finally {
-      resumeOt12926LockRef.current = false;
-      setIsResumingOt12926(false);
+      resumeDestinationLockRef.current = false;
+      setIsResumingDestination(false);
     }
   }
 
@@ -615,12 +641,11 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
               </dl>
               <p className="mt-5 rounded-lg border border-accent/25 bg-accent/10 p-3 font-semibold text-accent">Statut : {parcelStatus(parcel, parcelAction)}</p>
 
-              {profile?.agence === "FIH" && parcel.codeColis === "OT12926" &&
-                parcel.parcelId === "8ad13a88-2790-482c-ab0e-53a42bccff33" &&
-                parcel.soldeRestant === 0 && parcel.montantAttendu === 72 && parcel.poidsKg === 8 ? (
-                  <Button type="button" variant="outline" className="mt-5" disabled={isResumingOt12926}
-                    onClick={() => void handleResumeOt12926()}>
-                    {isResumingOt12926 ? "Reprise en cours…" : "Finaliser la reprise OT12926 (sans nouveau paiement)"}
+              {resumeEligibility && resumeEligibility.parcelId === parcel.parcelId && resumeEligibility.trackingCode === parcel.codeColis &&
+                parcel.soldeRestant === 0 && !parcel.forwardingId ? (
+                  <Button type="button" variant="outline" className="mt-5" disabled={isResumingDestination}
+                    onClick={() => void handleResumeDestination()}>
+                    {isResumingDestination ? "Finalisation en cours…" : "Finaliser la reprise — sans nouveau paiement"}
                   </Button>
                 ) : null}
 
