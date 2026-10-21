@@ -280,7 +280,7 @@ function isUncertainPaidExitFailure(status: number, code: string) {
   ].includes(code);
 }
 
-async function resumePendingPaidDestination(
+export async function resumePendingPaidDestination(
   input: { trackingCode: string; agency: StorageAgency; paymentReference: string; observation: string; paymentRequestId: string; parcelId?: string },
   parcel: Readonly<Parcel>,
   paymentMode: string,
@@ -358,7 +358,7 @@ async function resumePendingPaidDestination(
 }
 
 type ReplayParcel = Pick<Parcel, "codeColis" | "montantAttendu">;
-type PaymentOrchestrationRow = {
+export type PaymentOrchestrationRow = {
   request_id: string; command_fingerprint: string; tracking_code: string; agency: string; actor_name: string;
   expected_amount: number | string; paid_amount: number | string; payment_created: boolean; payment_response: unknown;
   cash_event_id: string | null; stockage_event_id: string | null; state: string; parcel_id: string | null; forwarding_id: string | null;
