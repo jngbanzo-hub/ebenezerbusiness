@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildManifestStatisticsFromParcelRows, buildParcelStatusSituation } from "./parcel-status-statistics.ts";
+import { buildManifestStatisticsFromParcelRows, buildParcelStatusSituation, isCalendarDate } from "./parcel-status-statistics.ts";
 
 const row = (rowNumber, codeRaw, weightRaw, statusRaw = "", dateRaw = "08/08/2026", destination = "FIH") => ({ destination, rowNumber, dateRaw, codeRaw, weightRaw, statusRaw });
+
+test("les dates personnalisées sont des dates calendaires valides", () => {
+  assert.equal(isCalendarDate("2026-10-12"), true);
+  assert.equal(isCalendarDate("2026-02-30"), false);
+  assert.equal(isCalendarDate("2024-02-29"), true);
+  assert.equal(isCalendarDate("12/10/2026"), false);
+});
 
 test("août compte chaque ligne valide, y compris les doublons et statuts inconnus avec Tous", () => {
   const situation = buildParcelStatusSituation([
@@ -46,6 +53,45 @@ test("juillet et la période personnalisée restent inclusifs et séparés par d
   assert.equal(july.destinations.FIH.total.weightKg, 2);
   assert.equal(july.destinations.LSHI.total.weightKg, 3);
   assert.equal(july.destinations.KLZ.total.weightKg, 0);
+});
+
+test("les dates journalières filtrent un jour, une semaine et une plage traversant deux mois", () => {
+  const rows = [
+    row(2, "BEFORE", 1, "Arrivé", "2026-09-27", "FIH"),
+    row(3, "SEP-28", 4, "Arrivé", "28/09/2026", "FIH"),
+    row(2, "OCT-04", 5, "En vol", "2026-10-04", "KLZ"),
+    row(4, "OCT-11", 6, "Arrivé", "2026-10-11", "FIH"),
+    row(5, "OCT-12-FIH", 1, "Arrivé", "12/10/2026", "FIH"),
+    row(2, "OCT-12-LSHI", 2, "En vol", "2026-10-12", "LSHI"),
+    row(3, "OCT-18", 3, "Arrivé", "2026-10-18", "KLZ"),
+    row(4, "AFTER", 7, "Arrivé", "2026-10-19", "KLZ")
+  ];
+
+  const monthly = buildParcelStatusSituation(rows, { month: 10, fromMonth: "2026-10", toMonth: "2026-10" });
+  assert.equal(monthly.rows.length, 6);
+  assert.equal(buildManifestStatisticsFromParcelRows(monthly.rows).annualKilograms?.total, 24);
+
+  const singleDay = buildParcelStatusSituation(rows, { fromDate: "2026-10-12", toDate: "2026-10-12" });
+  assert.deepEqual(singleDay.rows.map((item) => item.code), ["OCT-12-FIH", "OCT-12-LSHI"]);
+  assert.equal(buildManifestStatisticsFromParcelRows(singleDay.rows).annualParcels?.total, 2);
+  assert.equal(buildManifestStatisticsFromParcelRows(singleDay.rows).annualKilograms?.total, 3);
+
+  const week = buildParcelStatusSituation(rows, { fromDate: "2026-10-12", toDate: "2026-10-18" });
+  assert.deepEqual(week.rows.map((item) => item.code), ["OCT-12-FIH", "OCT-12-LSHI", "OCT-18"]);
+  assert.equal(buildManifestStatisticsFromParcelRows(week.rows).annualKilograms?.total, 6);
+  assert.equal(buildManifestStatisticsFromParcelRows(week.rows).kilograms.length, 1);
+
+  const crossMonth = buildParcelStatusSituation(rows, { fromDate: "2026-09-28", toDate: "2026-10-04" });
+  assert.deepEqual(crossMonth.rows.map((item) => item.code), ["SEP-28", "OCT-04"]);
+  assert.equal(buildManifestStatisticsFromParcelRows(crossMonth.rows).kilograms.length, 2);
+  assert.equal(buildManifestStatisticsFromParcelRows(crossMonth.rows).annualKilograms?.total, 9);
+
+  for (const destination of ["FIH", "LSHI", "KLZ"]) {
+    const filtered = buildParcelStatusSituation(rows, { fromDate: "2026-10-12", toDate: "2026-10-18", destination });
+    assert.equal(filtered.rows.length, 1);
+    assert.equal(filtered.rows[0].destination, destination);
+  }
+  assert.deepEqual(buildParcelStatusSituation(rows, { fromDate: "2026-10-12", toDate: "2026-10-18", status: "ARRIVED" }).rows.map((item) => item.code), ["OCT-12-FIH", "OCT-18"]);
 });
 
 test("les exclusions affichées sont limitées à la période et ignorent les lignes entièrement vides", () => {

@@ -23,6 +23,23 @@ test("les validations serveur couvrent tous les filtres et la pagination", () =>
   assert.match(manifest, /readParcelStatusRows/); assert.match(shipments, /Page invalide/);
 });
 
+test("le manifeste accepte une plage journalière complète sans remplacer le chemin mensuel", () => {
+  const route = readFileSync(new URL("./manifest/route.ts", import.meta.url), "utf8");
+  const page = readFileSync(new URL("../../../../features/admin/admin-statistics-page.tsx", import.meta.url), "utf8");
+  assert.match(page, /set\("fromDate", fromDate\)/);
+  assert.match(page, /set\("toDate", toDate\)/);
+  assert.match(page, /Début personnalisé" type="date"/);
+  assert.match(page, /Fin personnalisée" type="date"/);
+  assert.match(page, /Boolean\(fromDate\) !== Boolean\(toDate\)/);
+  assert.match(page, /fromDate > toDate/);
+  assert.match(route, /Boolean\(fromDate\) !== Boolean\(toDate\)/);
+  assert.match(route, /isCalendarDate\(fromDate\)/);
+  assert.match(route, /fromDate > toDate/);
+  assert.match(route, /fromDate && toDate\s*\? \{ fromDate, toDate \}\s*: \{ month: month \|\| undefined, fromMonth: effectiveFrom \|\| undefined, toMonth: effectiveTo \|\| undefined \}/);
+  assert.match(page, /<Input label="Année" value=\{year\} onChange=\{setters\.setYear\} placeholder="2026"\/>/);
+  assert.match(page, /<Select label="Mois" value=\{month\} onChange=\{setters\.setMonth\}/);
+});
+
 test("Tous garde la route et la réponse historiques sans dépendre du registre", () => {
   const shipments = readFileSync(new URL("./shipments/route.ts", import.meta.url), "utf8");
   const selected = shipments.indexOf("if (cohortId) {");
