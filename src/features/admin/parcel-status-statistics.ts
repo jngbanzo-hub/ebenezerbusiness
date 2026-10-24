@@ -32,6 +32,8 @@ export type ParcelStatusFilters = {
   month?: number;
   fromMonth?: string;
   toMonth?: string;
+  fromDate?: string;
+  toDate?: string;
   destination?: ParcelDestination | "ALL";
   status?: ParcelStatus | "ALL";
 };
@@ -73,6 +75,8 @@ export function normalizeParcelStatus(value: unknown): ParcelStatus | null {
   return null;
 }
 
+export function isCalendarDate(value: string) { const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value); if (!match) return false; const year = Number(match[1]); const month = Number(match[2]); const day = Number(match[3]); const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0); const days = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]; return month >= 1 && month <= 12 && day >= 1 && day <= days[month - 1]; }
+
 export function buildParcelStatusSituation(rawRows: RawParcelStatusRow[], filters: ParcelStatusFilters = {}): ParcelStatusSituation {
   const rowsBySource: ParcelStatusRow[] = [];
   const allExcludedRows: Array<ParcelStatusSituation["anomalies"]["excludedRows"][number] & { date: string | null }> = [];
@@ -101,15 +105,19 @@ export function buildParcelStatusSituation(rawRows: RawParcelStatusRow[], filter
     (!filters.month || Number(row.date.slice(5, 7)) === filters.month) &&
     (!filters.fromMonth || row.date.slice(0, 7) >= filters.fromMonth) &&
     (!filters.toMonth || row.date.slice(0, 7) <= filters.toMonth) &&
+    (!filters.fromDate || row.date >= filters.fromDate) &&
+    (!filters.toDate || row.date <= filters.toDate) &&
     (!filters.destination || filters.destination === "ALL" || row.destination === filters.destination) &&
     (!filters.status || filters.status === "ALL" || row.status === filters.status)
   );
   const excludedRows = allExcludedRows.filter((row) =>
     (!filters.destination || filters.destination === "ALL" || row.destination === filters.destination) &&
-    (row.date === null ? !filters.month && !filters.fromMonth && !filters.toMonth :
+    (row.date === null ? !filters.month && !filters.fromMonth && !filters.toMonth && !filters.fromDate && !filters.toDate :
       (!filters.month || Number(row.date.slice(5, 7)) === filters.month) &&
       (!filters.fromMonth || row.date.slice(0, 7) >= filters.fromMonth) &&
-      (!filters.toMonth || row.date.slice(0, 7) <= filters.toMonth))
+      (!filters.toMonth || row.date.slice(0, 7) <= filters.toMonth) &&
+      (!filters.fromDate || row.date >= filters.fromDate) &&
+      (!filters.toDate || row.date <= filters.toDate))
   ).map(({ date: _date, ...row }) => row);
   const seenCodes = new Set<string>();
   const duplicateCodes = new Set<string>();

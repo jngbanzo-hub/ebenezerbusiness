@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { buildManifestStatisticsFromParcelRows, buildParcelStatusSituation, PARCEL_STATUSES, type ParcelDestination, type ParcelStatus } from "@/features/admin/parcel-status-statistics";
+import { buildManifestStatisticsFromParcelRows, buildParcelStatusSituation, isCalendarDate, PARCEL_STATUSES, type ParcelDestination, type ParcelStatus } from "@/features/admin/parcel-status-statistics";
 import { authorizeAdminRequest } from "@/server/admin-authorization";
 import { parseOptionalInteger } from "@/server/admin-statistics-filter-validation";
 import { readParcelStatusRows } from "@/server/admin-statistics-sheets";
@@ -16,15 +16,22 @@ export async function GET(request: Request) {
     const year = parseOptionalInteger(params.get("year"), 2020, 2100);
     const month = parseOptionalInteger(params.get("month"), 1, 12);
     const fromMonth = params.get("fromMonth") ?? ""; const toMonth = params.get("toMonth") ?? "";
+    const fromDate = params.get("fromDate") ?? ""; const toDate = params.get("toDate") ?? "";
     const destination = (params.get("destination") ?? "ALL").toUpperCase(); const status = (params.get("status") ?? "ALL").toUpperCase();
     const measure = (params.get("measure") ?? "BOTH").toUpperCase();
     if (year === false || month === false || !isMonth(fromMonth) || !isMonth(toMonth) || (fromMonth && toMonth && fromMonth > toMonth) || !["ALL", "FIH", "LSHI", "KLZ"].includes(destination) || !(status === "ALL" || PARCEL_STATUSES.includes(status as ParcelStatus)) || !["KILOGRAMS", "PARCELS", "BOTH"].includes(measure)) return failure("Filtres invalides.", 400);
+    if (Boolean(fromDate) !== Boolean(toDate)) return failure("Renseignez Début personnalisé et Fin personnalisée.", 400);
+    if (fromDate && (!isCalendarDate(fromDate) || !isCalendarDate(toDate))) return failure("Dates personnalisées invalides (AAAA-MM-JJ).", 400);
+    if (fromDate && fromDate > toDate) return failure("Début personnalisé doit précéder ou égaler Fin personnalisée.", 400);
     const effectiveFrom = fromMonth || (year ? `${year}-${String(month || 1).padStart(2, "0")}` : "");
     const effectiveTo = toMonth || (year ? `${year}-${String(month || 12).padStart(2, "0")}` : "");
     const parcelRows = await readParcelStatusRows();
-    const situation = buildParcelStatusSituation(parcelRows, { month: month || undefined, fromMonth: effectiveFrom || undefined, toMonth: effectiveTo || undefined, destination: destination as ParcelDestination | "ALL", status: status as ParcelStatus | "ALL" });
+    const period = fromDate && toDate
+      ? { fromDate, toDate }
+      : { month: month || undefined, fromMonth: effectiveFrom || undefined, toMonth: effectiveTo || undefined };
+    const situation = buildParcelStatusSituation(parcelRows, { ...period, destination: destination as ParcelDestination | "ALL", status: status as ParcelStatus | "ALL" });
     const statistics = buildManifestStatisticsFromParcelRows(situation.rows);
-    return NextResponse.json({ statistics, situation, filters: { year, month, fromMonth, toMonth, destination, status, measure, dateField: "Date d’enregistrement (colonne A)" } }, { headers: privateHeaders() });
+    return NextResponse.json({ statistics, situation, filters: { year, month, fromMonth, toMonth, fromDate, toDate, destination, status, measure, dateField: "Date d’enregistrement (colonne A)" } }, { headers: privateHeaders() });
   } catch {
     return failure("Les statistiques du manifeste sont temporairement indisponibles.", 503);
   }
