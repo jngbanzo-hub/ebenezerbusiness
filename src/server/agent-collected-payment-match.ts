@@ -1,5 +1,6 @@
 export type CollectedParcelIdentity = {
   parcelId: string;
+  deliveredEventId?: string | null;
   forwardingId: string | null;
   trackingCode: string;
   agency: string;
@@ -28,18 +29,28 @@ export type CanonicalDestinationPayment = {
   dateTime: string;
 };
 
+export function uniqueCompletedPaymentCandidate<T>(current: readonly T[], historical: readonly T[]): T | null {
+  const candidates = [...current, ...historical];
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
 // This is presentation evidence only. Payment and delivery decisions remain elsewhere.
 export function collectedPaymentDate(
   parcel: CollectedParcelIdentity,
   orchestration: CompletedDestinationPayment,
   payment: CanonicalDestinationPayment
 ): string | null {
+  const physicalIdentityMatches = orchestration.parcelId === parcel.parcelId || (
+    orchestration.parcelId === null &&
+    Boolean(parcel.deliveredEventId) &&
+    orchestration.storageEventId === parcel.deliveredEventId
+  );
   if (
     orchestration.state !== "COMPLETED" ||
     !orchestration.paymentCreated ||
     !orchestration.cashEventId ||
     !orchestration.storageEventId ||
-    orchestration.parcelId !== parcel.parcelId ||
+    !physicalIdentityMatches ||
     orchestration.forwardingId !== parcel.forwardingId ||
     orchestration.trackingCode !== parcel.trackingCode ||
     orchestration.agency !== parcel.agency ||

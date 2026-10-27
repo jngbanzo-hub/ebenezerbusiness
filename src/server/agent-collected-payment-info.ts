@@ -3,7 +3,7 @@ import "server-only";
 import { createClient } from "@supabase/supabase-js";
 
 import { readCanonicalPaymentsByRequestIds } from "@/server/admin-payments-sheets";
-import { collectedPaymentDate, type CollectedParcelIdentity, type CompletedDestinationPayment } from "@/server/agent-collected-payment-match";
+import { collectedPaymentDate, uniqueCompletedPaymentCandidate, type CollectedParcelIdentity, type CompletedDestinationPayment } from "@/server/agent-collected-payment-match";
 import { parseForwardingAlias } from "@/server/storage-parcel-identity";
 import type { StorageAgency } from "@/server/stockages-v2";
 
@@ -26,7 +26,7 @@ export async function readCollectedPaymentInfo(
   try {
     const client = serviceClient();
     let parcelsQuery = client.from("stockage_parcels")
-      .select("parcel_id,forwarding_id,tracking_code,agency")
+      .select("parcel_id,forwarding_id,tracking_code,agency,delivered_event_id")
       .eq("tracking_code", code).eq("agency", agency).limit(2);
     if (requestedParcelId) parcelsQuery = parcelsQuery.eq("parcel_id", requestedParcelId);
     const { data: parcels, error: parcelError } = await parcelsQuery;
@@ -35,6 +35,7 @@ export async function readCollectedPaymentInfo(
     const parcel = parcels[0];
     const identity: CollectedParcelIdentity = {
       parcelId: parcel.parcel_id,
+      deliveredEventId: parcel.delivered_event_id,
       forwardingId: parcel.forwarding_id,
       trackingCode: parcel.tracking_code,
       agency: parcel.agency
@@ -51,13 +52,18 @@ export async function readCollectedPaymentInfo(
       return { state: "UNCONFIRMED" };
     }
 
-    const { data: rows, error: orchestrationError } = await client.from("stockage_payment_orchestrations")
+    const completedOrchestrations = () => client.from("stockage_payment_orchestrations")
       .select("request_id,parcel_id,forwarding_id,tracking_code,agency,paid_amount,payment_created,state,cash_event_id,stockage_event_id")
-      .eq("parcel_id", identity.parcelId).eq("tracking_code", code).eq("agency", agency)
-      .eq("state", "COMPLETED").limit(2);
-    if (orchestrationError) return { state: "UNAVAILABLE" };
-    if (!rows || rows.length !== 1) return { state: "UNCONFIRMED" };
-    const row = rows[0];
+      .eq("tracking_code", code).eq("agency", agency).eq("state", "COMPLETED");
+    const [current, historical] = await Promise.all([
+      completedOrchestrations().eq("parcel_id", identity.parcelId).limit(2),
+      identity.deliveredEventId
+        ? completedOrchestrations().is("parcel_id", null).eq("stockage_event_id", identity.deliveredEventId).limit(2)
+        : Promise.resolve({ data: [], error: null })
+    ]);
+    if (current.error || historical.error) return { state: "UNAVAILABLE" };
+    const row = uniqueCompletedPaymentCandidate(current.data ?? [], historical.data ?? []);
+    if (!row) return { state: "UNCONFIRMED" };
     const orchestration: CompletedDestinationPayment = {
       requestId: row.request_id,
       parcelId: row.parcel_id,

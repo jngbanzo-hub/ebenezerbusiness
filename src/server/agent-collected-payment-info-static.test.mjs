@@ -21,5 +21,8 @@ test("homonymes et acheminements échouent en mode prudent", () => {
   assert.match(reader, /parcels\.length !== 1/);
   assert.match(reader, /forwarding\?\.origin_agency !== alias\.originAgency/);
   assert.match(reader, /identity\.forwardingId\) \{/);
-  assert.match(reader, /rows\.length !== 1/);
+  assert.match(reader, /uniqueCompletedPaymentCandidate\(current\.data \?\? \[\], historical\.data \?\? \[\]\)/);
+  assert.match(reader, /delivered_event_id/);
+  assert.match(reader, /\.is\("parcel_id", null\)\.eq\("stockage_event_id", identity\.deliveredEventId\)/);
+  assert.match(reader, /\.eq\("parcel_id", identity\.parcelId\)/);
 });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { collectedPaymentDate } from "./agent-collected-payment-match.ts";
+import { collectedPaymentDate, uniqueCompletedPaymentCandidate } from "./agent-collected-payment-match.ts";
 
 const parcel = { parcelId: "parcel-1", forwardingId: null, trackingCode: "SE22426", agency: "FIH" };
 const orchestration = {
@@ -43,6 +43,37 @@ test("acheminement : forwarding_id doit correspondre exactement", () => {
   const forwardingParcel = { ...parcel, forwardingId: "forwarding-1" };
   assert.equal(collectedPaymentDate(forwardingParcel, { ...orchestration, forwardingId: "forwarding-1" }, payment), payment.dateTime);
   assert.equal(collectedPaymentDate(forwardingParcel, orchestration, payment), null);
+});
+
+test("orchestration historique sans parcel_id : seul l'événement de sortie exact rattache le colis", () => {
+  const historicalParcel = { ...parcel, deliveredEventId: "exit-1" };
+  assert.equal(collectedPaymentDate(historicalParcel, { ...orchestration, parcelId: null }, payment), payment.dateTime);
+  assert.equal(collectedPaymentDate(historicalParcel, { ...orchestration, parcelId: null, storageEventId: "other-exit" }, payment), null);
+  assert.equal(collectedPaymentDate({ ...historicalParcel, deliveredEventId: null }, { ...orchestration, parcelId: null }, payment), null);
+});
+
+test("un parcel_id renseigné mais contradictoire ne peut pas être contourné par l'événement", () => {
+  assert.equal(collectedPaymentDate(
+    { ...parcel, deliveredEventId: "exit-1" },
+    { ...orchestration, parcelId: "other-parcel" }, payment
+  ), null);
+});
+
+test("le rattachement historique conserve l'agence, le code et l'identité forwarding", () => {
+  const historicalParcel = { ...parcel, deliveredEventId: "exit-1" };
+  const historical = { ...orchestration, parcelId: null };
+  assert.equal(collectedPaymentDate(historicalParcel, { ...historical, agency: "KLZ" }, payment), null);
+  assert.equal(collectedPaymentDate(historicalParcel, { ...historical, trackingCode: "SE22426B" }, payment), null);
+  assert.equal(collectedPaymentDate({ ...historicalParcel, forwardingId: "forwarding-1" }, historical, payment), null);
+  assert.equal(collectedPaymentDate(historicalParcel, historical, { ...payment, agenceEncaissement: "COO" }), null);
+});
+
+test("aucune preuve ou plusieurs candidats restent ambigus", () => {
+  assert.equal(uniqueCompletedPaymentCandidate([], []), null);
+  assert.equal(uniqueCompletedPaymentCandidate([orchestration], []), orchestration);
+  assert.equal(uniqueCompletedPaymentCandidate([], [orchestration]), orchestration);
+  assert.equal(uniqueCompletedPaymentCandidate([orchestration], [{ ...orchestration, requestId: "request-2" }]), null);
+  assert.equal(uniqueCompletedPaymentCandidate([], [orchestration, { ...orchestration, requestId: "request-2" }]), null);
 });
 
 test("checkpoint incomplet, paiement partiel, montant incohérent ou date invalide restent sans preuve", () => {
