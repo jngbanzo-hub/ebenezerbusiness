@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import ts from "typescript";
+import vm from "node:vm";
 
 import {
   buildStorageExitReport,
@@ -145,4 +147,68 @@ test("admin-only route and ordered UI filters are read-only by construction", ()
   assert.doesNotMatch(reader, /\.insert\(|\.update\(|\.upsert\(|\.delete\(|\.rpc\(/);
   const order = ["Aujourd’hui", "Hier", "Cette semaine", "Ce mois", "Année", "Personnalisé"];
   assert.deepEqual([...ui.matchAll(/\{ value: "[^"]+", label: "([^"]+)" \}/g)].map((match) => match[1]), order);
+});
+
+test("reversed custom dates are blocked in the UI before the authenticated read", () => {
+  const ui = readFileSync(new URL("./admin-storage-exits-page.tsx", import.meta.url), "utf8");
+  assert.match(ui, /customRangeReversed = period === "custom" && from !== "" && to !== "" && from > to/);
+  assert.match(ui, /const canRead = .* !customRangeReversed/);
+  assert.match(ui, /if \(customRangeReversed\) \{ setMessage\("La date de début doit être antérieure ou égale à la date de fin\."\); return; \}/);
+  assert.ok(ui.indexOf("if (customRangeReversed)") < ui.indexOf("void authenticatedRead("));
+});
+
+test("exit API rejects anonymous and non-Admin sessions, permits Admin, and blocks reversed dates before reading", async () => {
+  const compile = (source) => ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+  }).outputText;
+  const authExports = {};
+  vm.runInNewContext(compile(readFileSync(new URL("../../server/admin-authorization.ts", import.meta.url), "utf8")), {
+    exports: authExports,
+    require: (name) => {
+      if (name === "server-only") return {};
+      if (name === "@supabase/supabase-js") return { createClient: () => { throw new Error("No production auth access in this test"); } };
+      throw new Error(`Unexpected authorization dependency: ${name}`);
+    }
+  });
+  const identities = {
+    admin: { userId: "admin-test", email: "admin@example.invalid", profile: { id: "admin-test", actif: true, role: "ADMIN", agence: "FIH" } },
+    agent: { userId: "agent-test", email: "agent@example.invalid", profile: { id: "agent-test", actif: true, role: "AGENT", agence: "FIH" } }
+  };
+  const reads = [];
+  const routeExports = {};
+  vm.runInNewContext(compile(readFileSync(new URL("../../app/api/admin/stockages/v2/exits/route.ts", import.meta.url), "utf8")), {
+    exports: routeExports, URL, Set, Number, Error,
+    require: (name) => {
+      if (name === "next/server") return { NextResponse: { json: (body, init = {}) => ({ body, status: init.status ?? 200 }) } };
+      if (name === "@/server/admin-authorization") return {
+        authorizeAdminRequest: (request) => authExports.authorizeAdminRequest(request, async (token) => identities[token] ?? null)
+      };
+      if (name === "@/server/admin-storage-exits") return { readAdminStorageExits: async (input) => { reads.push(input); return { state: "OK" }; } };
+      if (name === "@/server/stockages-v2") return {
+        isStockagesV2Enabled: () => true,
+        requireStorageAgency: (value) => { if (!["FIH", "KLZ", "LSHI"].includes(value)) throw new Error("INVALID_AGENCY"); return value; },
+        StockagesV2Error: class StockagesV2Error extends Error {}
+      };
+      throw new Error(`Unexpected route dependency: ${name}`);
+    }
+  });
+  const request = (query, token) => new Request(`https://example.invalid/api/admin/stockages/v2/exits?agency=FIH&${query}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  });
+  assert.equal((await routeExports.GET(request("period=today"))).status, 401);
+  assert.equal((await routeExports.GET(request("period=today", "agent"))).status, 403);
+  assert.equal(reads.length, 0);
+  assert.equal((await routeExports.GET(request("period=today", "admin"))).status, 200);
+  assert.equal(reads.length, 1);
+
+  const reversed = await routeExports.GET(request("period=custom&from=2026-10-27&to=2026-10-26", "admin"));
+  assert.equal(reversed.status, 400);
+  assert.equal(reversed.body.code, "INVALID_DATE_RANGE");
+  assert.equal(reversed.body.message, "La date de début doit être antérieure ou égale à la date de fin.");
+  assert.equal(reads.length, 1);
+
+  assert.equal((await routeExports.GET(request("period=custom&from=2026-10-26&to=2026-10-26", "admin"))).status, 200);
+  assert.equal(reads.length, 2);
+  assert.equal(reads[1].from, "2026-10-26");
+  assert.equal(reads[1].to, "2026-10-26");
 });

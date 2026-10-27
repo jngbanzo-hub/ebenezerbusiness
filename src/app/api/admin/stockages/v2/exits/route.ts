@@ -12,9 +12,9 @@ const PERIODS = new Set<StorageExitPeriod>(["today", "yesterday", "week", "month
 
 export async function GET(request: Request) {
   try {
-    if (!isStockagesV2Enabled()) return fail("STORAGE_V2_DISABLED", 503);
     const auth = await authorizeAdminRequest(request);
     if (!auth.authorized) return fail("ACCESS_DENIED", auth.status);
+    if (!isStockagesV2Enabled()) return fail("STORAGE_V2_DISABLED", 503);
     const search = new URL(request.url).searchParams;
     const agency = requireStorageAgency(search.get("agency") ?? "");
     const period = search.get("period") ?? "today";
@@ -23,12 +23,17 @@ export async function GET(request: Request) {
     if (!/^[1-9]\d*$/.test(pageText) || !Number.isSafeInteger(Number(pageText))) return fail("INVALID_PAGE", 400);
     const yearText = search.get("year");
     if (period === "year" && (!yearText || !/^\d{4}$/.test(yearText))) return fail("INVALID_YEAR", 400);
+    const from = search.get("from") ?? undefined;
+    const to = search.get("to") ?? undefined;
+    if (period === "custom" && from && to && from > to) {
+      return fail("INVALID_DATE_RANGE", 400, "La date de début doit être antérieure ou égale à la date de fin.");
+    }
     const result = await readAdminStorageExits({
       agency,
       period: period as StorageExitPeriod,
       year: yearText ? Number(yearText) : undefined,
-      from: search.get("from") ?? undefined,
-      to: search.get("to") ?? undefined,
+      from,
+      to,
       page: Number(pageText),
       pageSize: 25
     });
@@ -40,6 +45,6 @@ export async function GET(request: Request) {
   }
 }
 
-function fail(code: string, status: number) {
-  return NextResponse.json({ state: "ERROR", code, message: "Historique des sorties indisponible ou incomplet." }, { status, headers: { "Cache-Control": "private, no-store" } });
+function fail(code: string, status: number, message = "Historique des sorties indisponible ou incomplet.") {
+  return NextResponse.json({ state: "ERROR", code, message }, { status, headers: { "Cache-Control": "private, no-store" } });
 }

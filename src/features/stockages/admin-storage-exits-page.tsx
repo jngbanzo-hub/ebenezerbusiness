@@ -38,7 +38,8 @@ export function AdminStorageExitsPage({ agency }: { agency: string }) {
   const [report, setReport] = useState<Report | null>(null);
   const [message, setMessage] = useState("");
   const requestSequence = useRef(0);
-  const canRead = AGENCIES.has(normalizedAgency) && (period !== "custom" || (from !== "" && to !== ""));
+  const customRangeReversed = period === "custom" && from !== "" && to !== "" && from > to;
+  const canRead = AGENCIES.has(normalizedAgency) && (period !== "custom" || (from !== "" && to !== "" && !customRangeReversed));
 
   const query = useMemo(() => {
     const params = new URLSearchParams({ agency: normalizedAgency, period, page: String(page) });
@@ -51,6 +52,7 @@ export function AdminStorageExitsPage({ agency }: { agency: string }) {
     const sequence = ++requestSequence.current;
     setReport(null);
     if (!AGENCIES.has(normalizedAgency)) { setMessage("Agence Stockage non prise en charge."); return; }
+    if (customRangeReversed) { setMessage("La date de début doit être antérieure ou égale à la date de fin."); return; }
     if (!canRead) { setMessage("Choisissez une date de début et une date de fin."); return; }
     setMessage("Chargement de l’historique complet de la période…");
     void authenticatedRead(getSupabaseBrowserClient().auth, `/api/admin/stockages/v2/exits?${query}`)
@@ -58,7 +60,7 @@ export function AdminStorageExitsPage({ agency }: { agency: string }) {
       .then((data) => { if (requestSequence.current === sequence) { setReport(data); setMessage(""); } })
       .catch((error: unknown) => { if (requestSequence.current === sequence) setMessage(error instanceof Error ? error.message : "Historique des sorties indisponible ou incomplet."); });
     return () => { requestSequence.current += 1; };
-  }, [canRead, normalizedAgency, query]);
+  }, [canRead, customRangeReversed, normalizedAgency, query]);
 
   const changePeriod = (value: StorageExitPeriod) => { setPeriod(value); setPage(1); };
   return <main className="min-h-screen bg-slate-950 py-8 text-white"><div className="mx-auto max-w-7xl space-y-6 px-4">
