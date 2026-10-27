@@ -110,6 +110,12 @@ test("remise native OT01926 KLZ : événement et auteur physique exacts", () => 
   assert.deepEqual(confirmedDeliveryEvidence(deliveredParcel, { ...deliveryEvent, actorName: null }), {
     deliveredAt: "2026-10-26T21:14:35.000Z", deliveredByName: null
   });
+  assert.deepEqual(confirmedDeliveryEvidence(deliveredParcel, { ...deliveryEvent, actorId: null }), {
+    deliveredAt: "2026-10-26T21:14:35.000Z", deliveredByName: null
+  });
+  assert.deepEqual(confirmedDeliveryEvidence({ ...deliveredParcel, deliveredBy: null }, deliveryEvent), {
+    deliveredAt: "2026-10-26T21:14:35.000Z", deliveredByName: "Maman Deborah"
+  });
 });
 
 test("une remise non terminée, homonyme, événement contradictoire ou date ambiguë ne peut pas être affirmé", () => {

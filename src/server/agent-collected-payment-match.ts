@@ -65,13 +65,12 @@ export function confirmedDeliveryEvidence(
     event.trackingCode !== parcel.trackingCode ||
     event.agency !== parcel.agency ||
     event.actorRole !== "AGENT" ||
-    !event.actorId ||
-    event.actorId !== parcel.deliveredBy
+    (event.actorId && parcel.deliveredBy && event.actorId !== parcel.deliveredBy)
   ) return null;
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(event.occurredAt)) return null;
   const timestamp = Date.parse(event.occurredAt);
   return Number.isFinite(timestamp)
-    ? { deliveredAt: new Date(timestamp).toISOString(), deliveredByName: event.actorName?.trim() || null }
+    ? { deliveredAt: new Date(timestamp).toISOString(), deliveredByName: event.actorId ? event.actorName?.trim() || null : null }
     : null;
 }
 
