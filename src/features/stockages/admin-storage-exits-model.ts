@@ -7,6 +7,7 @@ export const STORAGE_EXIT_TYPES = [
 ] as const;
 
 export type StorageExitPeriod = "today" | "yesterday" | "week" | "month" | "year" | "custom";
+export type StorageExitScope = StorageExitPeriod | "all";
 
 export type StorageExitEvent = {
   event_id: string;

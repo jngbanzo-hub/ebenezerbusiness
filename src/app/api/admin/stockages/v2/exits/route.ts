@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import type { StorageExitPeriod } from "@/features/stockages/admin-storage-exits-model";
+import type { StorageExitScope } from "@/features/stockages/admin-storage-exits-model";
 import { authorizeAdminRequest } from "@/server/admin-authorization";
 import { readAdminStorageExits } from "@/server/admin-storage-exits";
 import { isStockagesV2Enabled, requireStorageAgency, StockagesV2Error } from "@/server/stockages-v2";
@@ -8,7 +8,7 @@ import { isStockagesV2Enabled, requireStorageAgency, StockagesV2Error } from "@/
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const PERIODS = new Set<StorageExitPeriod>(["today", "yesterday", "week", "month", "year", "custom"]);
+const PERIODS = new Set<StorageExitScope>(["today", "yesterday", "week", "month", "year", "custom", "all"]);
 
 export async function GET(request: Request) {
   try {
@@ -17,8 +17,10 @@ export async function GET(request: Request) {
     if (!isStockagesV2Enabled()) return fail("STORAGE_V2_DISABLED", 503);
     const search = new URL(request.url).searchParams;
     const agency = requireStorageAgency(search.get("agency") ?? "");
-    const period = search.get("period") ?? "today";
-    if (!PERIODS.has(period as StorageExitPeriod)) return fail("INVALID_PERIOD", 400);
+    const code = (search.get("code") ?? "").trim().toUpperCase();
+    const period = search.get("period") ?? (code ? "all" : "today");
+    if (!PERIODS.has(period as StorageExitScope)) return fail("INVALID_PERIOD", 400);
+    if (code.length > 120 || (period === "all" && !code)) return fail("INVALID_CODE", 400);
     const pageText = search.get("page") ?? "1";
     if (!/^[1-9]\d*$/.test(pageText) || !Number.isSafeInteger(Number(pageText))) return fail("INVALID_PAGE", 400);
     const yearText = search.get("year");
@@ -30,7 +32,8 @@ export async function GET(request: Request) {
     }
     const result = await readAdminStorageExits({
       agency,
-      period: period as StorageExitPeriod,
+      period: period as StorageExitScope,
+      code: code || undefined,
       year: yearText ? Number(yearText) : undefined,
       from,
       to,

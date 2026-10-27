@@ -11,7 +11,7 @@ import {
   type StorageExitEvent,
   type StorageExitForwardingLink,
   type StorageExitParcelLink,
-  type StorageExitPeriod
+  type StorageExitScope
 } from "@/features/stockages/admin-storage-exits-model";
 import { StockagesV2Error, type StorageAgency } from "@/server/stockages-v2";
 
@@ -36,24 +36,27 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
 
 export async function readAdminStorageExits(input: {
   agency: StorageAgency;
-  period: StorageExitPeriod;
+  period: StorageExitScope;
+  code?: string;
   year?: number;
   from?: string;
   to?: string;
   page: number;
   pageSize: number;
 }) {
-  const interval = resolveStorageExitPeriod(input.period, input);
+  if (input.period === "all" && !input.code) throw new Error("INVALID_CODE");
+  const interval = input.period === "all" ? null : resolveStorageExitPeriod(input.period, input);
   const asOf = new Date().toISOString();
-  const upper = interval.toExclusiveIso < asOf ? interval.toExclusiveIso : asOf;
+  const upper = interval && interval.toExclusiveIso < asOf ? interval.toExclusiveIso : asOf;
   const client = serviceClient();
-  const events = interval.fromIso >= upper ? [] : await readAllStorageExitPages<StorageExitEvent>(async (from, to) => {
-    const { data, error } = await client.from("stockage_events")
+  const events = interval && interval.fromIso >= upper ? [] : await readAllStorageExitPages<StorageExitEvent>(async (from, to) => {
+    let query = client.from("stockage_events")
       .select("event_id,event_type,agency,tracking_code,parcel_count_delta,weight_kg_delta,occurred_at,business_date,source_type,source_request_id,metadata")
       .eq("agency", input.agency)
-      .in("event_type", [...STORAGE_EXIT_TYPES])
-      .gte("occurred_at", interval.fromIso)
-      .lt("occurred_at", upper)
+      .in("event_type", [...STORAGE_EXIT_TYPES]);
+    if (interval) query = query.gte("occurred_at", interval.fromIso);
+    if (input.code) query = query.eq("tracking_code", input.code);
+    const { data, error } = await query.lt("occurred_at", upper)
       .order("occurred_at", { ascending: true })
       .order("event_id", { ascending: true })
       .range(from, to);

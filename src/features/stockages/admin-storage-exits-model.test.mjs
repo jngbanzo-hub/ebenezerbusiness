@@ -147,6 +147,75 @@ test("admin-only route and ordered UI filters are read-only by construction", ()
   assert.doesNotMatch(reader, /\.insert\(|\.update\(|\.upsert\(|\.delete\(|\.rpc\(/);
   const order = ["Aujourd’hui", "Hier", "Cette semaine", "Ce mois", "Année", "Personnalisé"];
   assert.deepEqual([...ui.matchAll(/\{ value: "[^"]+", label: "([^"]+)" \}/g)].map((match) => match[1]), order);
+  assert.match(ui, /Rechercher un code colis/);
+  assert.match(ui, /Tout l’historique/);
+  assert.match(ui, /Aucune sortie trouvée pour ce code dans la période recherchée\./);
+  assert.match(ui, /onSubmit=\{searchCode\}/);
+  assert.match(ui, /onClick=\{clearCode\}/);
+});
+
+test("exact code search reads all agency history, preserves repeat exits and suffixes, then permits date refinement", async () => {
+  const source = readFileSync(new URL("../../server/admin-storage-exits.ts", import.meta.url), "utf8");
+  const compile = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const events = [
+    { ...exit("old-first", "FIH", "AT00826B", 3), occurred_at: "2026-08-10T10:00:00Z" },
+    { ...exit("old-second", "FIH", "AT00826B", 4), occurred_at: "2026-09-10T10:00:00Z" },
+    { ...exit("other-suffix", "FIH", "AT00826", 5), occurred_at: "2026-09-10T10:00:00Z" },
+    { ...exit("other-agency", "KLZ", "AT00826B", 6), occurred_at: "2026-09-10T10:00:00Z" }
+  ];
+  const calls = [];
+  const client = { from(table) {
+    const filters = [];
+    const query = {
+      select() { return query; },
+      eq(column, value) { filters.push(["eq", column, value]); return query; },
+      in(column, values) { filters.push(["in", column, values]); return query; },
+      gte(column, value) { filters.push(["gte", column, value]); return query; },
+      lt(column, value) { filters.push(["lt", column, value]); return query; },
+      order() { return query; },
+      async range(from, to) {
+        calls.push({ table, filters: [...filters], from, to });
+        const rows = table === "stockage_events" ? events : [];
+        return { data: rows.filter((row) => filters.every(([operator, column, value]) => {
+          if (operator === "eq") return row[column] === value;
+          if (operator === "in") return value.includes(row[column]);
+          if (operator === "gte") return row[column] >= value;
+          return row[column] < value;
+        })).slice(from, to + 1), error: null };
+      }
+    };
+    return query;
+  } };
+  const exports = {};
+  vm.runInNewContext(compile, {
+    exports, process: { env: { NEXT_PUBLIC_SUPABASE_URL: "https://example.invalid", SUPABASE_SERVICE_ROLE_KEY: "test-only" } },
+    Date, Set, Error,
+    require: (name) => {
+      if (name === "server-only") return {};
+      if (name === "@supabase/supabase-js") return { createClient: () => ({ schema: () => client }) };
+      if (name === "@/features/stockages/admin-storage-exits-model") return { buildStorageExitReport, readAllStorageExitPages, resolveStorageExitPeriod,
+        STORAGE_EXIT_TYPES: ["SORTIE_APRES_PAIEMENT_TOTAL_DESTINATION", "SORTIE_POUR_ACHEMINEMENT"] };
+      if (name === "@/server/stockages-v2") return { StockagesV2Error: class StockagesV2Error extends Error {} };
+      throw new Error(`Unexpected reader dependency: ${name}`);
+    }
+  });
+  const input = { agency: "FIH", period: "all", code: "AT00826B", page: 1, pageSize: 25 };
+  const all = await exports.readAdminStorageExits(input);
+  assert.equal(all.interval, null);
+  assert.equal(all.pagination.total, 2);
+  assert.equal(all.summary.count, 2);
+  assert.equal(all.summary.weightKg, 7);
+  assert.equal(all.items[0].eventId, "old-second");
+  assert.equal(all.items[1].eventId, "old-first");
+  const primary = calls.find((call) => call.table === "stockage_events");
+  assert.ok(primary.filters.some(([op, column, value]) => op === "eq" && column === "agency" && value === "FIH"));
+  assert.ok(primary.filters.some(([op, column, value]) => op === "eq" && column === "tracking_code" && value === "AT00826B"));
+  assert.equal(primary.filters.some(([op, column]) => op === "gte" && column === "occurred_at"), false);
+
+  const today = await exports.readAdminStorageExits({ ...input, period: "today" });
+  assert.equal(today.pagination.total, 0);
+  assert.equal(today.summary.count, 0);
+  assert.ok(calls.some((call) => call.table === "stockage_events" && call.filters.some(([op, column]) => op === "gte" && column === "occurred_at")));
 });
 
 test("reversed custom dates are blocked in the UI before the authenticated read", () => {
@@ -211,4 +280,14 @@ test("exit API rejects anonymous and non-Admin sessions, permits Admin, and bloc
   assert.equal(reads.length, 2);
   assert.equal(reads[1].from, "2026-10-26");
   assert.equal(reads[1].to, "2026-10-26");
+
+  assert.equal((await routeExports.GET(request("period=all", "admin"))).status, 400);
+  assert.equal(reads.length, 2);
+  assert.equal((await routeExports.GET(request("code=at00826b", "admin"))).status, 200);
+  assert.equal(reads[2].period, "all");
+  assert.equal(reads[2].code, "AT00826B");
+  assert.equal(reads[2].agency, "FIH");
+  assert.equal((await routeExports.GET(request("period=year&year=2026&code=AT00826B", "admin"))).status, 200);
+  assert.equal(reads[3].period, "year");
+  assert.equal(reads[3].code, "AT00826B");
 });
