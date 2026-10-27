@@ -19,7 +19,23 @@ test("affiche les deux résultats avec leurs responsabilités séparées", () =>
   assert.match(workspace, /Source opérationnelle pour l’admissibilité à l’encaissement/);
   assert.match(workspace, /Vérification MANIFESTE PUBLIC/);
   assert.match(workspace, /Information de contrôle uniquement — ne décide pas de l’encaissement/);
-  assert.match(workspace, /n’est pas présent dans le Stockage de votre agence et n’est pas encaissable actuellement/);
+  assert.match(workspace, /Colis non disponible dans votre agence/);
+  assert.match(workspace, /Aucune correspondance exacte trouvée/);
+  assert.match(workspace, /Vérification temporairement indisponible/);
+  assert.match(workspace, /Colis déjà encaissé/);
+});
+
+test("les parcours positifs restent identiques et la lecture datée ne suit que l'absence", () => {
+  const positiveStart = workspace.indexOf("{parcel ? (");
+  const positiveEnd = workspace.indexOf("</GlassPanel>", positiveStart);
+  const positive = workspace.slice(positiveStart, positiveEnd);
+  assert.match(positive, /parcel\.soldeRestant > 0 \? <form onSubmit=\{handlePayment\}/);
+  assert.match(positive, /parcelAction\?\.fullyPaidAtCooOnly && parcelAction\.physicallyPresent && !parcelAction\.delivered/);
+  assert.match(positive, /Confirmer la remise/);
+  assert.doesNotMatch(positive, /readCollectedPaymentInfo/);
+  const missingBranch = workspace.slice(workspace.indexOf('code === "PARCEL_NOT_IN_AGENCY_STORAGE"'), workspace.indexOf('const foundParcel = parseParcelResponse'));
+  assert.match(missingBranch, /readCollectedPaymentInfo\(normalizedCode, requestedParcelId\)/);
+  assert.doesNotMatch(workspace.slice(workspace.indexOf('const foundParcel = parseParcelResponse(storageOutcome.value)'), workspace.indexOf('const response = await searchParcel')), /readCollectedPaymentInfo/);
 });
 
 test("retire seulement le contrôle MANIFESTE autonome permanent", () => {

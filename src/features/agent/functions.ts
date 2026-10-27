@@ -176,6 +176,23 @@ export async function searchDestinationParcel(trackingCode: string, parcelId?: s
   return payload.parcel;
 }
 
+export async function readCollectedPaymentInfo(trackingCode: string, parcelId?: string): Promise<
+  | { state: "CONFIRMED"; paidAt: string }
+  | { state: "UNCONFIRMED" | "UNAVAILABLE" }
+> {
+  const params = new URLSearchParams({ trackingCode });
+  if (parcelId) params.set("parcelId", parcelId);
+  const response = await authenticatedRead(
+    getSupabaseBrowserClient().auth,
+    `/api/agent/encaissements/collected-info?${params}`,
+    {}
+  );
+  const payload = await response.json().catch(() => null) as { state?: string; paidAt?: string } | null;
+  if (!response.ok || !payload) return { state: "UNAVAILABLE" };
+  if (payload.state === "CONFIRMED" && typeof payload.paidAt === "string") return { state: "CONFIRMED", paidAt: payload.paidAt };
+  return { state: payload.state === "UNCONFIRMED" ? "UNCONFIRMED" : "UNAVAILABLE" };
+}
+
 export type AgentManifestSearchRow = {
   date: string;
   trackingCode: string;
