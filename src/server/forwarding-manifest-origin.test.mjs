@@ -34,8 +34,10 @@ test("les homonymes d’autres feuilles sont exclus et une ambiguïté locale n�
   assert.match(functions, /Math\.abs\(row\.weightKg - forwarding\.weightKg\) < 0\.001/);
   assert.match(functions, /compatible\.length === 1 \? compatible\[0\] : null/);
   assert.match(functions, /ambiguous: compatible\.length > 1/);
+  assert.match(workspace, /manifestOutcome\.value\.ambiguous/);
   assert.match(workspace, /state: "AMBIGUOUS"/);
-  assert.match(workspace, /"AMBIGU"/);
+  assert.match(workspace, /manifestSearchResult\.state === "AMBIGUOUS" \? "Plusieurs correspondances possibles"/);
+  assert.match(workspace, /Plusieurs lignes correspondent au code recherché\. Ce contrôle informatif ne permet pas de choisir une ligne\./);
 });
 
 test("les colis natifs conservent la source MANIFESTE historique", () => {
