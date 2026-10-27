@@ -23,6 +23,9 @@ test("affiche les deux résultats avec leurs responsabilités séparées", () =>
   assert.match(workspace, /Aucune correspondance exacte trouvée/);
   assert.match(workspace, /Vérification temporairement indisponible/);
   assert.match(workspace, /Colis déjà encaissé/);
+  assert.match(workspace, /Colis déjà remis/);
+  assert.match(workspace, /Paiement effectué à Cotonou \(COO\)/);
+  assert.match(workspace, /time\.replace\(":", "h"\)/);
 });
 
 test("les parcours positifs restent identiques et la lecture datée ne suit que l'absence", () => {
@@ -33,6 +36,7 @@ test("les parcours positifs restent identiques et la lecture datée ne suit que 
   assert.match(positive, /parcelAction\?\.fullyPaidAtCooOnly && parcelAction\.physicallyPresent && !parcelAction\.delivered/);
   assert.match(positive, /Confirmer la remise/);
   assert.doesNotMatch(positive, /readCollectedPaymentInfo/);
+  assert.doesNotMatch(positive, /ALREADY_COLLECTED|ALREADY_DELIVERED/);
   const missingBranch = workspace.slice(workspace.indexOf('code === "PARCEL_NOT_IN_AGENCY_STORAGE"'), workspace.indexOf('const foundParcel = parseParcelResponse'));
   assert.match(missingBranch, /readCollectedPaymentInfo\(normalizedCode, requestedParcelId\)/);
   assert.doesNotMatch(workspace.slice(workspace.indexOf('const foundParcel = parseParcelResponse(storageOutcome.value)'), workspace.indexOf('const response = await searchParcel')), /readCollectedPaymentInfo/);

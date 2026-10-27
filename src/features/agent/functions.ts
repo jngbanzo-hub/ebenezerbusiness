@@ -177,7 +177,8 @@ export async function searchDestinationParcel(trackingCode: string, parcelId?: s
 }
 
 export async function readCollectedPaymentInfo(trackingCode: string, parcelId?: string): Promise<
-  | { state: "CONFIRMED"; paidAt: string }
+  | { state: "CONFIRMED"; paidAt: string; paidBy: string | null }
+  | { state: "DELIVERED"; deliveredAt: string; deliveredBy: string | null; agency: "FIH" | "KLZ" | "LSHI"; paidAtCoo: boolean }
   | { state: "UNCONFIRMED" | "UNAVAILABLE" }
 > {
   const params = new URLSearchParams({ trackingCode });
@@ -187,9 +188,13 @@ export async function readCollectedPaymentInfo(trackingCode: string, parcelId?: 
     `/api/agent/encaissements/collected-info?${params}`,
     {}
   );
-  const payload = await response.json().catch(() => null) as { state?: string; paidAt?: string } | null;
+  const payload = await response.json().catch(() => null) as { state?: string; paidAt?: string; paidBy?: unknown; deliveredAt?: string; deliveredBy?: unknown; agency?: string; paidAtCoo?: boolean } | null;
   if (!response.ok || !payload) return { state: "UNAVAILABLE" };
-  if (payload.state === "CONFIRMED" && typeof payload.paidAt === "string") return { state: "CONFIRMED", paidAt: payload.paidAt };
+  if (payload.state === "CONFIRMED" && typeof payload.paidAt === "string") return { state: "CONFIRMED", paidAt: payload.paidAt, paidBy: typeof payload.paidBy === "string" ? payload.paidBy : null };
+  if (payload.state === "DELIVERED" && typeof payload.deliveredAt === "string" &&
+    (payload.agency === "FIH" || payload.agency === "KLZ" || payload.agency === "LSHI")) {
+    return { state: "DELIVERED", deliveredAt: payload.deliveredAt, deliveredBy: typeof payload.deliveredBy === "string" ? payload.deliveredBy : null, agency: payload.agency, paidAtCoo: payload.paidAtCoo === true };
+  }
   return { state: payload.state === "UNCONFIRMED" ? "UNCONFIRMED" : "UNAVAILABLE" };
 }
 

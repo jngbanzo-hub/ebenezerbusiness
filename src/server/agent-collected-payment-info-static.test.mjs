@@ -10,11 +10,27 @@ test("le complément est réservé à l'Agent authentifié de sa propre agence e
   assert.match(route, /requireStorageAgency\(auth\.identity\.site\)/);
   assert.match(route, /export async function GET/);
   assert.doesNotMatch(route, /export async function (?:POST|PUT|PATCH|DELETE)/);
-  for (const table of ["stockage_parcels", "stockage_forwardings", "stockage_payment_orchestrations"]) {
+  for (const table of ["stockage_parcels", "stockage_forwardings", "stockage_payment_orchestrations", "stockage_events"]) {
     assert.match(reader, new RegExp(`from\\("${table}"\\)`));
   }
   assert.match(reader, /readCanonicalPaymentsByRequestIds/);
+  assert.match(reader, /readAdminPayments/);
   assert.doesNotMatch(reader, /\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/);
+});
+
+test("l'auteur du paiement vient de P1 et de l'orchestration du même request_id", () => {
+  assert.match(reader, /actor_name,paid_amount/);
+  assert.match(reader, /verifiedPaymentAgent\(lookup\.payment\.agent, row\.actor_name\)/);
+  assert.match(reader, /readCanonicalPaymentsByRequestIds\(\[orchestration\.requestId\]\)/);
+});
+
+test("la remise physique n'est lue qu'après absence de paiement destination confirmé", () => {
+  assert.match(reader, /if \(!row\) \{/);
+  assert.match(reader, /parcel\.delivery_status !== "DELIVERED"/);
+  assert.match(reader, /\.eq\("event_id", identity\.deliveredEventId\)\.maybeSingle\(\)/);
+  assert.match(reader, /\.eq\("target_event_id", identity\.deliveredEventId\)\.limit\(1\)/);
+  assert.match(reader, /confirmedDeliveryEvidence/);
+  assert.match(reader, /confirmedCooPaymentSnapshot/);
 });
 
 test("homonymes et acheminements échouent en mode prudent", () => {

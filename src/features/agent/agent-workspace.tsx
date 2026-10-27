@@ -44,7 +44,8 @@ const fieldClassName =
 type StorageSearchResult =
   | { state: "FOUND"; parcel: Parcel }
   | { state: "NOT_FOUND"; code: string; paymentProof?: "UNCONFIRMED" | "UNAVAILABLE" }
-  | { state: "ALREADY_COLLECTED"; code: string; paidAt: string }
+  | { state: "ALREADY_COLLECTED"; code: string; paidAt: string; paidBy: string | null }
+  | { state: "ALREADY_DELIVERED"; code: string; deliveredAt: string; deliveredBy: string | null; agency: DestinationCode; paidAtCoo: boolean }
   | { state: "SELECTION_REQUIRED"; code: string }
   | { state: "ERROR"; code: string };
 type ManifestSearchResult =
@@ -216,8 +217,10 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
               .then((info) => {
                 if (searchId !== activeSearchIdRef.current) return;
                 setStorageSearchResult(info.state === "CONFIRMED"
-                  ? { state: "ALREADY_COLLECTED", code: normalizedCode, paidAt: info.paidAt }
-                  : { state: "NOT_FOUND", code: normalizedCode, paymentProof: info.state });
+                  ? { state: "ALREADY_COLLECTED", code: normalizedCode, paidAt: info.paidAt, paidBy: info.paidBy }
+                  : info.state === "DELIVERED"
+                    ? { state: "ALREADY_DELIVERED", code: normalizedCode, deliveredAt: info.deliveredAt, deliveredBy: info.deliveredBy, agency: info.agency, paidAtCoo: info.paidAtCoo }
+                    : { state: "NOT_FOUND", code: normalizedCode, paymentProof: info.state });
               })
               .catch(() => {
                 if (searchId === activeSearchIdRef.current) setStorageSearchResult({ state: "NOT_FOUND", code: normalizedCode, paymentProof: "UNAVAILABLE" });
@@ -606,9 +609,11 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
                   </table>
                 </div> : storageSearchResult ? <SearchResultNotice
                   code={storageSearchResult.code}
-                  title={storageSearchResult.state === "ALREADY_COLLECTED" ? "Colis déjà encaissé" : storageSearchResult.state === "NOT_FOUND" ? "Colis non disponible dans votre agence" : storageSearchResult.state === "SELECTION_REQUIRED" ? "Choix du colis nécessaire" : "Vérification temporairement indisponible"}
+                  title={storageSearchResult.state === "ALREADY_COLLECTED" ? "Colis déjà encaissé" : storageSearchResult.state === "ALREADY_DELIVERED" ? "Colis déjà remis" : storageSearchResult.state === "NOT_FOUND" ? "Colis non disponible dans votre agence" : storageSearchResult.state === "SELECTION_REQUIRED" ? "Choix du colis nécessaire" : "Vérification temporairement indisponible"}
                   detail={storageSearchResult.state === "ALREADY_COLLECTED"
-                    ? `L’encaissement du colis ${storageSearchResult.code} a été enregistré le ${formatCollectedDate(storageSearchResult.paidAt)}. Ce colis est déjà sorti du stockage de votre agence.`
+                    ? `L’encaissement du colis ${storageSearchResult.code} a été enregistré le ${formatCollectedDate(storageSearchResult.paidAt)}${storageSearchResult.paidBy ? ` par l’Agent ${storageSearchResult.paidBy}` : ""}. Ce colis est déjà sorti du stockage de votre agence.`
+                    : storageSearchResult.state === "ALREADY_DELIVERED"
+                      ? `Le colis ${storageSearchResult.code} a été remis au bénéficiaire le ${formatCollectedDate(storageSearchResult.deliveredAt)}${storageSearchResult.deliveredBy ? ` par l’Agent ${storageSearchResult.deliveredBy}` : ""}, à ${storageSearchResult.agency}. Ce colis est déjà sorti du stockage de votre agence.${storageSearchResult.paidAtCoo ? " Paiement effectué à Cotonou (COO)." : ""}`
                     : storageSearchResult.state === "NOT_FOUND"
                       ? `Le colis ${storageSearchResult.code} ne figure pas actuellement dans votre stockage disponible et ne peut pas être encaissé pour le moment. Veuillez vérifier le code et l’agence sélectionnée.${storageSearchResult.paymentProof === "UNAVAILABLE" ? " Son historique de paiement n’a pas pu être vérifié actuellement." : storageSearchResult.paymentProof === "UNCONFIRMED" ? " Aucun encaissement antérieur daté ne peut être confirmé pour cette identité." : ""}`
                       : storageSearchResult.state === "SELECTION_REQUIRED"
@@ -759,7 +764,7 @@ function formatCollectedDate(isoDate: string): string {
   const options = { timeZone: "Africa/Porto-Novo" };
   const day = new Intl.DateTimeFormat("fr-FR", { ...options, dateStyle: "short" }).format(date);
   const time = new Intl.DateTimeFormat("fr-FR", { ...options, timeStyle: "short" }).format(date);
-  return `${day} à ${time}`;
+  return `${day} à ${time.replace(":", "h")}`;
 }
 
 function SearchResultNotice({ code, title, detail }: { code: string; title: string; detail: string }) {

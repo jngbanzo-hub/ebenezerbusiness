@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { collectedPaymentDate, uniqueCompletedPaymentCandidate } from "./agent-collected-payment-match.ts";
+import { collectedPaymentDate, confirmedCooPaymentSnapshot, confirmedDeliveryEvidence, uniqueCompletedPaymentCandidate, verifiedPaymentAgent } from "./agent-collected-payment-match.ts";
 
 const parcel = { parcelId: "parcel-1", forwardingId: null, trackingCode: "SE22426", agency: "FIH" };
 const orchestration = {
@@ -83,4 +83,68 @@ test("checkpoint incomplet, paiement partiel, montant incohérent ou date invali
   assert.equal(collectedPaymentDate(parcel, orchestration, { ...payment, montantPaye: 55 }), null);
   assert.equal(collectedPaymentDate(parcel, orchestration, { ...payment, dateTime: "date inconnue" }), null);
   assert.equal(collectedPaymentDate(parcel, orchestration, { ...payment, dateTime: "2026-10-27" }), null);
+});
+
+test("le nom de l'encaisseur exige la concordance P1 et orchestration du paiement exact", () => {
+  assert.equal(verifiedPaymentAgent("Maman Deborah", "Maman Deborah"), "Maman Deborah");
+  assert.equal(verifiedPaymentAgent(" Maman  Deborah ", "maman deborah"), "Maman Deborah");
+  assert.equal(verifiedPaymentAgent("", "Maman Deborah"), null);
+  assert.equal(verifiedPaymentAgent("Maman Deborah", "Autre agent"), null);
+});
+
+const deliveredParcel = {
+  parcelId: "62234fb7-ae8c-4724-8eb1-447ca8b6bf70", deliveredEventId: "delivery-klz-ot01926",
+  forwardingId: null, trackingCode: "OT01926", agency: "KLZ", deliveryStatus: "DELIVERED",
+  deliveredBy: "agent-klz"
+};
+const deliveryEvent = {
+  eventId: "delivery-klz-ot01926", eventType: "CONFIRMED_DELIVERY_RECORDED",
+  trackingCode: "OT01926", agency: "KLZ", actorId: "agent-klz", actorName: "Maman Deborah",
+  actorRole: "AGENT", occurredAt: "2026-10-26T21:14:35.000Z"
+};
+
+test("remise native OT01926 KLZ : événement et auteur physique exacts", () => {
+  assert.deepEqual(confirmedDeliveryEvidence(deliveredParcel, deliveryEvent), {
+    deliveredAt: "2026-10-26T21:14:35.000Z", deliveredByName: "Maman Deborah"
+  });
+  assert.deepEqual(confirmedDeliveryEvidence(deliveredParcel, { ...deliveryEvent, actorName: null }), {
+    deliveredAt: "2026-10-26T21:14:35.000Z", deliveredByName: null
+  });
+});
+
+test("une remise non terminée, homonyme, événement contradictoire ou date ambiguë ne peut pas être affirmé", () => {
+  assert.equal(confirmedDeliveryEvidence({ ...deliveredParcel, deliveryStatus: "AVAILABLE" }, deliveryEvent), null);
+  assert.equal(confirmedDeliveryEvidence({ ...deliveredParcel, parcelId: "other", deliveredEventId: "other" }, deliveryEvent), null);
+  assert.equal(confirmedDeliveryEvidence(deliveredParcel, { ...deliveryEvent, agency: "FIH" }), null);
+  assert.equal(confirmedDeliveryEvidence(deliveredParcel, { ...deliveryEvent, trackingCode: "OT01926B" }), null);
+  assert.equal(confirmedDeliveryEvidence(deliveredParcel, { ...deliveryEvent, actorId: "other-agent" }), null);
+  assert.equal(confirmedDeliveryEvidence(deliveredParcel, { ...deliveryEvent, eventType: "SORTIE_POUR_ACHEMINEMENT" }), null);
+  assert.equal(confirmedDeliveryEvidence(deliveredParcel, { ...deliveryEvent, occurredAt: "2026-10-26" }), null);
+});
+
+test("une remise forwarding exige le type d'événement correspondant", () => {
+  const forwarded = { ...deliveredParcel, forwardingId: "forwarding-1" };
+  assert.equal(confirmedDeliveryEvidence(forwarded, deliveryEvent), null);
+  assert.ok(confirmedDeliveryEvidence(forwarded, { ...deliveryEvent, eventType: "SORTIE_APRES_REMISE_ACHEMINEMENT" }));
+});
+
+const cooPayment = {
+  id: "COO:19", reference: "", paymentRequestId: "payment-coo-19", codeColis: "OT01926",
+  destinationCode: "KLZ", agenceEncaissement: "COO", montantPaye: 11, soldeRestant: 0,
+  dateTime: "2026-10-25T12:00:00.000Z"
+};
+const cooSnapshot = { checked: true, totalPaid: 11, references: ["COO:19"] };
+
+test("la mention COO exige la référence P1 unique et le même code, destination et montant avant la remise", () => {
+  assert.equal(confirmedCooPaymentSnapshot(cooSnapshot, [cooPayment], deliveredParcel, deliveryEvent.occurredAt), true);
+  assert.equal(confirmedCooPaymentSnapshot(cooSnapshot, [{ ...cooPayment, id: "COO:20" }], deliveredParcel, deliveryEvent.occurredAt), false);
+  assert.equal(confirmedCooPaymentSnapshot(cooSnapshot, [cooPayment, cooPayment], deliveredParcel, deliveryEvent.occurredAt), false);
+  assert.equal(confirmedCooPaymentSnapshot(cooSnapshot, [{ ...cooPayment, destinationCode: "FIH" }], deliveredParcel, deliveryEvent.occurredAt), false);
+  assert.equal(confirmedCooPaymentSnapshot(cooSnapshot, [{ ...cooPayment, codeColis: "OT01926B" }], deliveredParcel, deliveryEvent.occurredAt), false);
+  assert.equal(confirmedCooPaymentSnapshot(cooSnapshot, [{ ...cooPayment, agenceEncaissement: "KLZ" }], deliveredParcel, deliveryEvent.occurredAt), false);
+  assert.equal(confirmedCooPaymentSnapshot(cooSnapshot, [{ ...cooPayment, montantPaye: 12 }], deliveredParcel, deliveryEvent.occurredAt), false);
+  assert.equal(confirmedCooPaymentSnapshot(cooSnapshot, [{ ...cooPayment, soldeRestant: 1 }], deliveredParcel, deliveryEvent.occurredAt), false);
+  assert.equal(confirmedCooPaymentSnapshot(cooSnapshot, [{ ...cooPayment, dateTime: "2026-10-27T12:00:00.000Z" }], deliveredParcel, deliveryEvent.occurredAt), false);
+  assert.equal(confirmedCooPaymentSnapshot(cooSnapshot, [cooPayment, { ...cooPayment, id: "COO:20" }], deliveredParcel, deliveryEvent.occurredAt), false);
+  assert.equal(confirmedCooPaymentSnapshot({ ...cooSnapshot, references: ["COO:19", "COO:19"] }, [cooPayment], deliveredParcel, deliveryEvent.occurredAt), false);
 });
