@@ -12,7 +12,7 @@ import { manifestStatusLabel } from "@/lib/manifest-status";
 import { getAllowedDestinations } from "@/features/agent/agencies";
 import { getAgentProfile, signOutAgent } from "@/features/agent/auth";
 import { accessVerificationErrorMessage, withinAuthTimeout } from "@/features/auth/auth-resilience";
-import { AgentApiError, ParcelIdentitySelectionRequiredError, saveDestinationPayment, savePayment, searchAgentManifestControl, searchDestinationParcel, searchParcel, type AgentManifestSearchRow, type ParcelIdentityCandidate } from "@/features/agent/functions";
+import { AgentApiError, ParcelIdentitySelectionRequiredError, readCollectedPaymentInfo, saveDestinationPayment, savePayment, searchAgentManifestControl, searchDestinationParcel, searchParcel, type AgentManifestSearchRow, type ParcelIdentityCandidate } from "@/features/agent/functions";
 import { EncaissementQrScanner } from "@/features/agent/encaissement-qr-scanner";
 import { resolveQrById } from "@/features/agent/qr-association-client";
 import { formatParcelArrivalDate } from "@/features/agent/parcel-arrival-date";
@@ -43,7 +43,10 @@ const fieldClassName =
 
 type StorageSearchResult =
   | { state: "FOUND"; parcel: Parcel }
-  | { state: "NOT_FOUND"; code: string }
+  | { state: "NOT_FOUND"; code: string; paymentProof?: "UNCONFIRMED" | "UNAVAILABLE" }
+  | { state: "ALREADY_COLLECTED"; code: string; paidAt: string; paidBy: string | null }
+  | { state: "ALREADY_DELIVERED"; code: string; deliveredAt: string; deliveredBy: string | null; agency: DestinationCode; paidAtCoo: boolean }
+  | { state: "SELECTION_REQUIRED"; code: string }
   | { state: "ERROR"; code: string };
 type ManifestSearchResult =
   | { state: "FOUND"; agency: string; row: AgentManifestSearchRow }
@@ -205,11 +208,23 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
         if (storageOutcome.status === "rejected") {
           if (storageOutcome.reason instanceof ParcelIdentitySelectionRequiredError) {
             setParcelIdentityCandidates(storageOutcome.reason.candidates);
-            setStorageSearchResult({ state: "ERROR", code: normalizedCode });
+            setStorageSearchResult({ state: "SELECTION_REQUIRED", code: normalizedCode });
             return;
           }
           if (storageOutcome.reason instanceof AgentApiError && storageOutcome.reason.code === "PARCEL_NOT_IN_AGENCY_STORAGE") {
             setStorageSearchResult({ state: "NOT_FOUND", code: normalizedCode });
+            void readCollectedPaymentInfo(normalizedCode, requestedParcelId)
+              .then((info) => {
+                if (searchId !== activeSearchIdRef.current) return;
+                setStorageSearchResult(info.state === "CONFIRMED"
+                  ? { state: "ALREADY_COLLECTED", code: normalizedCode, paidAt: info.paidAt, paidBy: info.paidBy }
+                  : info.state === "DELIVERED"
+                    ? { state: "ALREADY_DELIVERED", code: normalizedCode, deliveredAt: info.deliveredAt, deliveredBy: info.deliveredBy, agency: info.agency, paidAtCoo: info.paidAtCoo }
+                    : { state: "NOT_FOUND", code: normalizedCode, paymentProof: info.state });
+              })
+              .catch(() => {
+                if (searchId === activeSearchIdRef.current) setStorageSearchResult({ state: "NOT_FOUND", code: normalizedCode, paymentProof: "UNAVAILABLE" });
+              });
           } else {
             setStorageSearchResult({ state: "ERROR", code: normalizedCode });
           }
@@ -582,36 +597,55 @@ export function AgentWorkspace({ initialTrackingCode = "" }: { initialTrackingCo
               <GlassPanel className="p-5 sm:p-6">
                 <h2 className="text-xl font-semibold">Encaissement / Stockage V2</h2>
                 <p className="mt-2 text-sm text-muted-foreground">Source opérationnelle pour l’admissibilité à l’encaissement.</p>
-                <div className="mt-5 overflow-x-auto">
+                {storageSearchResult?.state === "FOUND" ? <div className="mt-5 overflow-x-auto">
                   <table className="w-full text-left text-sm">
                     <thead className="text-muted-foreground"><tr><th>Code</th><th>Présent</th><th>Encaissement</th><th>Poids</th></tr></thead>
                     <tbody><tr className="border-t border-white/10">
-                      <td className="py-3">{storageSearchResult?.state === "FOUND" ? storageSearchResult.parcel.codeColis : storageSearchResult?.code ?? codeColis.trim().toUpperCase()}</td>
-                      <td>{storageSearchResult?.state === "FOUND" ? "OUI" : storageSearchResult?.state === "NOT_FOUND" ? "NON" : "INDISPONIBLE"}</td>
-                      <td>{storageSearchResult?.state === "FOUND" ? "ADMISSIBILITÉ À VÉRIFIER" : storageSearchResult?.state === "NOT_FOUND" ? "NON ENCAISSABLE ACTUELLEMENT" : "INDISPONIBLE"}</td>
-                      <td>{storageSearchResult?.state === "FOUND" ? formatWeight(storageSearchResult.parcel.poidsKg) : "—"}</td>
+                      <td className="py-3">{storageSearchResult.parcel.codeColis}</td>
+                      <td>OUI</td>
+                      <td>ADMISSIBILITÉ À VÉRIFIER</td>
+                      <td>{formatWeight(storageSearchResult.parcel.poidsKg)}</td>
                     </tr></tbody>
                   </table>
-                </div>
-                {storageSearchResult?.state === "NOT_FOUND" ? <p className="mt-4 rounded-md border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">Ce colis n’est pas présent dans le Stockage de votre agence et n’est pas encaissable actuellement.</p> : null}
+                </div> : storageSearchResult ? <SearchResultNotice
+                  code={storageSearchResult.code}
+                  title={storageSearchResult.state === "ALREADY_COLLECTED" ? "Colis déjà encaissé" : storageSearchResult.state === "ALREADY_DELIVERED" ? "Colis déjà remis" : storageSearchResult.state === "NOT_FOUND" ? "Colis non disponible dans votre agence" : storageSearchResult.state === "SELECTION_REQUIRED" ? "Choix du colis nécessaire" : "Vérification temporairement indisponible"}
+                  detail={storageSearchResult.state === "ALREADY_COLLECTED"
+                    ? `L’encaissement du colis ${storageSearchResult.code} a été enregistré le ${formatCollectedDate(storageSearchResult.paidAt)}${storageSearchResult.paidBy ? ` par l’Agent ${storageSearchResult.paidBy}` : ""}. Ce colis est déjà sorti du stockage de votre agence.`
+                    : storageSearchResult.state === "ALREADY_DELIVERED"
+                      ? `Le colis ${storageSearchResult.code} a été remis au bénéficiaire le ${formatCollectedDate(storageSearchResult.deliveredAt)}${storageSearchResult.deliveredBy ? ` par l’Agent ${storageSearchResult.deliveredBy}` : ""}, à ${storageSearchResult.agency}. Ce colis est déjà sorti du stockage de votre agence.${storageSearchResult.paidAtCoo ? " Paiement effectué à Cotonou (COO)." : ""}`
+                    : storageSearchResult.state === "NOT_FOUND"
+                      ? `Le colis ${storageSearchResult.code} ne figure pas actuellement dans votre stockage disponible et ne peut pas être encaissé pour le moment. Veuillez vérifier le code et l’agence sélectionnée.${storageSearchResult.paymentProof === "UNAVAILABLE" ? " Son historique de paiement n’a pas pu être vérifié actuellement." : storageSearchResult.paymentProof === "UNCONFIRMED" ? " Aucun encaissement antérieur daté ne peut être confirmé pour cette identité." : ""}`
+                      : storageSearchResult.state === "SELECTION_REQUIRED"
+                        ? "Plusieurs contextes physiques correspondent à ce code. Choisissez le colis exact ci-dessous."
+                      : "La situation du colis n’a pas pu être vérifiée. Veuillez réessayer plus tard."}
+                /> : null}
                 {parcelIdentityCandidates.length > 1 ? <div className="mt-4 rounded-md border border-sky-300/30 bg-sky-300/10 p-3"><p className="text-sm font-semibold text-sky-100">Plusieurs contextes physiques existent. Choisissez le colis concerné :</p><div className="mt-3 grid gap-2">{parcelIdentityCandidates.map((candidate)=><Button key={candidate.parcelId} type="button" variant="outline" onClick={()=>void runEncaissementSearch(candidate.trackingCode, candidate.agency as DestinationCode, candidate.parcelId)}>{candidate.displayCode}</Button>)}</div></div> : null}
               </GlassPanel>
 
               <GlassPanel className="p-5 sm:p-6">
                 <h2 className="text-xl font-semibold">Vérification MANIFESTE PUBLIC</h2>
                 <p className="mt-2 text-sm text-muted-foreground">Information de contrôle uniquement — ne décide pas de l’encaissement.</p>
-                <div className="mt-5 overflow-x-auto">
+                {manifestSearchResult?.state === "FOUND" ? <div className="mt-5 overflow-x-auto">
                   <table className="w-full text-left text-sm">
                     <thead className="text-muted-foreground"><tr><th>Date</th><th>Code</th><th>Destination</th><th>Poids</th><th>Statut</th></tr></thead>
                     <tbody><tr className="border-t border-white/10">
-                      <td className="py-3">{manifestSearchResult?.state === "FOUND" ? manifestSearchResult.row.date || "—" : "—"}</td>
-                      <td>{manifestSearchResult?.state === "FOUND" ? manifestSearchResult.row.trackingCode : manifestSearchResult?.code ?? codeColis.trim().toUpperCase()}</td>
-                      <td>{manifestSearchResult?.state === "FOUND" ? manifestSearchResult.row.sourceSite : manifestSearchResult?.state === "NOT_FOUND" || manifestSearchResult?.state === "AMBIGUOUS" ? manifestSearchResult.agency : profile.agence}</td>
-                      <td>{manifestSearchResult?.state === "FOUND" ? formatWeight(manifestSearchResult.row.weightKg) : "—"}</td>
-                      <td>{manifestSearchResult?.state === "FOUND" ? manifestStatusLabel(manifestSearchResult.row.status) : manifestSearchResult?.state === "NOT_FOUND" ? "INTROUVABLE" : manifestSearchResult?.state === "AMBIGUOUS" ? "AMBIGU" : "INDISPONIBLE"}</td>
+                      <td className="py-3">{manifestSearchResult.row.date || "—"}</td>
+                      <td>{manifestSearchResult.row.trackingCode}</td>
+                      <td>{manifestSearchResult.row.sourceSite}</td>
+                      <td>{formatWeight(manifestSearchResult.row.weightKg)}</td>
+                      <td>{manifestStatusLabel(manifestSearchResult.row.status)}</td>
                     </tr></tbody>
                   </table>
-                </div>
+                </div> : manifestSearchResult ? <SearchResultNotice
+                  code={manifestSearchResult.code}
+                  title={manifestSearchResult.state === "NOT_FOUND" ? "Aucune correspondance exacte trouvée" : manifestSearchResult.state === "AMBIGUOUS" ? "Plusieurs correspondances possibles" : "Vérification temporairement indisponible"}
+                  detail={manifestSearchResult.state === "NOT_FOUND"
+                    ? "Ce code exact n’a pas été retrouvé dans les résultats du Manifeste public consultés pour cette recherche. Ce contrôle informatif ne décide pas de l’encaissement."
+                    : manifestSearchResult.state === "AMBIGUOUS"
+                      ? "Plusieurs lignes correspondent au code recherché. Ce contrôle informatif ne permet pas de choisir une ligne."
+                      : "Le Manifeste public n’a pas pu être vérifié actuellement. Ce contrôle informatif ne décide pas de l’encaissement."}
+                /> : null}
               </GlassPanel>
             </section>
           ) : null}
@@ -722,6 +756,23 @@ function formatPaymentMode(mode: PaymentMode): string {
 
 function formatPaymentStatus(status: "SOLDE" | "PARTIELLEMENT PAYE"): string {
   return status === "SOLDE" ? "Soldé" : "Partiellement payé";
+}
+
+function formatCollectedDate(isoDate: string): string {
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) return "date non disponible";
+  const options = { timeZone: "Africa/Porto-Novo" };
+  const day = new Intl.DateTimeFormat("fr-FR", { ...options, dateStyle: "short" }).format(date);
+  const time = new Intl.DateTimeFormat("fr-FR", { ...options, timeStyle: "short" }).format(date);
+  return `${day} à ${time.replace(":", "h")}`;
+}
+
+function SearchResultNotice({ code, title, detail }: { code: string; title: string; detail: string }) {
+  return <div className="mt-5 rounded-lg border border-white/15 bg-white/[0.04] p-4 text-sm" role="status">
+    <p className="font-semibold text-white">{title}</p>
+    <p className="mt-1 font-mono text-base font-semibold text-white">{code}</p>
+    <p className="mt-2 leading-relaxed text-muted-foreground">{detail}</p>
+  </div>;
 }
 
 function getExactBalance(parcel: Parcel): number | null {
