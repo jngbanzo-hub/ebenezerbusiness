@@ -37,6 +37,10 @@ begin
       or (select count(*) from public.stockage_forwardings where forwarding_id=c.forwarding_id
         and status='CANCELLED_BY_COMPENSATION' and amount_expected=c.forwarding_price and amount_paid=0
         and (metadata->>'historicalExpectedUsd')::numeric=c.historical_price)<>1
+      or (select count(*) from public.stockage_forwarding_manifest_registry where forwarding_id=c.forwarding_id
+        and sync_state='CANCELLED_BY_COMPENSATION' and amount_paid=0
+        and payment_request_id is null and cash_event_id is null
+        and destination_parcel_id=c.parcel_id)<>1
       or (select count(*) from public.stockage_forwarding_orchestrations where forwarding_id=c.forwarding_id
         and state='CANCELLED_BY_COMPENSATION')<>1 then
       raise exception 'FULL_CORRECTION_FAILED: %', route.code;
@@ -51,6 +55,41 @@ begin
       raise exception 'IDEMPOTENT_REPLAY_FAILED: %', route.code;
     end if;
   end loop;
+end $$;
+
+do $$
+declare c public.fixture_case%rowtype; failed boolean:=false;
+begin
+  perform public.seed_fixture('KLZ','LSHI','CERTIFIED126',3,33,39);
+  select * into c from public.fixture_case;
+  update public.stockage_forwarding_manifest_registry
+    set resolution_state='CERTIFIED',manifest_source_row=17,
+      manifest_source_date='2026-10-01',manifest_source_fingerprint=repeat('a',64)
+    where forwarding_id=c.forwarding_id;
+  perform public.correct_mistaken_forwarding(md5('certified-request')::uuid,
+    c.forwarding_id,c.parcel_id,c.destination_agency,2,c.origin_arrival_id,c.departure_id,
+    c.destination_arrival_id,33,0,33,'KLZ!F17','2026-10-01',
+    'Correction administrative fictive',true,'00000000-0000-0000-0000-000000000001');
+  if (select count(*) from public.stockage_forwarding_manifest_registry
+      where forwarding_id=c.forwarding_id and resolution_state='CERTIFIED'
+        and sync_state='CANCELLED_BY_COMPENSATION'
+        and manifest_source_row=17 and manifest_source_fingerprint=repeat('a',64))<>1 then
+    raise exception 'CERTIFIED_HISTORY_NOT_PRESERVED';
+  end if;
+  perform public.seed_fixture('KLZ','LSHI','REGISTRYBAD126',3,33,39);
+  select * into c from public.fixture_case;
+  update public.stockage_forwarding_manifest_registry set sync_state='PENDING'
+    where forwarding_id=c.forwarding_id;
+  begin
+    perform public.correct_mistaken_forwarding(md5('registry-conflict')::uuid,
+      c.forwarding_id,c.parcel_id,c.destination_agency,2,c.origin_arrival_id,c.departure_id,
+      c.destination_arrival_id,33,0,33,'KLZ!F17','2026-10-01',
+      'Correction administrative fictive',true,'00000000-0000-0000-0000-000000000001');
+  exception when others then failed:=sqlerrm like '%FORWARDING_REGISTRY_CONFLICT%'; end;
+  if not failed or (select count(*) from public.stockage_events where event_type='CORRECTION_COMPENSATOIRE_ADMIN')<>0
+    or (select count(*) from public.stockage_forwardings where status='ARRIVAL_CONFIRMED')<>1 then
+    raise exception 'REGISTRY_CONFLICT_NOT_ATOMIC';
+  end if;
 end $$;
 
 do $$
@@ -107,6 +146,8 @@ begin
     or (select count(*) from public.stockage_accounts where agency='KLZ' and current_parcel_count=0 and current_weight_kg=0)<>1
     or (select count(*) from public.stockage_accounts where agency='LSHI' and current_parcel_count=1 and current_weight_kg=3)<>1
     or (select count(*) from public.stockage_parcels where parcel_id=c.parcel_id and agency='LSHI' and forwarding_id=c.forwarding_id)<>1
+    or (select count(*) from public.stockage_forwarding_manifest_registry where forwarding_id=c.forwarding_id
+      and sync_state='AWAITING_PAYMENT')<>1
     or (select count(*) from public.stockage_forwardings where forwarding_id=c.forwarding_id and status='ARRIVAL_CONFIRMED')<>1 then
     raise exception 'ATOMIC_ROLLBACK_FAILED';
   end if;

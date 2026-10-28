@@ -3,6 +3,37 @@
 -- The server verifies the external canonical manifest and P1 before invoking this atomic RPC.
 begin;
 
+-- A cancelled cycle remains historical. Only non-cancelled cycles retain the
+-- route uniqueness guarantee; the separate forwarding_id/request_id remain unique.
+do $$
+begin
+  if to_regclass('public.stockage_forwarding_manifest_registry') is null
+     or to_regclass('public.stockage_forwardings_forwarding_reference_key') is null
+     or not exists (select 1 from pg_constraint where conrelid='public.stockage_forwardings'::regclass
+       and conname='stockage_forwardings_original_tracking_code_origin_agency_d_key'
+       and pg_get_constraintdef(oid)='UNIQUE (original_tracking_code, origin_agency, destination_agency)')
+     or not exists (select 1 from pg_constraint where conrelid='public.stockage_forwarding_manifest_registry'::regclass
+       and conname='stockage_forwarding_manifest_registry_sync_state_check'
+       and pg_get_constraintdef(oid)=$check$CHECK ((sync_state = ANY (ARRAY['AWAITING_PAYMENT'::text, 'AWAITING_MANIFEST_IDENTITY'::text, 'PENDING'::text, 'RETRY'::text, 'AMBIGUOUS'::text, 'SYNCED'::text])))$check$)
+     or not exists (select 1 from pg_trigger where tgrelid='public.stockage_forwardings'::regclass
+       and tgname='stockage_forwarding_manifest_registry_capture' and tgenabled='O') then
+    raise exception 'FORWARDING_CORRECTION_SCHEMA_DRIFT';
+  end if;
+end $$;
+
+create unique index stockage_forwardings_active_route_unique
+  on public.stockage_forwardings(original_tracking_code,origin_agency,destination_agency)
+  where status <> 'CANCELLED_BY_COMPENSATION';
+alter table public.stockage_forwardings
+  drop constraint stockage_forwardings_original_tracking_code_origin_agency_d_key;
+
+alter table public.stockage_forwarding_manifest_registry
+  drop constraint stockage_forwarding_manifest_registry_sync_state_check;
+alter table public.stockage_forwarding_manifest_registry
+  add constraint stockage_forwarding_manifest_registry_sync_state_check
+  check(sync_state in ('AWAITING_PAYMENT','AWAITING_MANIFEST_IDENTITY','PENDING',
+    'RETRY','AMBIGUOUS','SYNCED','CANCELLED_BY_COMPENSATION'));
+
 create function public.correct_mistaken_forwarding(
   p_request_id uuid, p_forwarding_id uuid, p_parcel_id uuid,
   p_expected_destination_agency text, p_expected_forwarding_version bigint,
@@ -22,6 +53,7 @@ declare
   v_departure public.stockage_events%rowtype;
   v_arrival public.stockage_events%rowtype;
   v_prior public.stockage_admin_audit%rowtype;
+  v_registry public.stockage_forwarding_manifest_registry%rowtype;
   v_now timestamptz := clock_timestamp();
   v_business_date date := (clock_timestamp() at time zone 'Africa/Porto-Novo')::date;
   v_out_event text := 'stockage-forwarding-correction-out-' || replace(p_request_id::text,'-','');
@@ -52,7 +84,18 @@ begin
   end if;
   select * into v_forwarding from public.stockage_forwardings
     where forwarding_id=p_forwarding_id for update;
-  if not found or v_forwarding.status<>'ARRIVAL_CONFIRMED'
+  -- A concurrent identical confirmation may have committed while this call
+  -- waited on the forwarding row lock. Recheck the audit after the wait.
+  select * into v_prior from public.stockage_admin_audit where request_id=p_request_id;
+  if found then
+    if v_prior.action<>'MISTAKEN_FORWARDING_CORRECTED'
+       or v_prior.metadata->>'forwardingId'<>p_forwarding_id::text
+       or v_prior.metadata->>'parcelId'<>p_parcel_id::text then
+      raise exception 'IDEMPOTENCY_CONFLICT';
+    end if;
+    return jsonb_build_object('state','COMPLETED','replayed',true,'forwardingId',p_forwarding_id,'parcelId',p_parcel_id);
+  end if;
+  if v_forwarding.forwarding_id is null or v_forwarding.status<>'ARRIVAL_CONFIRMED'
      or v_forwarding.version<>p_expected_forwarding_version
      or v_forwarding.destination_agency<>p_expected_destination_agency
      or v_forwarding.origin_agency=v_forwarding.destination_agency
@@ -116,6 +159,19 @@ begin
      or exists(select 1 from public.stockage_admin_audit where metadata @> jsonb_build_object('forwardingId',p_forwarding_id::text)) then
     raise exception 'FORWARDING_HAS_SUBSEQUENT_EFFECT';
   end if;
+  select * into v_registry from public.stockage_forwarding_manifest_registry
+    where forwarding_id=p_forwarding_id for update;
+  if not found or v_registry.tracking_code is distinct from v_forwarding.original_tracking_code
+     or v_registry.origin_agency is distinct from v_forwarding.origin_agency
+     or v_registry.destination_agency is distinct from v_forwarding.destination_agency
+     or v_registry.destination_parcel_id is distinct from p_parcel_id
+     or v_registry.canonical_weight_kg is distinct from v_parcel.canonical_weight_kg
+     or v_registry.amount_paid is distinct from 0
+     or v_registry.payment_request_id is not null or v_registry.cash_event_id is not null
+     or v_registry.payment_datetime is not null
+     or v_registry.sync_state <> 'AWAITING_PAYMENT' then
+    raise exception 'FORWARDING_REGISTRY_CONFLICT';
+  end if;
   -- Account locks are acquired in a stable order; every change below is one DB transaction.
   perform 1 from public.stockage_accounts where agency in (v_forwarding.origin_agency,v_forwarding.destination_agency)
     order by agency for update;
@@ -165,6 +221,12 @@ begin
       'manifestSource',p_manifest_source,'manifestDate',p_manifest_date)
     where forwarding_id=p_forwarding_id and version=v_forwarding.version;
   if not found then raise exception 'FORWARDING_VERSION_CONFLICT'; end if;
+  update public.stockage_forwarding_manifest_registry
+    set sync_state='CANCELLED_BY_COMPENSATION', next_retry_at=null,
+      claimed_at=null, claimed_by=null, lease_until=null, updated_at=v_now
+    where forwarding_id=p_forwarding_id and sync_state='AWAITING_PAYMENT'
+      and amount_paid=0 and payment_request_id is null and cash_event_id is null;
+  if not found then raise exception 'FORWARDING_REGISTRY_CONFLICT'; end if;
   update public.stockage_forwarding_orchestrations set state='CANCELLED_BY_COMPENSATION',updated_at=v_now
     where forwarding_id=p_forwarding_id and state='ARRIVAL_CONFIRMED' and payment_created is false;
   if not found then raise exception 'FORWARDING_ORCHESTRATION_CONFLICT'; end if;
