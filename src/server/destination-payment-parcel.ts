@@ -17,6 +17,11 @@ const STANDARD_RATES_USD_PER_KG: Readonly<Record<StorageAgency, number>> = {
   KLZ: 11
 };
 
+/** Expose the existing native price rule for correction preflight; no payment rule is changed. */
+export function nativeDestinationExpectedAmount(weightKg: number, agency: StorageAgency) {
+  return money(weightKg * STANDARD_RATES_USD_PER_KG[agency]);
+}
+
 const DESTINATION_NAMES: Readonly<Record<StorageAgency, string>> = {
   FIH: "Kinshasa",
   LSHI: "Lubumbashi",
