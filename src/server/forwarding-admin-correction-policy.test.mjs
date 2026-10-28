@@ -26,6 +26,13 @@ test("une correction d'acheminement exact et financièrement vérifiée est admi
   assert.deepEqual(correctionBlockers(ready), []);
 });
 
+test("mêmes garde-fous pour les trois agences, sans code ni trajet privilégié", () => {
+  for (const [originAgency, destinationAgency] of [["FIH", "LSHI"], ["LSHI", "KLZ"], ["KLZ", "FIH"]]) {
+    assert.deepEqual(correctionBlockers({ ...ready, originAgency, destinationAgency,
+      parcelAgency: destinationAgency, trackingCode: "EXACT126", parcelTrackingCode: "EXACT126" }), []);
+  }
+});
+
 test("une identité de colis, un cycle ou une agence contradictoire est refusé", () => {
   for (const patch of [
     { parcelId: "" }, { parcelAgency: "FIH" }, { parcelTrackingCode: "TEST04426B" },
