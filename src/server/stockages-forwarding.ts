@@ -5,6 +5,7 @@ import { createHmac } from "crypto";
 import { createClient } from "@supabase/supabase-js";
 
 import { resolveInterAgencyQuote } from "@/server/inter-agency-routing";
+import { forwardingCycleFingerprint, forwardingCycleReference } from "@/server/forwarding-cycle-reference";
 import {
   buildForwardingFingerprint,
   selectForwardingResume,
@@ -62,7 +63,7 @@ export async function readForwardingResume(input: {
   optionalObservation: string;
   actorId: string;
 }): Promise<ForwardingResume | null> {
-  const expectedFingerprint = buildForwardingFingerprint({
+  const baseFingerprint = buildForwardingFingerprint({
     trackingCode: input.trackingCode,
     origin: input.origin,
     destination: input.destination,
@@ -71,6 +72,8 @@ export async function readForwardingResume(input: {
     optionalObservation: clean(input.optionalObservation),
     amountExpectedUsd: input.amountExpectedUsd
   });
+  const cancelledForwardingId = await readCancelledForwardingCycle(input.trackingCode, input.origin, input.destination);
+  const expectedFingerprint = forwardingCycleFingerprint(baseFingerprint, cancelledForwardingId);
   const { data, error } = await serviceClient()
     .from("stockage_forwarding_orchestrations")
     .select("request_id,command_fingerprint,actor_id,state")
@@ -103,7 +106,7 @@ export async function createInterAgencyForwarding(input: {
   const paymentMode = requiredText(input.paymentMode);
   const optionalReference = clean(input.optionalReference);
   const optionalObservation = clean(input.optionalObservation);
-  const fingerprint = buildForwardingFingerprint({
+  const baseFingerprint = buildForwardingFingerprint({
     trackingCode: quote.trackingCode,
     origin: quote.origin,
     destination: quote.destination,
@@ -112,6 +115,8 @@ export async function createInterAgencyForwarding(input: {
     optionalObservation,
     amountExpectedUsd: quote.amountExpectedUsd
   });
+  const cancelledForwardingId = await readCancelledForwardingCycle(quote.trackingCode, quote.origin, quote.destination);
+  const fingerprint = forwardingCycleFingerprint(baseFingerprint, cancelledForwardingId);
 
   const begun = await rpc("begin_inter_agency_forwarding", {
     p_actor_id: input.actorId,
@@ -132,6 +137,14 @@ export async function createInterAgencyForwarding(input: {
 
   let paymentResponse = begun.paymentResponse;
   if (!begun.paymentCreated || !paymentResponse) {
+    const forwardingReference = await readPaidOriginCycleReference({
+      trackingCode: quote.trackingCode,
+      origin: quote.origin,
+      destination: quote.destination,
+      baseReference: quote.routingReference,
+      paymentRequestId: input.paymentRequestId,
+      cancelledForwardingId
+    });
     paymentResponse = await invokeCanonicalPaymentEngine({
       accessToken: input.agentAccessToken,
       trackingCode: quote.trackingCode,
@@ -146,7 +159,7 @@ export async function createInterAgencyForwarding(input: {
         sourceDestinationCode: quote.origin,
         collectionSiteCode: quote.destination,
         forwardingDestinationCode: quote.destination,
-        forwardingReference: quote.routingReference
+        forwardingReference
       }
     });
     await rpc("checkpoint_inter_agency_payment", {
@@ -160,6 +173,40 @@ export async function createInterAgencyForwarding(input: {
     p_command_fingerprint: fingerprint,
     p_request_id: input.paymentRequestId
   });
+}
+
+async function readPaidOriginCycleReference(input: {
+  trackingCode: string;
+  origin: StorageAgency;
+  destination: StorageAgency;
+  baseReference: string;
+  paymentRequestId: string;
+  cancelledForwardingId: string | null;
+}) {
+  const currentCancelledId = await readCancelledForwardingCycle(input.trackingCode, input.origin, input.destination);
+  if (currentCancelledId !== input.cancelledForwardingId) throw new StockagesV2Error("IDEMPOTENCY_CONFLICT", 409);
+  const reference = forwardingCycleReference(input.baseReference, input.paymentRequestId, Boolean(currentCancelledId));
+  if (currentCancelledId) {
+    const existing = await serviceClient().from("stockage_forwardings")
+      .select("forwarding_id").eq("forwarding_reference", reference).limit(1);
+    if (existing.error) throw new StockagesV2Error("FORWARDING_SERVICE_UNAVAILABLE", 503);
+    if (existing.data?.length) throw new StockagesV2Error("IDEMPOTENCY_CONFLICT", 409);
+  }
+  return reference;
+}
+
+async function readCancelledForwardingCycle(code: string, origin: StorageAgency, destination: StorageAgency) {
+  const { data, error } = await serviceClient().from("stockage_forwardings")
+    .select("forwarding_id")
+    .eq("original_tracking_code", code)
+    .eq("origin_agency", origin)
+    .eq("destination_agency", destination)
+    .eq("status", "CANCELLED_BY_COMPENSATION")
+    .order("created_at", { ascending: false })
+    .order("forwarding_id", { ascending: false })
+    .limit(1);
+  if (error) throw new StockagesV2Error("FORWARDING_SERVICE_UNAVAILABLE", 503);
+  return data?.[0]?.forwarding_id ?? null;
 }
 
 export async function recordForwardingArrival(input: {
