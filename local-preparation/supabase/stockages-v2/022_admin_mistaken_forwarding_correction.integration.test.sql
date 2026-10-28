@@ -44,6 +44,40 @@ begin
   end loop;
 end $$;
 
+do $$
+declare c public.fixture_case%rowtype; scenario text; failed boolean;
+begin
+  for scenario in select unnest(array['PAYMENT','CASH','DELIVERED','ORIGIN_COLLISION']) loop
+    perform public.seed_fixture('FIH','KLZ','BLOCK'||scenario,4,36,52);
+    select * into c from public.fixture_case;
+    if scenario='PAYMENT' then
+      insert into public.stockage_payment_orchestrations values(gen_random_uuid(),c.forwarding_id);
+    elsif scenario='CASH' then
+      insert into public.cash_events values('cash-block',c.forwarding_id::text,'{}');
+    elsif scenario='DELIVERED' then
+      update public.stockage_parcels set delivery_status='DELIVERED' where parcel_id=c.parcel_id;
+    else
+      insert into public.stockage_parcels values(gen_random_uuid(),null,c.tracking_code,c.origin_agency,
+        c.weight_kg,'AVAILABLE','PHYSICAL_ARRIVAL',c.origin_arrival_id,now(),1,now());
+    end if;
+    failed:=false;
+    begin
+      perform public.correct_mistaken_forwarding(md5('blocked-'||scenario)::uuid,
+        c.forwarding_id,c.parcel_id,c.destination_agency,2,c.origin_arrival_id,c.departure_id,
+        c.destination_arrival_id,36,0,36,'FIH!F17','2026-10-01',
+        'Correction administrative fictive',true,'00000000-0000-0000-0000-000000000001');
+    exception when others then failed:=
+      (scenario in ('PAYMENT','CASH') and sqlerrm like '%FORWARDING_HAS_SUBSEQUENT_EFFECT%')
+      or (scenario='DELIVERED' and sqlerrm like '%PARCEL_CORRECTION_IDENTITY_CONFLICT%')
+      or (scenario='ORIGIN_COLLISION' and sqlerrm like '%ORIGIN_PARCEL_COLLISION%');
+    end;
+    if not failed or (select count(*) from public.stockage_events where event_type='CORRECTION_COMPENSATOIRE_ADMIN')<>0
+      or (select count(*) from public.stockage_admin_audit)<>0 then
+      raise exception 'INCOMPATIBLE_OPERATION_GUARD_FAILED: %',scenario;
+    end if;
+  end loop;
+end $$;
+
 create function public.fixture_fail_late() returns trigger language plpgsql as $$
 begin raise exception 'SIMULATED_LATE_FAILURE'; end $$;
 create trigger fixture_fail_late before insert on public.stockage_forwarding_events
