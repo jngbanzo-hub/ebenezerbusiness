@@ -25,9 +25,18 @@ begin
         and current_parcel_count=0 and current_weight_kg=0)<>1
       or (select count(*) from public.stockage_events where event_type='CORRECTION_COMPENSATOIRE_ADMIN')<>2
       or (select count(*) from public.stockage_admin_audit)<>1
+      or (select count(*) from public.stockage_admin_audit where
+        (new_value->>'historicalExpectedUsd')::numeric=c.historical_price
+        and (new_value->>'historicalPaidUsd')::numeric=0
+        and metadata->>'originArrivalEventId'=c.origin_arrival_id
+        and metadata->>'departureEventId'=c.departure_id
+        and metadata->>'arrivalEventId'=c.destination_arrival_id)<>1
+      or (select count(*) from public.stockage_events where event_id in
+        (c.origin_arrival_id,c.departure_id,c.destination_arrival_id))<>3
       or (select count(*) from public.stockage_forwarding_events where event_type='FORWARDING_CANCELLED_BY_COMPENSATION')<>1
       or (select count(*) from public.stockage_forwardings where forwarding_id=c.forwarding_id
-        and status='CANCELLED_BY_COMPENSATION' and amount_expected=c.forwarding_price and amount_paid=0)<>1
+        and status='CANCELLED_BY_COMPENSATION' and amount_expected=c.forwarding_price and amount_paid=0
+        and (metadata->>'historicalExpectedUsd')::numeric=c.historical_price)<>1
       or (select count(*) from public.stockage_forwarding_orchestrations where forwarding_id=c.forwarding_id
         and state='CANCELLED_BY_COMPENSATION')<>1 then
       raise exception 'FULL_CORRECTION_FAILED: %', route.code;
