@@ -13,8 +13,9 @@ import { getSupabaseBrowserClient } from "@/features/agent/supabase";
 import { AgentTransferActions } from "@/features/transferts/agent-transfer-actions";
 import { AgentTransferDetails } from "@/features/transferts/agent-transfer-details";
 import { AgentTransferForm } from "@/features/transferts/agent-transfer-form";
+import { receivedOriginsForAgency, visibleAgentTransfers } from "@/features/transferts/agent-received-transfers";
 import { loadAgentTransfers, TransfertsApiError } from "@/features/transferts/api";
-import type { TransferStatus, TransfersPageResponse } from "@/features/transferts/types";
+import type { TransferAgency, TransferStatus, TransfersPageResponse } from "@/features/transferts/types";
 
 export function AgentTransfertsPage() {
   const router = useRouter();
@@ -23,6 +24,7 @@ export function AgentTransfertsPage() {
   const [token, setToken] = useState("");
   const [direction, setDirection] = useState<"SENT" | "RECEIVED">("SENT");
   const [status, setStatus] = useState<TransferStatus | "">("");
+  const [origin, setOrigin] = useState<TransferAgency | "">("");
   const [search, setSearch] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const [selectedTransferId, setSelectedTransferId] = useState("");
@@ -59,15 +61,13 @@ export function AgentTransfertsPage() {
 
   const visibleTransfers = useMemo(() => {
     if (!result?.agency) return [];
-    return result.transfers.filter((transfer) => {
-      const matchesDirection = direction === "SENT"
-        ? transfer.agencyFrom === result.agency
-        : transfer.agencyTo === result.agency;
-      return matchesDirection &&
-        (!status || transfer.status === status) &&
-        (!search || transfer.transferId.toLowerCase().includes(search.trim().toLowerCase()));
-    });
-  }, [direction, result, search, status]);
+    return visibleAgentTransfers(result.transfers, result.agency, direction, origin, status, search);
+  }, [direction, origin, result, search, status]);
+
+  const receivedOrigins = useMemo(
+    () => result?.agency ? receivedOriginsForAgency(result.agency) : [],
+    [result?.agency]
+  );
 
   return (
     <main className="min-h-screen bg-ebe-night py-8 text-white sm:py-12">
@@ -105,6 +105,15 @@ export function AgentTransfertsPage() {
               <div className="flex flex-wrap gap-2">
                 <Button variant={direction === "SENT" ? "default" : "outline"} onClick={() => setDirection("SENT")}>Envoyés</Button>
                 <Button variant={direction === "RECEIVED" ? "default" : "outline"} onClick={() => setDirection("RECEIVED")}>Reçus</Button>
+                {direction === "RECEIVED" && (
+                  <select aria-label="Agence d’origine" value={origin} onChange={(event) => {
+                    setOrigin(event.target.value as TransferAgency | "");
+                    setStatus("");
+                  }} className="rounded-md border border-white/15 bg-ebe-night px-3 py-2 text-sm">
+                    <option value="">Toutes les agences</option>
+                    {receivedOrigins.map((agency) => <option key={agency} value={agency}>{agency}</option>)}
+                  </select>
+                )}
                 <select value={status} onChange={(event) => setStatus(event.target.value as TransferStatus | "")} className="rounded-md border border-white/15 bg-ebe-night px-3 text-sm">
                   <option value="">Tous les statuts</option>
                   {["ENVOYE", "CODE_RECU", "FONDS_RETIRES", "CONFIRME", "A_VERIFIER", "ANNULE"].map((item) => <option key={item}>{item}</option>)}

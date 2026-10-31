@@ -266,8 +266,14 @@ test("le flag d’écriture ne désactive aucune route GET", () => {
 });
 
 test("le tableau Agent conserve tous les modules autorisés, dont Transferts", () => {
-  for (const title of ["Encaissement", "Dépenses", "Stockages", "Transferts", "Caisse"]) {
+  for (const title of [
+    "Associer un QR", "Statistiques de Réception", "Rapport synthèse du jour",
+    "Encaissement", "Dépenses", "Stockages", "Transferts", "Caisse", "Rapport COO"
+  ]) {
     assert.ok(dashboard.includes(`title: "${title}"`));
   }
-  assert.equal((dashboard.match(/available: true/g) ?? []).length, 7);
+  assert.equal((dashboard.match(/available: true/g) ?? []).length, 9);
+  assert.ok(dashboard.includes('if (operation.key === "qr-association") return profile.agence === "COTONOU";'));
+  assert.ok(dashboard.includes('["caisse", "rapport-journalier", "statistiques-reception"].includes(operation.key)'));
+  assert.ok(dashboard.includes('operation.key !== "rapport-coo"'));
 });
