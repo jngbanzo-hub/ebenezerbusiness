@@ -17,7 +17,7 @@ export type ResumeEvidence = {
   parcelId: string;
   orchestration: PaymentOrchestrationRow | null;
   otherOrchestrations: Array<{ request_id: string; parcel_id: string | null; state: string }>;
-  parcel: { parcel_id: string; tracking_code: string; agency: string; forwarding_id: string | null; canonical_weight_kg: number | string; delivery_status: string } | null;
+  parcel: { parcel_id: string; tracking_code: string; agency: string; forwarding_id: string | null; canonical_weight_kg: number | string; delivery_status: string; weight_source_reference?: string; created_at?: string } | null;
   sameCodeParcels: Array<{ parcel_id: string }>;
   account: { status: string; current_parcel_count: number | string; current_weight_kg: number | string } | null;
   canonical: AdminPayment | null;
@@ -27,6 +27,8 @@ export type ResumeEvidence = {
   storageRows: Array<{ event_id: string }>;
   storageExitRows: Array<{ event_id: string }>;
   relatedForwardings: Array<{ forwarding_id: string }>;
+  arrivalEvent?: { request_id: string; agency: string; event_type: string; occurred_at: string; metadata: { parcels?: Array<{ trackingCode?: string; weightKg?: number | string }> } } | null;
+  matchingArrivalEvents?: Array<{ request_id: string }>;
 };
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -46,7 +48,7 @@ export function certifyDestinationResume(evidence: ResumeEvidence): boolean {
   if (!row || !parcel || !account || !canonical || !uuid.test(row.request_id) || !uuid.test(parcelId) ||
       !/^[0-9a-f]{64}$/i.test(row.command_fingerprint) ||
       row.state !== "PENDING" || row.stockage_event_id !== null || row.forwarding_id !== null ||
-      row.parcel_id !== parcelId || row.tracking_code !== trackingCode || row.agency !== agency ||
+      (row.parcel_id !== null && row.parcel_id !== parcelId) || row.tracking_code !== trackingCode || row.agency !== agency ||
       parcel.parcel_id !== parcelId || parcel.tracking_code !== trackingCode || parcel.agency !== agency ||
       parcel.forwarding_id !== null || !["AVAILABLE", "PRESENT"].includes(parcel.delivery_status) ||
       evidence.sameCodeParcels.length !== 1 || evidence.sameCodeParcels[0].parcel_id !== parcelId ||
@@ -60,6 +62,26 @@ export function certifyDestinationResume(evidence: ResumeEvidence): boolean {
     (other.parcel_id === parcelId || other.parcel_id === null) &&
     ["PENDING", "COMPLETED", "COMPENSATION_REQUIRED"].includes(other.state)
   )) return false;
+
+  // Historical native rows have no parcel_id. Their physical cycle must be
+  // proved by one immutable arrival, not inferred from a matching code alone.
+  if (row.parcel_id === null) {
+    const arrival = evidence.arrivalEvent;
+    const source = parcel.weight_source_reference;
+    const rowCreatedAt = Date.parse(row.created_at ?? "");
+    const arrivedAt = Date.parse(arrival?.occurred_at ?? "");
+    if (!arrival || parcel.delivery_status !== "AVAILABLE" || !source || source !== `arrival:${arrival.request_id}` ||
+        arrival.agency !== agency || arrival.event_type !== "MANUAL_ARRIVAL_RECORDED" ||
+        evidence.matchingArrivalEvents?.length !== 1 ||
+        evidence.matchingArrivalEvents[0].request_id !== arrival.request_id ||
+        !Number.isFinite(rowCreatedAt) || !Number.isFinite(arrivedAt) || arrivedAt > rowCreatedAt ||
+        arrival.metadata?.parcels?.filter((item) =>
+          item.trackingCode === trackingCode && money(item.weightKg) === money(parcel.canonical_weight_kg)
+        ).length !== 1 ||
+        arrival.metadata.parcels.filter((item) => item.trackingCode === trackingCode).length !== 1 ||
+        evidence.cashRows.length !== 0 || evidence.fingerprintCashRows.length !== 0 ||
+        row.cash_event_id !== null || row.payment_created !== false || row.payment_response !== null) return false;
+  }
 
   if (canonical.paymentRequestId?.toLowerCase() !== row.request_id.toLowerCase() ||
       canonical.codeColis !== trackingCode || canonical.agenceEncaissement !== agency ||

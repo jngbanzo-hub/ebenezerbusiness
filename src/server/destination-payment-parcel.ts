@@ -5,6 +5,7 @@ import { createHmac } from "crypto";
 import { createClient } from "@supabase/supabase-js";
 
 import type { Parcel } from "@/features/agent/types";
+import type { AdminPayment } from "@/features/admin/types";
 import { readAdminPaymentNextRow, readAdminPaymentWindow, readAdminPayments, readCanonicalPaymentsByRequestIds } from "@/server/admin-payments-sheets";
 import { destinationPaymentFingerprint, originalPendingRequestId } from "@/server/destination-payment-retry-guard";
 import { StockagesV2Error, type StorageAgency } from "@/server/stockages-v2";
@@ -362,11 +363,62 @@ export async function resumePendingPaidDestination(
   return Object.freeze({ payment: completedReplayPayload(parcel, input.paymentRequestId), forwardingId: null });
 }
 
+/** Historical native PENDING rows only. No Apps Script call and no new payment. */
+export async function resumeHistoricalNativePendingPaidDestination(input: {
+  paymentRequestId: string;
+  parcel: Readonly<Parcel>;
+  canonical: AdminPayment;
+  orchestration: PaymentOrchestrationRow;
+  arrivalRequestId: string | null;
+  resumerId: string;
+}) {
+  const { paymentRequestId, parcel, canonical, orchestration, arrivalRequestId, resumerId } = input;
+  if (!parcel.parcelId || !arrivalRequestId || parcel.forwardingId !== null ||
+      orchestration.parcel_id !== null || orchestration.forwarding_id !== null ||
+      orchestration.request_id !== paymentRequestId || orchestration.state !== "PENDING" ||
+      canonical.paymentRequestId?.toLowerCase() !== paymentRequestId.toLowerCase() ||
+      canonical.codeColis !== parcel.codeColis || canonical.agenceEncaissement !== parcel.destinationCode ||
+      canonical.destinationCode !== parcel.destinationCode || canonical.poidsKg !== parcel.poidsKg ||
+      money(canonical.montantPaye) !== money(Number(orchestration.paid_amount)) ||
+      canonical.montantAttendu === null || canonical.soldeRestant === null ||
+      money(canonical.montantAttendu) !== money(Number(orchestration.expected_amount)) ||
+      money(canonical.soldeRestant) !== 0) {
+    throw new StockagesV2Error("CANONICAL_PAYMENT_NOT_CERTIFIED", 409, undefined, "resumeHistoricalNativePendingPaidDestination");
+  }
+  const latest = (await readCanonicalPaymentsByRequestIds([paymentRequestId])).get(paymentRequestId.toLowerCase());
+  if (latest?.status !== "FOUND" || JSON.stringify(latest.payment) !== JSON.stringify(canonical)) {
+    throw new StockagesV2Error("CANONICAL_PAYMENT_NOT_CERTIFIED", 409, undefined, "resumeHistoricalNativePendingPaidDestination");
+  }
+  const paymentResponse = {
+    codeColis: parcel.codeColis, datePaiement: canonical.dateTime,
+    destinationCode: parcel.destinationCode, destinationNom: parcel.destinationNom,
+    montantPaye: canonical.montantPaye, nouveauSolde: 0,
+    nouveauTotalPaye: parcel.montantAttendu, statutPaiement: "SOLDE"
+  };
+  const result = await serviceClient().rpc("finalize_legacy_native_pending_resume", {
+    p_request_id: paymentRequestId,
+    p_command_fingerprint: orchestration.command_fingerprint,
+    p_expected_parcel_id: parcel.parcelId,
+    p_arrival_request_id: arrivalRequestId,
+    p_business_date: canonical.dateKey,
+    p_canonical_paid_at: canonical.dateTime,
+    p_payment_mode: canonical.modePaiement,
+    p_observation: canonical.observation,
+    p_payment_response: paymentResponse,
+    p_resumer_id: resumerId
+  });
+  if (result.error || result.data?.state !== "COMPLETED") {
+    throw new StockagesV2Error("PAYMENT_ORCHESTRATION_INCOMPLETE", 503, undefined, "finalize_legacy_native_pending_resume");
+  }
+  return Object.freeze({ payment: completedReplayPayload(parcel, paymentRequestId), forwardingId: null });
+}
+
 type ReplayParcel = Pick<Parcel, "codeColis" | "montantAttendu">;
 export type PaymentOrchestrationRow = {
   request_id: string; command_fingerprint: string; tracking_code: string; agency: string; actor_name: string;
   expected_amount: number | string; paid_amount: number | string; payment_created: boolean; payment_response: unknown;
   cash_event_id: string | null; stockage_event_id: string | null; state: string; parcel_id: string | null; forwarding_id: string | null;
+  created_at?: string;
 };
 
 async function readPaymentOrchestration(requestId: string): Promise<PaymentOrchestrationRow | null> {
