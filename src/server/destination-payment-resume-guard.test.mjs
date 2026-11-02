@@ -92,6 +92,42 @@ test("forwarding, missing original request and concurrent orchestration fail clo
   assert.equal(certifyDestinationResume(evidence), false);
 });
 
+for (const agency of ["FIH", "LSHI", "KLZ"]) {
+  test(`${agency}: historical null-parcel resume requires one exact pre-payment arrival`, () => {
+    const evidence = fixture(agency);
+    const arrivalRequestId = "507d8e6c-da96-48c5-9eb6-d010c816855c";
+    evidence.orchestration.parcel_id = null;
+    evidence.orchestration.created_at = "2026-11-02T09:00:00.000Z";
+    evidence.parcel.weight_source_reference = `arrival:${arrivalRequestId}`;
+    evidence.arrivalEvent = {
+      request_id: arrivalRequestId, agency, event_type: "MANUAL_ARRIVAL_RECORDED",
+      occurred_at: "2026-10-26T10:00:00.000Z",
+      metadata: { parcels: [{ trackingCode: "OT12926", weightKg: 8 }] }
+    };
+    evidence.matchingArrivalEvents = [{ request_id: arrivalRequestId }];
+    assert.equal(certifyDestinationResume(evidence), true);
+    evidence.arrivalEvent.occurred_at = "2026-11-02T10:00:00.000Z";
+    assert.equal(certifyDestinationResume(evidence), false, "new cycle after orchestration");
+    evidence.arrivalEvent.occurred_at = "2026-10-26T10:00:00.000Z";
+    evidence.matchingArrivalEvents.push({ request_id: "f4378f70-4368-4131-8675-6f39ecbc663b" });
+    assert.equal(certifyDestinationResume(evidence), false, "multiple arrivals");
+    evidence.matchingArrivalEvents.pop();
+    evidence.parcel.weight_source_reference = "arrival:f4378f70-4368-4131-8675-6f39ecbc663b";
+    assert.equal(certifyDestinationResume(evidence), false, "contradictory cycle reference");
+    evidence.parcel.weight_source_reference = `arrival:${arrivalRequestId}`;
+    evidence.cashRows = [{ event_id: "cash-one", source_request_id: requestId, agency, amount: 72, direction: "CREDIT", metadata: { commandFingerprint: fingerprint } }];
+    assert.equal(certifyDestinationResume(evidence), false, "legacy path cannot double-credit cash");
+    evidence.cashRows = [];
+    evidence.canonical = null;
+    assert.equal(certifyDestinationResume(evidence), false, "missing canonical payment");
+    evidence.canonical = { ...fixture(agency).canonical, montantPaye: 73 };
+    assert.equal(certifyDestinationResume(evidence), false, "contradictory canonical amount");
+    evidence.canonical = fixture(agency).canonical;
+    evidence.sameCodePayments.push({ ...evidence.canonical, paymentRequestId: "f4378f70-4368-4131-8675-6f39ecbc663b" });
+    assert.equal(certifyDestinationResume(evidence), false, "multiple paid lines");
+  });
+}
+
 test("route cannot enter new-payment path; UI locks double clicks and COO is excluded", () => {
   const server = readFileSync(fileURLToPath(new URL("../app/api/agent/encaissements/resume/route.ts", import.meta.url)), "utf8");
   const ui = readFileSync(fileURLToPath(new URL("../features/agent/agent-workspace.tsx", import.meta.url)), "utf8");
@@ -99,6 +135,9 @@ test("route cannot enter new-payment path; UI locks double clicks and COO is exc
   assert.doesNotMatch(server, /recordDestinationPayment\(/);
   assert.match(server, /auth\.identity\.site === "COO"/);
   assert.match(server, /row\.agency !== auth\.identity\.site/);
+  assert.match(server, /process\.env\.VERCEL_ENV === "preview"/);
+  assert.match(server, /resumed_parcel_id/);
+  assert.match(server, /storage\.data\[0\]\.metadata\?\.parcelId === completedParcelId/);
   assert.match(ui, /resumeDestinationLockRef\.current/);
   assert.match(ui, /Finalisation en cours…/);
   assert.match(ui, /Finaliser la reprise — sans nouveau paiement/);
