@@ -82,3 +82,52 @@ test("préserve les actions d'écriture historiques sans les appeler", () => {
   const body = source.match(/function listerDepensesAdmin_\([\s\S]*?\n}\n\nfunction validerFiltresDepensesAdmin_/)?.[0] ?? "";
   assert.doesNotMatch(body, /setValue|setValues|appendRow|deleteRow|insertRow|LockService/);
 });
+
+test("diagnostic Admin : mêmes résultats métier, 12 durées techniques, aucune écriture", () => {
+  const { context, writes } = createRuntime();
+  const data = { agence: "FIH", dateDebut: "2026-08-01", dateFin: "2026-08-01", page: 1, pageSize: 1 };
+  const normal = invoke(context, { data });
+  const measured = invoke(context, { data: { ...data, diagnostic: true } });
+  const { diagnostic, ...businessResult } = measured;
+  assert.deepEqual(businessResult, normal);
+  assert.equal(normal.diagnostic, undefined);
+  assert.equal(diagnostic.complete, true);
+  assert.equal(diagnostic.agency, "FIH");
+  assert.equal(diagnostic.rowsRead, 1);
+  assert.equal(diagnostic.rowsRetained, 1);
+  assert.equal(diagnostic.columnsRead, 21);
+  assert.deepEqual(Object.keys(diagnostic.steps), [
+    "openSpreadsheet", "openSheet", "getLastRow", "buildRange", "getValues",
+    "parseNormalize", "filter", "sort", "totals", "pagination", "responseBuild", "total"
+  ]);
+  assert.equal(Object.values(diagnostic.steps).every((ms) => Number.isInteger(ms) && ms >= 0), true);
+  assert.equal(writes.length, 0);
+  assert.equal(JSON.stringify(diagnostic).includes("Agent A"), false);
+  assert.equal(JSON.stringify(diagnostic).includes("REF-A"), false);
+});
+
+test("diagnostic interdit aux Agents et aux valeurs non booléennes", () => {
+  const { context } = createRuntime();
+  assert.equal(invoke(context, { role: "AGENT", data: { agence: "FIH", diagnostic: true } }).code, "ROLE_INTERDIT");
+  assert.equal(invoke(context, { data: { agence: "FIH", diagnostic: "true" } }).code, "DIAGNOSTIC_INVALIDE");
+  assert.equal(invoke(context, { data: { diagnostic: true } }).code, "DIAGNOSTIC_AGENCE_REQUISE");
+});
+
+test("le résultat métier reste identique en diagnostic pour FIH, LSHI et KLZ", () => {
+  const { context, writes } = createRuntime();
+  for (const agence of ["FIH", "LSHI", "KLZ"]) {
+    const data = { agence, page: 1, pageSize: 1 };
+    const normal = invoke(context, { data });
+    const measured = invoke(context, { data: { ...data, diagnostic: true } });
+    const { diagnostic, ...businessResult } = measured;
+    assert.deepEqual(businessResult, normal);
+    assert.equal(diagnostic.agency, agence);
+    assert.equal(diagnostic.complete, true);
+    if (agence === "KLZ") {
+      assert.equal(diagnostic.rowsRead, 0);
+      assert.equal(diagnostic.steps.getValues, null);
+      assert.equal(diagnostic.steps.parseNormalize, null);
+    }
+  }
+  assert.equal(writes.length, 0);
+});
