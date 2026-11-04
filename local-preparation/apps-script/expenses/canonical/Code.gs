@@ -1483,66 +1483,147 @@ function listerDepensesAdmin_(donnees) {
       'statut',
       'reference',
       'page',
-      'pageSize'
+      'pageSize',
+      'diagnostic'
     ],
     'FILTRES_ADMIN_INVALIDES'
   );
 
+  if (donnees.diagnostic !== undefined && donnees.diagnostic !== true) {
+    throw erreurDepenses_('DIAGNOSTIC_INVALIDE', 'Diagnostic invalide.');
+  }
+
+  const diagnostic = donnees.diagnostic === true ? {
+    complete: false,
+    agency: '',
+    rowsRead: 0,
+    rowsRetained: 0,
+    columnsRead: 0,
+    steps: {
+      openSpreadsheet: null,
+      openSheet: null,
+      getLastRow: null,
+      buildRange: null,
+      getValues: null,
+      parseNormalize: null,
+      filter: null,
+      sort: null,
+      totals: null,
+      pagination: null,
+      responseBuild: null,
+      total: null
+    }
+  } : null;
+  const totalStartedAt = diagnostic ? Date.now() : 0;
   const filtres = validerFiltresDepensesAdmin_(donnees);
+  if (diagnostic && ['FIH', 'LSHI', 'KLZ'].indexOf(filtres.agence) < 0) {
+    throw erreurDepenses_('DIAGNOSTIC_AGENCE_REQUISE', 'Agence diagnostique invalide.');
+  }
+  if (diagnostic) diagnostic.agency = filtres.agence;
+  let startedAt = diagnostic ? Date.now() : 0;
   const classeur = SpreadsheetApp.getActiveSpreadsheet();
+  if (diagnostic) diagnostic.steps.openSpreadsheet = Date.now() - startedAt;
   const resultats = [];
 
   CONFIG_DEPENSES.feuillesAgences.forEach(function(agence) {
+    startedAt = diagnostic ? Date.now() : 0;
     if (filtres.agence && filtres.agence !== agence) {
+      if (diagnostic) diagnostic.steps.filter =
+        (diagnostic.steps.filter || 0) + Date.now() - startedAt;
       return;
     }
+    if (diagnostic) diagnostic.steps.filter =
+      (diagnostic.steps.filter || 0) + Date.now() - startedAt;
 
+    startedAt = diagnostic ? Date.now() : 0;
     const feuille = classeur.getSheetByName(agence);
-    if (!feuille || feuille.getLastRow() < 2) {
+    if (diagnostic) diagnostic.steps.openSheet =
+      (diagnostic.steps.openSheet || 0) + Date.now() - startedAt;
+    if (!feuille) {
       return;
     }
 
-    const lignes = feuille
-      .getRange(
-        2,
-        1,
-        feuille.getLastRow() - 1,
-        CONFIG_DEPENSES.entetes.length
-      )
-      .getValues();
+    startedAt = diagnostic ? Date.now() : 0;
+    const lastRow = feuille.getLastRow();
+    if (diagnostic) diagnostic.steps.getLastRow =
+      (diagnostic.steps.getLastRow || 0) + Date.now() - startedAt;
+    if (lastRow < 2) return;
+
+    // Conserver la seconde lecture existante de getLastRow : aucune optimisation ici.
+    startedAt = diagnostic ? Date.now() : 0;
+    const rangeLastRow = feuille.getLastRow();
+    if (diagnostic) diagnostic.steps.getLastRow =
+      (diagnostic.steps.getLastRow || 0) + Date.now() - startedAt;
+    startedAt = diagnostic ? Date.now() : 0;
+    const range = feuille.getRange(
+      2, 1, rangeLastRow - 1, CONFIG_DEPENSES.entetes.length
+    );
+    if (diagnostic) diagnostic.steps.buildRange =
+      (diagnostic.steps.buildRange || 0) + Date.now() - startedAt;
+    startedAt = diagnostic ? Date.now() : 0;
+    const lignes = range.getValues();
+    if (diagnostic) {
+      diagnostic.steps.getValues =
+        (diagnostic.steps.getValues || 0) + Date.now() - startedAt;
+      diagnostic.rowsRead += lignes.length;
+      diagnostic.columnsRead += CONFIG_DEPENSES.entetes.length;
+    }
 
     lignes.forEach(function(ligne) {
+      startedAt = diagnostic ? Date.now() : 0;
       const depense = convertirLigneDepenseAdmin_(ligne, agence);
-      if (depense && correspondFiltresDepensesAdmin_(depense, filtres)) {
+      if (diagnostic) diagnostic.steps.parseNormalize =
+        (diagnostic.steps.parseNormalize || 0) + Date.now() - startedAt;
+      startedAt = diagnostic ? Date.now() : 0;
+      const retenue = depense && correspondFiltresDepensesAdmin_(depense, filtres);
+      if (diagnostic) diagnostic.steps.filter =
+        (diagnostic.steps.filter || 0) + Date.now() - startedAt;
+      if (retenue) {
         resultats.push(depense);
       }
     });
   });
 
+  startedAt = diagnostic ? Date.now() : 0;
   resultats.sort(function(a, b) {
     if (a.dateHeure !== b.dateHeure) {
       return b.dateHeure.localeCompare(a.dateHeure);
     }
     return a.expenseRequestId.localeCompare(b.expenseRequestId);
   });
+  if (diagnostic) diagnostic.steps.sort = Date.now() - startedAt;
 
   const total = resultats.length;
   const totalPages = total === 0 ? 0 : Math.ceil(total / filtres.pageSize);
   const debut = (filtres.page - 1) * filtres.pageSize;
-
-  return {
+  startedAt = diagnostic ? Date.now() : 0;
+  const depenses = resultats.slice(debut, debut + filtres.pageSize);
+  if (diagnostic) diagnostic.steps.pagination = Date.now() - startedAt;
+  startedAt = diagnostic ? Date.now() : 0;
+  const totaux = calculerTotauxDepensesAdmin_(resultats);
+  if (diagnostic) diagnostic.steps.totals = Date.now() - startedAt;
+  startedAt = diagnostic ? Date.now() : 0;
+  const reponse = {
     success: true,
     code: 'DEPENSES_ADMIN_LISTEES',
     lectureSeule: true,
-    depenses: resultats.slice(debut, debut + filtres.pageSize),
+    depenses: depenses,
     pagination: {
       page: filtres.page,
       pageSize: filtres.pageSize,
       total: total,
       totalPages: totalPages
     },
-    totaux: calculerTotauxDepensesAdmin_(resultats)
+    totaux: totaux
   };
+  if (diagnostic) {
+    diagnostic.steps.responseBuild = Date.now() - startedAt;
+    diagnostic.rowsRetained = total;
+    diagnostic.steps.total = Date.now() - totalStartedAt;
+    diagnostic.complete = true;
+    reponse.diagnostic = diagnostic;
+  }
+  return reponse;
 }
 
 function validerFiltresDepensesAdmin_(donnees) {

@@ -71,8 +71,36 @@ const adminExpenseResponseSchema = z.object({
   })
 });
 
+const expenseReadDiagnosticSchema = z.object({
+  complete: z.literal(true),
+  agency: z.enum(["FIH", "LSHI", "KLZ"]),
+  rowsRead: z.number().int().nonnegative(),
+  rowsRetained: z.number().int().nonnegative(),
+  columnsRead: z.number().int().nonnegative(),
+  steps: z.object({
+    openSpreadsheet: z.number().finite().nonnegative().nullable(),
+    openSheet: z.number().finite().nonnegative().nullable(),
+    getLastRow: z.number().finite().nonnegative().nullable(),
+    buildRange: z.number().finite().nonnegative().nullable(),
+    getValues: z.number().finite().nonnegative().nullable(),
+    parseNormalize: z.number().finite().nonnegative().nullable(),
+    filter: z.number().finite().nonnegative().nullable(),
+    sort: z.number().finite().nonnegative().nullable(),
+    totals: z.number().finite().nonnegative().nullable(),
+    pagination: z.number().finite().nonnegative().nullable(),
+    responseBuild: z.number().finite().nonnegative().nullable(),
+    total: z.number().finite().nonnegative()
+  })
+}).refine(
+  (value) => value.rowsRead === 0 || Object.values(value.steps).every((duration) => duration !== null),
+  "Mesure exécutée manquante."
+);
+
 export type AdminExpenseFilters = z.input<typeof adminExpenseFiltersSchema>;
 export type AdminExpenseListResponse = z.infer<typeof adminExpenseResponseSchema>;
+export type AdminExpenseDiagnosticResponse = AdminExpenseListResponse & {
+  diagnostic: z.infer<typeof expenseReadDiagnosticSchema>;
+};
 
 type AdminExpenseIdentity = Readonly<{
   userId: string;
@@ -130,12 +158,35 @@ export class AdminExpenseReadError extends Error {
   }
 }
 
+export class AdminExpenseDiagnosticTimeout extends Error {
+  constructor() {
+    super("La lecture diagnostique a dépassé 30 secondes.");
+    this.name = "AdminExpenseDiagnosticTimeout";
+  }
+}
+
+export function readAdminExpenses(
+  identity: AdminExpenseIdentity,
+  value: AdminExpenseFilters,
+  fetchImpl?: typeof fetch
+): Promise<AdminExpenseListResponse>;
+export function readAdminExpenses(
+  identity: AdminExpenseIdentity,
+  value: AdminExpenseFilters,
+  fetchImpl: typeof fetch,
+  diagnostic: true
+): Promise<AdminExpenseDiagnosticResponse>;
+
 export async function readAdminExpenses(
   identity: AdminExpenseIdentity,
   value: AdminExpenseFilters,
-  fetchImpl: typeof fetch = fetch
-): Promise<AdminExpenseListResponse> {
+  fetchImpl: typeof fetch = fetch,
+  diagnostic = false
+): Promise<AdminExpenseListResponse | AdminExpenseDiagnosticResponse> {
   const filters = adminExpenseFiltersSchema.parse(value);
+  if (diagnostic && !["FIH", "LSHI", "KLZ"].includes(filters.agence ?? "")) {
+    throw new AdminExpenseReadError("DIAGNOSTIC_AGENCY_REQUIRED", "Agence diagnostique invalide.");
+  }
   const { url, apiKey } = readExpensesAppsScriptConfiguration();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
@@ -154,7 +205,7 @@ export async function readAdminExpenses(
           actif: true,
           agence: identity.agency ?? ""
         },
-        donnees: filters
+        donnees: diagnostic ? { ...filters, diagnostic: true } : filters
       }),
       cache: "no-store",
       redirect: "follow",
@@ -175,7 +226,19 @@ export async function readAdminExpenses(
     if (!parsed.success) {
       throw new Error("Réponse Admin Dépenses invalide.");
     }
-    return parsed.data;
+    if (!diagnostic) return parsed.data;
+    const parsedDiagnostic = expenseReadDiagnosticSchema.safeParse(
+      isRecord(payload) ? payload.diagnostic : undefined
+    );
+    if (!parsedDiagnostic.success || parsedDiagnostic.data.agency !== filters.agence) {
+      throw new AdminExpenseReadError("DIAGNOSTIC_INCOMPLETE", "Mesures diagnostiques absentes ou incomplètes.");
+    }
+    return { ...parsed.data, diagnostic: parsedDiagnostic.data };
+  } catch (error) {
+    if (diagnostic && controller.signal.aborted) {
+      throw new AdminExpenseDiagnosticTimeout();
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
   }

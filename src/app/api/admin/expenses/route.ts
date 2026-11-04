@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 
 import { authorizeAdminRequest } from "@/server/admin-authorization";
 import {
+  AdminExpenseDiagnosticTimeout,
   AdminExpenseReadError,
   readAdminExpenses,
   type AdminExpenseFilters
@@ -13,10 +14,12 @@ export const runtime = "nodejs";
 
 const allowedQueryKeys = new Set([
   "from", "to", "agency", "category", "currency", "agent",
-  "status", "reference", "page", "pageSize"
+  "status", "reference", "page", "pageSize", "diagnostic"
 ]);
 
 export async function GET(request: Request) {
+  let diagnosticRequested = false;
+  let diagnosticStartedAt = 0;
   try {
     const authorization = await authorizeAdminRequest(request);
     if (!authorization.authorized) {
@@ -30,6 +33,14 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     if (Array.from(url.searchParams.keys()).some((key) => !allowedQueryKeys.has(key))) {
       return error(400, "INVALID_FILTERS", "Filtres invalides.");
+    }
+    const diagnosticValue = url.searchParams.get("diagnostic");
+    if (diagnosticValue !== null && diagnosticValue !== "1") {
+      return error(400, "INVALID_FILTERS", "Filtres invalides.");
+    }
+    diagnosticRequested = diagnosticValue === "1";
+    if (diagnosticRequested && !["FIH", "LSHI", "KLZ"].includes(url.searchParams.get("agency") ?? "")) {
+      return error(400, "INVALID_FILTERS", "Agence requise pour le diagnostic.");
     }
 
     const filters: AdminExpenseFilters = {
@@ -45,14 +56,25 @@ export async function GET(request: Request) {
       pageSize: positiveInteger(url.searchParams.get("pageSize"), 50)
     };
 
-    const result = await readAdminExpenses(
-      {
-        userId: authorization.userId,
-        email: authorization.email,
-        agency: authorization.agency
-      },
-      filters
-    );
+    const identity = {
+      userId: authorization.userId,
+      email: authorization.email,
+      agency: authorization.agency
+    };
+    diagnosticStartedAt = diagnosticRequested ? performance.now() : 0;
+    if (diagnosticRequested) {
+      const result = await readAdminExpenses(identity, filters, fetch, true);
+      return NextResponse.json(
+        {
+          diagnostic: {
+            ...result.diagnostic,
+            relayElapsedMs: Math.round(performance.now() - diagnosticStartedAt)
+          }
+        },
+        { headers: noStoreHeaders() }
+      );
+    }
+    const result = await readAdminExpenses(identity, filters);
     return NextResponse.json(result, { headers: noStoreHeaders() });
   } catch (caught) {
     if (caught instanceof AdminExpenseReadError && caught.code === "CATEGORIE_INVALIDE") {
@@ -60,6 +82,25 @@ export async function GET(request: Request) {
     }
     if (caught instanceof ZodError || caught instanceof InvalidNumberError) {
       return error(400, "INVALID_FILTERS", "Filtres invalides.");
+    }
+    if (diagnosticRequested && diagnosticStartedAt > 0) {
+      const timeout = caught instanceof AdminExpenseDiagnosticTimeout;
+      return NextResponse.json(
+        {
+          error: {
+            code: timeout ? "DIAGNOSTIC_TIMEOUT" : "DIAGNOSTIC_INCOMPLETE",
+            message: timeout
+              ? "Lecture interrompue après 30 secondes ; aucune mesure complète disponible."
+              : "Lecture diagnostique incomplète."
+          },
+          diagnostic: {
+            complete: false,
+            reason: timeout ? "UPSTREAM_TIMEOUT" : "UPSTREAM_INCOMPLETE",
+            relayElapsedMs: Math.round(performance.now() - diagnosticStartedAt)
+          }
+        },
+        { status: timeout ? 504 : 503, headers: noStoreHeaders() }
+      );
     }
     return error(503, "EXPENSES_UNAVAILABLE", "Lecture des dépenses indisponible.");
   }
