@@ -8,7 +8,7 @@ import { StockagesV2Error, type StorageAgency } from "@/server/stockages-v2";
 export const INTER_AGENCY_RATES = Object.freeze({
   "FIH-LSHI": 12,
   "LSHI-FIH": 13,
-  "FIH-KLZ": 14,
+  "FIH-KLZ": 13,
   "KLZ-FIH": 16,
   "LSHI-KLZ": 11,
   "KLZ-LSHI": 13

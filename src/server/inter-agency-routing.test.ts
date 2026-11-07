@@ -4,7 +4,7 @@ import test from "node:test";
 import { buildInterAgencyReference, INTER_AGENCY_RATES, quoteInterAgencyRouting, resolveInterAgencyQuote } from "./inter-agency-routing";
 
 test("les six tarifs inter-agences sont configurés côté serveur", () => {
-  assert.deepEqual(INTER_AGENCY_RATES, { "FIH-LSHI": 12, "LSHI-FIH": 13, "FIH-KLZ": 14, "KLZ-FIH": 16, "LSHI-KLZ": 11, "KLZ-LSHI": 13 });
+  assert.deepEqual(INTER_AGENCY_RATES, { "FIH-LSHI": 12, "LSHI-FIH": 13, "FIH-KLZ": 13, "KLZ-FIH": 16, "LSHI-KLZ": 11, "KLZ-LSHI": 13 });
   for (const [route, rate] of Object.entries(INTER_AGENCY_RATES)) {
     const [origin, destination] = route.split("-") as ["FIH" | "LSHI" | "KLZ", "FIH" | "LSHI" | "KLZ"];
     const quote = quoteInterAgencyRouting({ trackingCode: "JLTEST26", origin, destination, weightKg: 2 });
@@ -19,6 +19,13 @@ test("les six tarifs inter-agences sont configurés côté serveur", () => {
 
 test("la référence conserve le code original", () => {
   assert.equal(buildInterAgencyReference("jl00126", "FIH", "LSHI"), "JL00126-FIH-LSHI");
+});
+
+test("OT02326 de FIH vers KLZ produit 13 USD/kg et 39 USD pour 3 kg", () => {
+  const quote = quoteInterAgencyRouting({ trackingCode: "OT02326", origin: "FIH", destination: "KLZ", weightKg: 3 });
+  assert.equal(quote.rateUsdPerKg, 13);
+  assert.equal(quote.amountExpectedUsd, 39);
+  assert.equal(quote.routingReference, "OT02326-FIH-KLZ");
 });
 
 test("le montant attendu est calculé sur le serveur", () => {
