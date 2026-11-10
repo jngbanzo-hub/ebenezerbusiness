@@ -26,6 +26,7 @@ import {
   type TransfersPageResponse
 } from "@/features/transferts/types";
 import { AdminTransferDetails } from "@/features/transferts/admin-transfer-details";
+import { AdminOidcProbeTrigger } from "@/features/transferts/admin-oidc-probe-panel";
 
 const fieldClassName =
   "mt-2 h-11 w-full rounded-md border border-white/15 bg-white/[0.05] px-3 text-white outline-none";
@@ -36,7 +37,10 @@ const periodLabels: Record<string, string> = {
   CUSTOM: "Période personnalisée"
 };
 
-export function AdminTransfertsPage() {
+export function AdminTransfertsPage({
+  oidcProbeEnabled = false,
+  oidcProbeExpiresAt
+}: { oidcProbeEnabled?: boolean; oidcProbeExpiresAt?: string }) {
   const router = useRouter();
   const token = useRef("");
   const [authorized, setAuthorized] = useState(false);
@@ -201,6 +205,10 @@ export function AdminTransfertsPage() {
           </div>
           <div className="flex flex-wrap gap-3"><Button asChild variant="outline"><Link href="/admin">Retour au tableau de bord Admin</Link></Button><Button type="button" variant="outline" onClick={handleSignOut}><LogOut className="h-4 w-4" />Se déconnecter</Button></div>
         </header>
+
+        {oidcProbeEnabled ? (
+          <AdminOidcProbeTrigger enabled expiresAt={oidcProbeExpiresAt} />
+        ) : null}
 
         <section className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <Status label="État" value={result?.state ?? "CHARGEMENT"} />
