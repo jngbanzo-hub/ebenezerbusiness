@@ -72,7 +72,7 @@ export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdm
   const globalStatus = reconciliation.missing.length || reconciliation.ambiguous.length || fihDhlReconciliation.missing.length || fihDhlReconciliation.ambiguous.length || fihDhlReconciliation.unmatchedShipments.length ? "PARTIEL" : "PROVISOIRE";
   const receivedPeriodUsd = query.period ? aggregatePeriodReceiptsUsd(paymentsRead.rows, query.period) : null;
   const directCostsSummary = summarizeDirectCosts(cohortCosts, unallocated);
-  const fixedCosts = calculateMonthlyFixedCosts();
+  const fixedCosts = calculateMonthlyFixedCosts(`${query.cohort.year}-${String(query.cohort.month).padStart(2, "0")}`);
   const allocatedOperationalUsd = (["FIH", "LSHI", "KLZ", "COO"] as const).reduce((total, agency) => total + (periodExpenses?.deductibleOperationalByAgencyAndCurrency[agency]?.USD ?? 0), 0);
   const unallocatedOperationalUsd = periodExpenses?.deductibleOperationalUnallocatedByCurrency.USD ?? 0;
   const realProfit = calculateRealProfit(revenue.totalUsd, directCostsSummary.totalAllocatedUsd, fixedCosts.totalUsd, allocatedOperationalUsd, unallocated.length > 0 || unallocatedOperationalUsd > 0);
