@@ -11,8 +11,9 @@ import type { BilanApiQuery } from "./bilan-api-query";
 import type { AggregatedQualityIssue, CohortDirectCost } from "./bilan-aggregation-contracts";
 import type { BilanRangeRead, BilanRangeReader } from "./bilan-readers-contracts";
 import { aggregatePeriodExpenses, calculateDirectMargin, resultOperationalPeriodUsd } from "./expense-aggregations";
+import { combineExpensePages } from "./expense-pagination";
 import { calculateMonthlyFixedCosts } from "./fixed-cost-aggregations";
-import { readBilanExpenses, readBilanPayments } from "./financial-readers";
+import { IncompleteBilanExpensesError, readBilanExpenses, readBilanPayments } from "./financial-readers";
 import { readBilanAirFreight, readBilanFihDhlOfficial, readBilanManifestParcels, readBilanOfficialTransit, readBilanShipments, reconcileFihDhlOfficial, reconcileOfficialTransit } from "./manifest-readers";
 import { aggregateMonthlyAgentBonuses, applyMonthlyBonuses } from "./monthly-bonus-aggregations";
 import { readMonthlyAgentBonuses } from "./monthly-bonus-reader";
@@ -45,13 +46,14 @@ export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdm
     measureDirectionSubread("fih_dhl_officiel", () => readBilanFihDhlOfficial(sheetsSource), countRows),
     measureDirectionSubread("fret_aerien", () => readBilanAirFreight(sheetsSource), countRows),
     measureDirectionSubread("encaissements", () => readBilanPayments(() => readAdminPayments()), countRows),
-    query.period ? measureDirectionSubread("depenses", () => readBilanExpenses(() => readAllExpenses(admin, query.period!)), countRows) : Promise.resolve({ rows: [], anomalies: [] } as const),
+    query.period ? measureDirectionSubread("depenses", () => readBilanExpenses(() => readAllExpenses(admin, query.period!)), countRows) : Promise.resolve({ rows: [], anomalies: [], readStatus: "COMPLETE" } as const),
     measureDirectionSubread("primes", () => readMonthlyAgentBonuses(`${query.cohort.year}-${String(query.cohort.month).padStart(2, "0")}`), countRows)
   ]);
   const aggregationStartedAt = Date.now();
   if ([fih, lshi, klz, shipmentsRead, officialRead, fihDhlOfficialRead, airFreightRead, paymentsRead, expensesRead].some((read) => read.anomalies.some((anomaly) => anomaly.code === "SOURCE_INDISPONIBLE"))) {
     throw new Error("BILAN_SOURCE_UNAVAILABLE");
   }
+  if (expensesRead.readStatus === "INCOMPLETE") throw new IncompleteBilanExpensesError();
   const manifestRows = [...fih.rows, ...lshi.rows, ...klz.rows];
   const activity = aggregateCohortActivity(manifestRows, query.cohort.id, query.period);
   const shipment = aggregateShipmentByAgency(manifestRows, shipmentsRead.rows, query.cohort.id);
@@ -115,7 +117,7 @@ export async function buildAdminBilan(query: BilanApiQuery, admin: AuthorizedAdm
     monthlyBonuses,
     airFreight,
     transit: { ...transit, rateUsdPerKg: 1.7, cohortAllocatedAmountUsd: cents(cohortCosts.filter((cost) => cost.kind === "TRANSIT_FIH_LSHI")), status: reconciliation.missing.length || reconciliation.ambiguous.length ? "PARTIEL" : "CERTIFIE", additionalFihProofRequired: false },
-    periodExpenses: periodExpenses ? { byCategoryAndCurrency: periodExpenses.operationalByCategoryAndCurrency, byCurrency: periodExpenses.operationalByCurrency, deductibleByCategoryAndCurrency: periodExpenses.deductibleOperationalByCategoryAndCurrency, deductibleByCurrency: periodExpenses.deductibleOperationalByCurrency, deductibleByAgencyAndCurrency: periodExpenses.deductibleOperationalByAgencyAndCurrency, deductibleConnectionByAgencyAndCurrency: periodExpenses.deductibleConnectionByAgencyAndCurrency, deductibleUnallocatedByCurrency: periodExpenses.deductibleOperationalUnallocatedByCurrency, excludedFromProfitByCategoryAndCurrency: periodExpenses.excludedFromProfitByCategoryAndCurrency } : null,
+    periodExpenses: periodExpenses ? { byCategoryAndCurrency: periodExpenses.operationalByCategoryAndCurrency, byCurrency: periodExpenses.operationalByCurrency, deductibleByCategoryAndCurrency: periodExpenses.deductibleOperationalByCategoryAndCurrency, deductibleByCurrency: periodExpenses.deductibleOperationalByCurrency, deductibleByAgencyAndCurrency: periodExpenses.deductibleOperationalByAgencyAndCurrency, deductibleConnectionByAgencyAndCurrency: periodExpenses.deductibleConnectionByAgencyAndCurrency, deductibleUnallocatedByCurrency: periodExpenses.deductibleOperationalUnallocatedByCurrency, deductibleExpenseLines: periodExpenses.deductibleExpenseLines, deductibleReconciliationComplete: periodExpenses.deductibleReconciliationComplete, excludedFromProfitByCategoryAndCurrency: periodExpenses.excludedFromProfitByCategoryAndCurrency } : null,
     treasury: periodExpenses ? { tfBeninByCurrency: periodExpenses.tfBeninByCurrency, tfBeninByAgencyUsd: periodExpenses.tfBeninByAgencyUsd, tfBeninAgencyBreakdownComplete: periodExpenses.tfBeninAgencyBreakdownComplete, revenue: false, deductibleExpense: false, treasury: true, remainingToTransfer: null } : null,
     results: {
       realRevenue: revenue,
@@ -150,9 +152,9 @@ function calculateFinalProfit(
 async function readAllExpenses(admin: AuthorizedAdmin, period: { from: string; to: string }) {
   const identity = { userId: admin.userId, email: admin.email, agency: admin.agency };
   const first = await measureDirectionSubread("depenses_bilan_page_1", () => readAdminExpenses(identity, { dateDebut: period.from, dateFin: period.to, page: 1, pageSize: 100 }), (value) => ({ pages: 1, rows: value.depenses.length }));
-  if (first.pagination.totalPages <= 1) return first.depenses;
+  if (first.pagination.totalPages <= 1) return combineExpensePages([first]);
   const rest = await Promise.all(Array.from({ length: first.pagination.totalPages - 1 }, (_, index) => measureDirectionSubread(`depenses_bilan_page_${index + 2}`, () => readAdminExpenses(identity, { dateDebut: period.from, dateFin: period.to, page: index + 2, pageSize: 100 }), (value) => ({ pages: 1, rows: value.depenses.length }))));
-  return [...first.depenses, ...rest.flatMap((page) => page.depenses)];
+  return combineExpensePages([first, ...rest]);
 }
 
 function collectQuality(query: BilanApiQuery, reads: Record<string, { anomalies: readonly { code: string; source: string; rowNumber?: number; message: string }[] }>, ...aggregated: readonly (readonly AggregatedQualityIssue[])[]) {

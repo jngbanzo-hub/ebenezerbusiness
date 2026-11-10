@@ -59,6 +59,19 @@ export type CohortDirectCost = Readonly<{
   sourceReference: string;
 }>;
 
+export type DeductibleExpenseLine = Readonly<{
+  sourceReference: string;
+  date: string;
+  agency: "COO" | "FIH" | "LSHI" | "KLZ" | null;
+  sourceAgency: string;
+  category: string;
+  description: string;
+  reference: string;
+  amount: number;
+  currency: string;
+  corrected: boolean;
+}>;
+
 export type PeriodExpenseSummary = Readonly<{
   period: Readonly<{ from: string; to: string }>;
   operationalByCurrency: Readonly<Record<string, number>>;
@@ -68,6 +81,8 @@ export type PeriodExpenseSummary = Readonly<{
   deductibleOperationalByAgencyAndCurrency: Readonly<Record<string, Readonly<Record<string, number>>>>;
   deductibleConnectionByAgencyAndCurrency: Readonly<Record<string, Readonly<Record<string, number>>>>;
   deductibleOperationalUnallocatedByCurrency: Readonly<Record<string, number>>;
+  deductibleExpenseLines: readonly DeductibleExpenseLine[];
+  deductibleReconciliationComplete: boolean;
   excludedFromProfitByCategoryAndCurrency: Readonly<Record<string, Readonly<Record<string, number>>>>;
   tfBeninByCurrency: Readonly<Record<string, number>>;
   tfBeninByAgencyUsd: Readonly<Record<"FIH" | "LSHI" | "KLZ", number>>;

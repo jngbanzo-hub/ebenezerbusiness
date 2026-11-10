@@ -5,6 +5,7 @@ import type { AdminAuthorizationResult } from "@/server/admin-authorization";
 import { parseBilanApiQuery, type BilanApiQuery } from "./bilan-api-query";
 import type { CohortDefinition } from "./bilan-contracts";
 import { withBilanCohorts } from "./cohort-registry";
+import { IncompleteBilanExpensesError } from "./financial-readers";
 
 type AuthorizedAdmin = Extract<AdminAuthorizationResult, { authorized: true }>;
 
@@ -27,6 +28,7 @@ export function createBilanGetHandler(dependencies: Readonly<{
       });
     } catch (cause) {
       console.error("[admin-bilan]", { type: cause instanceof Error ? cause.name : "UNKNOWN", durationMs: Math.round(performance.now() - startedAt) });
+      if (cause instanceof IncompleteBilanExpensesError) return failure(503, "BILAN_EXPENSES_READ_INCOMPLETE", cause.message);
       return failure(503, "BILAN_SOURCE_UNAVAILABLE", "Le BILAN est temporairement indisponible.");
     }
   };

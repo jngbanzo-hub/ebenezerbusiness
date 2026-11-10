@@ -2,6 +2,7 @@ import type { BilanAgency, ShipmentGroup } from "./bilan-contracts";
 
 export type BilanReadAnomalyCode =
   | "SOURCE_INDISPONIBLE"
+  | "LECTURE_INCOMPLETE"
   | "CHAMP_MANQUANT"
   | "POIDS_INVALIDE"
   | "CODE_ABSENT"

@@ -1,5 +1,5 @@
 import type { CohortId } from "./bilan-contracts";
-import type { AggregatedQualityIssue, CohortDirectCost, DirectMargin, PeriodExpenseSummary } from "./bilan-aggregation-contracts";
+import type { AggregatedQualityIssue, CohortDirectCost, DeductibleExpenseLine, DirectMargin, PeriodExpenseSummary } from "./bilan-aggregation-contracts";
 import type { BilanExpense } from "./bilan-readers-contracts";
 import { isFixedCostExpenseCategory } from "./fixed-cost-aggregations";
 
@@ -14,6 +14,7 @@ export function aggregatePeriodExpenses(
   const deductibleOperationalByAgencyAndCurrency: Record<string, Record<string, number>> = {};
   const deductibleConnectionByAgencyAndCurrency: Record<string, Record<string, number>> = {};
   const deductibleOperationalUnallocatedByCurrency: Record<string, number> = {};
+  const deductibleExpenseLines: DeductibleExpenseLine[] = [];
   const excludedFromProfitByCategoryAndCurrency: Record<string, Record<string, number>> = {};
   const tfBeninByCurrency: Record<string, number> = {};
   const tfBeninByAgencyUsd = { FIH: 0, LSHI: 0, KLZ: 0 };
@@ -47,6 +48,18 @@ export function aggregatePeriodExpenses(
     if (!excludedFromProfit) {
       add(deductibleOperationalByCurrency, expense.currency, expense.amount);
       const agency = expenseAgency(expense.agency);
+      deductibleExpenseLines.push(Object.freeze({
+        sourceReference: expense.sourceReference,
+        date: expense.date,
+        agency,
+        sourceAgency: expense.agency,
+        category: expense.category,
+        description: expense.description,
+        reference: expense.reference,
+        amount: money(expense.amount),
+        currency: expense.currency,
+        corrected: expense.corrected
+      }));
       if (agency) {
         deductibleOperationalByAgencyAndCurrency[agency] ??= {};
         add(deductibleOperationalByAgencyAndCurrency[agency], expense.currency, expense.amount);
@@ -57,7 +70,32 @@ export function aggregatePeriodExpenses(
       } else add(deductibleOperationalUnallocatedByCurrency, expense.currency, expense.amount);
     }
   }
-  return Object.freeze({ period, operationalByCurrency: freezeRecord(operationalByCurrency), operationalByCategoryAndCurrency: freezeNested(operationalByCategoryAndCurrency), deductibleOperationalByCurrency: freezeRecord(deductibleOperationalByCurrency), deductibleOperationalByCategoryAndCurrency: freezeNested(deductibleOperationalByCategoryAndCurrency), deductibleOperationalByAgencyAndCurrency: freezeNested(deductibleOperationalByAgencyAndCurrency), deductibleConnectionByAgencyAndCurrency: freezeNested(deductibleConnectionByAgencyAndCurrency), deductibleOperationalUnallocatedByCurrency: freezeRecord(deductibleOperationalUnallocatedByCurrency), excludedFromProfitByCategoryAndCurrency: freezeNested(excludedFromProfitByCategoryAndCurrency), tfBeninByCurrency: freezeRecord(tfBeninByCurrency), tfBeninByAgencyUsd: Object.freeze(tfBeninByAgencyUsd), tfBeninAgencyBreakdownComplete: money(tfBeninByAgencyUsd.FIH + tfBeninByAgencyUsd.LSHI + tfBeninByAgencyUsd.KLZ) === (tfBeninByCurrency.USD ?? 0), directCostsAllocated: Object.freeze(directCostsAllocated), directCostsUnallocated: Object.freeze(directCostsUnallocated), anomalies: Object.freeze(anomalies) });
+  return Object.freeze({ period, operationalByCurrency: freezeRecord(operationalByCurrency), operationalByCategoryAndCurrency: freezeNested(operationalByCategoryAndCurrency), deductibleOperationalByCurrency: freezeRecord(deductibleOperationalByCurrency), deductibleOperationalByCategoryAndCurrency: freezeNested(deductibleOperationalByCategoryAndCurrency), deductibleOperationalByAgencyAndCurrency: freezeNested(deductibleOperationalByAgencyAndCurrency), deductibleConnectionByAgencyAndCurrency: freezeNested(deductibleConnectionByAgencyAndCurrency), deductibleOperationalUnallocatedByCurrency: freezeRecord(deductibleOperationalUnallocatedByCurrency), deductibleExpenseLines: Object.freeze(deductibleExpenseLines), deductibleReconciliationComplete: reconcileDeductibleExpenses(deductibleExpenseLines, deductibleOperationalByAgencyAndCurrency, deductibleOperationalUnallocatedByCurrency, deductibleOperationalByCurrency), excludedFromProfitByCategoryAndCurrency: freezeNested(excludedFromProfitByCategoryAndCurrency), tfBeninByCurrency: freezeRecord(tfBeninByCurrency), tfBeninByAgencyUsd: Object.freeze(tfBeninByAgencyUsd), tfBeninAgencyBreakdownComplete: money(tfBeninByAgencyUsd.FIH + tfBeninByAgencyUsd.LSHI + tfBeninByAgencyUsd.KLZ) === (tfBeninByCurrency.USD ?? 0), directCostsAllocated: Object.freeze(directCostsAllocated), directCostsUnallocated: Object.freeze(directCostsUnallocated), anomalies: Object.freeze(anomalies) });
+}
+
+function reconcileDeductibleExpenses(
+  lines: readonly DeductibleExpenseLine[],
+  byAgency: Readonly<Record<string, Readonly<Record<string, number>>>>,
+  unallocated: Readonly<Record<string, number>>,
+  total: Readonly<Record<string, number>>
+) {
+  const linesByAgency: Record<string, Record<string, number>> = {};
+  const linesUnallocated: Record<string, number> = {};
+  for (const line of lines) {
+    if (line.agency) {
+      linesByAgency[line.agency] ??= {};
+      add(linesByAgency[line.agency], line.currency, line.amount);
+    } else add(linesUnallocated, line.currency, line.amount);
+  }
+  const currencies = new Set([...Object.keys(total), ...Object.keys(unallocated), ...Object.keys(linesUnallocated), ...Object.values(byAgency).flatMap(Object.keys), ...Object.values(linesByAgency).flatMap(Object.keys)]);
+  return Array.from(currencies).every((currency) => {
+    const agencyTotal = (["COO", "FIH", "LSHI", "KLZ"] as const).reduce((sum, agency) => {
+      if ((linesByAgency[agency]?.[currency] ?? 0) !== (byAgency[agency]?.[currency] ?? 0)) return Number.NaN;
+      return money(sum + (byAgency[agency]?.[currency] ?? 0));
+    }, 0);
+    return (linesUnallocated[currency] ?? 0) === (unallocated[currency] ?? 0)
+      && money(agencyTotal + (unallocated[currency] ?? 0)) === (total[currency] ?? 0);
+  });
 }
 
 export function resultOperationalPeriodUsd(receivedUsd: number, expenses: PeriodExpenseSummary) {

@@ -117,9 +117,23 @@ test("signale une devise absente", () => {
 
 test("signale les sources indisponibles sans mutation ni correction", async () => {
   assert.equal((await readBilanPayments(async () => { throw new Error("offline"); })).anomalies[0].code, "SOURCE_INDISPONIBLE");
-  assert.equal((await readBilanExpenses(async () => { throw new Error("offline"); })).anomalies[0].code, "SOURCE_INDISPONIBLE");
+  const expenseRead = await readBilanExpenses(async () => { throw new Error("offline"); });
+  assert.equal(expenseRead.anomalies[0].code, "SOURCE_INDISPONIBLE");
+  assert.equal(expenseRead.readStatus, "UNAVAILABLE");
   const source = { mode: "READ_ONLY" as const, read: async () => { throw new Error("offline"); } };
   assert.equal((await readBilanOfficialTransit(source)).anomalies[0].code, "SOURCE_INDISPONIBLE");
+});
+
+test("distingue mois vide, pagination incomplète et ligne de dépense ambiguë", async () => {
+  const empty = await readBilanExpenses(async () => ({ rows: [], complete: true }));
+  assert.equal(empty.readStatus, "COMPLETE");
+  assert.deepEqual(empty.rows, []);
+  const incomplete = await readBilanExpenses(async () => ({ rows: [expense()], complete: false }));
+  assert.equal(incomplete.readStatus, "INCOMPLETE");
+  assert.equal(incomplete.anomalies[0].code, "LECTURE_INCOMPLETE");
+  const ambiguous = await readBilanExpenses(async () => ({ rows: [expense({ devise: "" as AdminExpense["devise"] })], complete: true }));
+  assert.equal(ambiguous.readStatus, "COMPLETE"); // Existing row anomaly remains visible without changing the Bilan result.
+  assert.equal(ambiguous.anomalies[0].code, "DEVISE_ABSENTE");
 });
 
 test("le lecteur Google n'expose qu'une lecture GET no-store", async () => {

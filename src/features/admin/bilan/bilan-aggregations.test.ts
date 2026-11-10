@@ -284,6 +284,54 @@ test("une dépense sans agence certifiée reste non imputée sans répartition s
   const result = aggregatePeriodExpenses([expense({ agency: "Cotonou ?", category: "Sacs", amount: 40 })], august);
   assert.deepEqual(result.deductibleOperationalUnallocatedByCurrency, { USD: 40 });
   assert.deepEqual(result.deductibleOperationalByAgencyAndCurrency, {});
+  assert.equal(result.deductibleExpenseLines[0].agency, null);
+  assert.equal(result.deductibleReconciliationComplete, true);
+});
+
+test("ventile les lignes déductibles par agence et devise sans changer les totaux ni les exclusions", () => {
+  const rows = [
+    expense({ sourceReference: "COO:1", agency: "COO", category: "Sacs", amount: 10.25, currency: "USD" }),
+    expense({ sourceReference: "FIH:1", agency: "FIH", category: "Connexion", amount: 4, currency: "USD" }),
+    expense({ sourceReference: "LSHI:1", agency: "LSHI", category: "Transport", amount: 1500, currency: "FCFA", corrected: true }),
+    expense({ sourceReference: "KLZ:1", agency: "KLZ", category: "Sacs", amount: 2000, currency: "CDF" }),
+    expense({ sourceReference: "UNKNOWN:1", agency: "Inconnue", category: "Sacs", amount: 1, currency: "USD" }),
+    expense({ sourceReference: "COO:FIXED", agency: "COO", category: "Connexion", amount: 8 }),
+    expense({ sourceReference: "FIH:DECLARANT", agency: "FIH", category: "Déclarant", amount: 20 }),
+    expense({ sourceReference: "KLZ:HISTORY", agency: "KLZ", category: "Expédition KLZ", amount: 30 }),
+    expense({ sourceReference: "FIH:CANCELLED", agency: "FIH", category: "Sacs", amount: 50, cancelled: true })
+  ];
+  const result = aggregatePeriodExpenses(rows, august);
+  assert.deepEqual(result.operationalByCurrency, { USD: 73.25, FCFA: 1500, CDF: 2000 }); // Même total historique qu'avant la ventilation.
+  assert.deepEqual(result.deductibleOperationalByCurrency, { USD: 15.25, FCFA: 1500, CDF: 2000 });
+  assert.deepEqual(result.deductibleOperationalByAgencyAndCurrency, { COO: { USD: 10.25 }, FIH: { USD: 4 }, LSHI: { FCFA: 1500 }, KLZ: { CDF: 2000 } });
+  assert.deepEqual(result.deductibleOperationalUnallocatedByCurrency, { USD: 1 });
+  assert.deepEqual(result.deductibleExpenseLines.map((line) => line.sourceReference), ["COO:1", "FIH:1", "LSHI:1", "KLZ:1", "UNKNOWN:1"]);
+  assert.equal(result.deductibleExpenseLines.find((line) => line.sourceReference === "LSHI:1")?.corrected, true);
+  assert.equal(result.deductibleReconciliationComplete, true);
+  assert.equal(resultOperationalPeriodUsd(100, result), 26.75); // Historical USD remains 73.25, including excluded rows.
+});
+
+test("la période sélectionnée pilote les détails pour les mois passés, courants et futurs", () => {
+  const rows = [
+    expense({ date: "2026-08-03", sourceReference: "AT" }),
+    expense({ date: "2026-10-04", sourceReference: "OT", amount: 20 }),
+    expense({ date: "2026-11-05", sourceReference: "NV", amount: 30 }),
+    expense({ date: "2027-01-06", sourceReference: "JA", amount: 40 })
+  ];
+  for (const [period, expected] of [
+    [{ from: "2026-08-01", to: "2026-08-31" }, "AT"],
+    [{ from: "2026-10-01", to: "2026-10-31" }, "OT"],
+    [{ from: "2026-11-05", to: "2026-11-05" }, "NV"],
+    [{ from: "2027-01-01", to: "2027-01-31" }, "JA"]
+  ] as const) {
+    const result = aggregatePeriodExpenses(rows, period);
+    assert.deepEqual(result.deductibleExpenseLines.map((line) => line.sourceReference), [expected]);
+    assert.equal(result.deductibleReconciliationComplete, true);
+  }
+  const empty = aggregatePeriodExpenses(rows, { from: "2026-12-01", to: "2026-12-31" });
+  assert.deepEqual(empty.deductibleExpenseLines, []);
+  assert.deepEqual(empty.deductibleOperationalByCurrency, {});
+  assert.equal(empty.deductibleReconciliationComplete, true);
 });
 
 test("calcule uniquement RESULTAT_OPERATIONNEL_PERIODE_USD", () => {
