@@ -6,6 +6,7 @@ import type { AdminAuthorizationResult } from "@/server/admin-authorization";
 
 import { BILAN_ALLOWED_METHODS, parseBilanApiQuery } from "./bilan-api-query";
 import { createBilanGetHandler } from "./bilan-route-handler";
+import { IncompleteBilanExpensesError } from "./financial-readers";
 import { TEST_COHORTS } from "./bilan-test-context";
 
 const admin: AdminAuthorizationResult = { authorized: true, userId: "admin-1", email: "admin@example.com", role: "ADMIN", agency: "COO" };
@@ -27,6 +28,15 @@ test("une source indisponible retourne 503 sans données fabriquées", async () 
   const response = await createBilanGetHandler({ registry, authorize: async () => admin, build: async () => { throw new Error("BILAN_SOURCE_UNAVAILABLE"); } })(request("?cohort=AT"));
   assert.equal(response.status, 503);
   assert.equal((await response.json()).error.code, "BILAN_SOURCE_UNAVAILABLE");
+});
+
+test("une lecture Dépenses incomplète retourne un diagnostic explicite, sans faux zéro", async () => {
+  const response = await createBilanGetHandler({ registry, authorize: async () => admin, build: async () => { throw new IncompleteBilanExpensesError(); } })(request("?cohort=AT"));
+  assert.equal(response.status, 503);
+  const payload = await response.json();
+  assert.equal(payload.error.code, "BILAN_EXPENSES_READ_INCOMPLETE");
+  assert.match(payload.error.message, /lecture des dépenses est incomplète/i);
+  assert.equal("periodExpenses" in payload, false);
 });
 
 test("refuse une période incompatible avant toute lecture des sources", async () => {

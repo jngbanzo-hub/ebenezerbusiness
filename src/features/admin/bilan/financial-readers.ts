@@ -4,7 +4,15 @@ import type { BilanExpense, BilanPayment, BilanReadAnomaly, BilanReadResult } fr
 import { canonicalParcelCode } from "./cohort-registry";
 
 export type BilanPaymentsRead = () => Promise<readonly AdminPayment[]>;
-export type BilanExpensesRead = () => Promise<readonly AdminExpense[]>;
+export type BilanExpensesRead = () => Promise<readonly AdminExpense[] | Readonly<{ rows: readonly AdminExpense[]; complete: boolean }>>;
+export type BilanExpenseReadStatus = "COMPLETE" | "INCOMPLETE" | "UNAVAILABLE";
+
+export class IncompleteBilanExpensesError extends Error {
+  constructor() {
+    super("La lecture des dépenses est incomplète ; le Bilan n’a pas été présenté comme complet.");
+    this.name = "IncompleteBilanExpensesError";
+  }
+}
 
 export async function readBilanPayments(read: BilanPaymentsRead) {
   try { return adaptPayments(await read()); }
@@ -36,9 +44,19 @@ export function adaptPayments(payments: readonly AdminPayment[]): BilanReadResul
   return result(rows, anomalies);
 }
 
-export async function readBilanExpenses(read: BilanExpensesRead) {
-  try { return adaptExpenses(await read()); }
-  catch { return result([], [sourceUnavailable("DÉPENSES")]); }
+export async function readBilanExpenses(read: BilanExpensesRead): Promise<BilanReadResult<BilanExpense> & { readStatus: BilanExpenseReadStatus }> {
+  try {
+    const batch = await read();
+    const hasPaginationMetadata = "rows" in batch;
+    const adapted = adaptExpenses(hasPaginationMetadata ? batch.rows : batch);
+    const complete = !hasPaginationMetadata || batch.complete;
+    const anomalies = hasPaginationMetadata && !batch.complete
+      ? [...adapted.anomalies, Object.freeze({ code: "LECTURE_INCOMPLETE", source: "DÉPENSES", message: "Pagination des dépenses incomplète ou incohérente." })]
+      : adapted.anomalies;
+    return Object.freeze({ rows: adapted.rows, anomalies: Object.freeze(anomalies), readStatus: complete ? "COMPLETE" : "INCOMPLETE" });
+  } catch {
+    return Object.freeze({ ...result([], [sourceUnavailable("DÉPENSES")]), readStatus: "UNAVAILABLE" });
+  }
 }
 
 export function adaptExpenses(expenses: readonly AdminExpense[]): BilanReadResult<BilanExpense> {

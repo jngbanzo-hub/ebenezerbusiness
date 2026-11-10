@@ -64,6 +64,21 @@ test("tableau de direction contient les cartes additives Charges fixes, Prime et
 test("un seul panneau de détail est piloté au clavier et fermé par défaut",()=>{assert.match(ui,/useState<BilanSectionId \| null>\(null\)/);assert.match(ui,/aria-expanded=\{selected\}/);assert.match(ui,/aria-controls=\"bilan-detail-panel\"/);assert.match(ui,/selectedSection&&selectedCard/);assert.match(ui,/current===card\.id\?null:card\.id/);});
 test("résultat financier distingue CA, encaissements, charges fixes, prime et bénéfice",()=>{for(const text of ["Chiffre d’affaires réel","CA réel","Encaissements / trésorerie reçue","Charges fixes mensuelles","Prime totale du mois","Bénéfice avant prime","BÉNÉFICE APRÈS PRIME"])assert.ok(ui.includes(text),text);});
 test("historique Expédition KLZ reste visible avec son statut anti-double-comptage",()=>{assert.match(ui,/Historique uniquement — couvert par la charge automatique Expédition KLZ/);});
+test("détail des dépenses déductibles conserve le total et ventile la période effective",()=>{
+  assert.match(ui,/CurrencyCards totals=\{data\.periodExpenses\.deductibleByCurrency\}/);
+  assert.match(ui,/DeductibleExpensesDetail data=\{data\}/);
+  assert.match(ui,/const period = data\.meta\.period/);
+  assert.match(ui,/\["COO", "FIH", "LSHI", "KLZ"\]/);
+  assert.match(ui,/deductibleUnallocatedByCurrency/);
+  assert.match(ui,/deductibleReconciliationComplete/);
+  assert.match(ui,/Aucune dépense déductible pour cette période/);
+});
+test("ventilation du Bilan réutilise les dépenses déjà lues sans nouvelle lecture par agence",()=>{
+  const service=readFileSync("src/features/admin/bilan/bilan-service.ts","utf8");
+  assert.match(service,/readBilanExpenses\(\(\) => readAllExpenses\(admin, query\.period!\)\)/);
+  assert.match(service,/deductibleExpenseLines: periodExpenses\.deductibleExpenseLines/);
+  assert.doesNotMatch(service,/readAllExpenses\(admin, query\.period!,\s*(?:"COO"|"FIH"|"LSHI"|"KLZ")/);
+});
 test("bénéfice par agence sépare la connexion opérationnelle de la charge fixe",()=>{assert.match(ui,/Connexion opérationnelle/);assert.match(ui,/Autres dépenses hors connexion/);});
 test("interface consomme uniquement GET api admin bilan",()=>{assert.match(client,/\/api\/admin\/bilan\?/);assert.match(client,/authenticatedRead/);assert.doesNotMatch(client+ui,/method:\s*["'](?:POST|PUT|PATCH|DELETE)/);assert.doesNotMatch(client+ui,/\.(?:insert|update|upsert|delete)\s*\(/);});
 test("Encaissements transmettent la cohorte active et exposent les deux identités",()=>{assert.match(ui,/encaissements-certification-readonly\?cohortId=/);assert.match(ui,/splitContact/);assert.match(ui,/buildReminderRecipients/);assert.match(ui,/sender:string|null/);assert.match(ui,/243\\d\{9\}/);assert.match(ui,/activeCohortId/);});
