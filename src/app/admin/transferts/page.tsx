@@ -11,5 +11,9 @@ export const metadata: Metadata = createPageMetadata({
 });
 
 export default function AdminTransfersRoutePage() {
-  return <AdminTransfertsPage />;
+  return <AdminTransfertsPage
+    oidcProbeEnabled={process.env.VERCEL_ENV === "production" &&
+      process.env.TRANSFERTS_ADMIN_OIDC_PROBE_ENABLED === "true"}
+    oidcProbeExpiresAt={process.env.TRANSFERTS_ADMIN_OIDC_PROBE_EXPIRES_AT}
+  />;
 }
