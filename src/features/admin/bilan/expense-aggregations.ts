@@ -41,7 +41,7 @@ export function aggregatePeriodExpenses(
       add(excludedFromProfitByCategoryAndCurrency[expense.category], expense.currency, expense.amount);
       continue;
     }
-    const excludedFromProfit = isDeclarantCategory(expense.category) || isBonusCategory(expense.category) || isFixedCostExpenseCategory(expense.category, expense.agency);
+    const excludedFromProfit = isDeclarantCategory(expense.category) || isBonusCategory(expense.category) || isFixedCostExpenseCategory(expense.category, expense.agency, period.from.slice(0, 7));
     const profitTarget = excludedFromProfit ? excludedFromProfitByCategoryAndCurrency : deductibleOperationalByCategoryAndCurrency;
     profitTarget[expense.category] ??= {};
     add(profitTarget[expense.category], expense.currency, expense.amount);
