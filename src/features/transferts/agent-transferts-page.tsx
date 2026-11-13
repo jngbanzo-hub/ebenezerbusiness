@@ -14,6 +14,7 @@ import { AgentTransferActions } from "@/features/transferts/agent-transfer-actio
 import { AgentTransferDetails } from "@/features/transferts/agent-transfer-details";
 import { AgentTransferForm } from "@/features/transferts/agent-transfer-form";
 import { receivedOriginsForAgency, visibleAgentTransfers } from "@/features/transferts/agent-received-transfers";
+import { sentDestinationsForAgency, visibleSentTransfers } from "@/features/transferts/agent-sent-transfers";
 import { loadAgentTransfers, TransfertsApiError } from "@/features/transferts/api";
 import type { TransferAgency, TransferStatus, TransfersPageResponse } from "@/features/transferts/types";
 
@@ -23,6 +24,8 @@ export function AgentTransfertsPage() {
   const [error, setError] = useState("");
   const [token, setToken] = useState("");
   const [direction, setDirection] = useState<"SENT" | "RECEIVED">("SENT");
+  const [sentView, setSentView] = useState<"NEW" | "LIST" | "">("");
+  const [destination, setDestination] = useState<TransferAgency | "">("");
   const [status, setStatus] = useState<TransferStatus | "">("");
   const [origin, setOrigin] = useState<TransferAgency | "">("");
   const [search, setSearch] = useState("");
@@ -61,13 +64,22 @@ export function AgentTransfertsPage() {
 
   const visibleTransfers = useMemo(() => {
     if (!result?.agency) return [];
+    if (direction === "SENT") {
+      return visibleSentTransfers(result.transfers, result.agency, destination, status, search);
+    }
     return visibleAgentTransfers(result.transfers, result.agency, direction, origin, status, search);
-  }, [direction, origin, result, search, status]);
+  }, [destination, direction, origin, result, search, status]);
 
   const receivedOrigins = useMemo(
     () => result?.agency ? receivedOriginsForAgency(result.agency) : [],
     [result?.agency]
   );
+  const sentDestinations = useMemo(
+    () => result?.agency ? sentDestinationsForAgency(result.agency) : [],
+    [result?.agency]
+  );
+  const selectedDestination = sentDestinations.includes(destination as TransferAgency) ? destination : "";
+  const showTransferList = direction === "RECEIVED" || sentView === "LIST";
 
   return (
     <main className="min-h-screen bg-ebe-night py-8 text-white sm:py-12">
@@ -105,6 +117,23 @@ export function AgentTransfertsPage() {
               <div className="flex flex-wrap gap-2">
                 <Button variant={direction === "SENT" ? "default" : "outline"} onClick={() => setDirection("SENT")}>Envoyés</Button>
                 <Button variant={direction === "RECEIVED" ? "default" : "outline"} onClick={() => setDirection("RECEIVED")}>Reçus</Button>
+              </div>
+              {direction === "SENT" && (
+                <div className="grid gap-2 sm:grid-cols-2" aria-label="Choix des transferts envoyés">
+                  <Button type="button" variant={sentView === "NEW" ? "default" : "outline"} aria-pressed={sentView === "NEW"} onClick={() => setSentView("NEW")}>Nouveau transfert</Button>
+                  <Button type="button" variant={sentView === "LIST" ? "default" : "outline"} aria-pressed={sentView === "LIST"} onClick={() => setSentView("LIST")}>Les transferts</Button>
+                </div>
+              )}
+              {showTransferList && <div className="flex flex-wrap gap-2">
+                {direction === "SENT" && (
+                  <label className="grid gap-1 text-sm">
+                    Choisir l’agence destinataire
+                    <select aria-label="Choisir l’agence destinataire" value={selectedDestination} onChange={(event) => setDestination(event.target.value as TransferAgency | "")} className="rounded-md border border-white/15 bg-ebe-night px-3 py-2 text-sm">
+                      <option value="">Choisir une destination</option>
+                      {sentDestinations.map((agency) => <option key={agency} value={agency}>{agency}</option>)}
+                    </select>
+                  </label>
+                )}
                 {direction === "RECEIVED" && (
                   <select aria-label="Agence d’origine" value={origin} onChange={(event) => {
                     setOrigin(event.target.value as TransferAgency | "");
@@ -119,8 +148,8 @@ export function AgentTransfertsPage() {
                   {["ENVOYE", "CODE_RECU", "FONDS_RETIRES", "CONFIRME", "A_VERIFIER", "ANNULE"].map((item) => <option key={item}>{item}</option>)}
                 </select>
                 <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Rechercher Transfer ID" className="rounded-md border border-white/15 bg-ebe-night px-3 text-sm" />
-              </div>
-              {visibleTransfers.map((transfer) => (
+              </div>}
+              {showTransferList && (direction === "RECEIVED" || selectedDestination) && visibleTransfers.map((transfer) => (
                 <div key={transfer.transferId} className="rounded-lg border border-white/10 p-4 text-sm">
                   <div className="grid gap-2 sm:grid-cols-4">
                     <span>{transfer.sentAt}</span>
@@ -137,12 +166,16 @@ export function AgentTransfertsPage() {
                   {token && result.agency && <AgentTransferActions token={token} transfer={transfer} agency={result.agency} enabled={result.writesEnabled} onSuccess={reload} />}
                 </div>
               ))}
-              {!visibleTransfers.length && <p className="text-sm text-muted-foreground">Aucun transfert ne correspond aux filtres.</p>}
+              {showTransferList && (direction === "RECEIVED" || selectedDestination) && !visibleTransfers.length && (
+                <p className="text-sm text-muted-foreground">{direction === "SENT" && !status && !search.trim()
+                  ? "Aucun transfert envoyé vers cette destination."
+                  : "Aucun transfert ne correspond aux filtres."}</p>
+              )}
             </div>
           ) : null}
         </GlassPanel>
 
-        <GlassPanel className="mt-6 border-accent/20 p-5">
+        {direction === "SENT" && sentView && <GlassPanel className={sentView === "NEW" ? "mt-6 border-accent/20 p-5" : "hidden"}>
           <div className="flex gap-3">
             <ShieldCheck className="h-5 w-5 shrink-0 text-accent" />
             <p className="text-sm text-muted-foreground">Les codes affichés sont toujours masqués. Les opérations restent soumises aux autorisations de l’agence et aux verrous serveur.</p>
@@ -153,7 +186,7 @@ export function AgentTransfertsPage() {
               ? <AgentTransferForm token={token} agency={result.agency} enabled={result.writesEnabled} onSuccess={reload} />
               : <p className="text-sm text-amber-100">Les opérations de transfert ne sont pas encore activées.</p>}
           </div>
-        </GlassPanel>
+        </GlassPanel>}
         {selectedTransferId && token ? (
           <AgentTransferDetails
             token={token}
