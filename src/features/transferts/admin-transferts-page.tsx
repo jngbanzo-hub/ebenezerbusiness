@@ -27,6 +27,7 @@ import {
 } from "@/features/transferts/types";
 import { AdminTransferDetails } from "@/features/transferts/admin-transfer-details";
 import { AdminOidcProbeTrigger } from "@/features/transferts/admin-oidc-probe-panel";
+import { AdminDeploymentAttestationTrigger } from "@/features/transferts/admin-deployment-attestation-panel";
 
 const fieldClassName =
   "mt-2 h-11 w-full rounded-md border border-white/15 bg-white/[0.05] px-3 text-white outline-none";
@@ -39,8 +40,11 @@ const periodLabels: Record<string, string> = {
 
 export function AdminTransfertsPage({
   oidcProbeEnabled = false,
-  oidcProbeExpiresAt
-}: { oidcProbeEnabled?: boolean; oidcProbeExpiresAt?: string }) {
+  oidcProbeExpiresAt,
+  deploymentAttestationEnabled = false,
+  deploymentAttestationExpiresAt
+}: { oidcProbeEnabled?: boolean; oidcProbeExpiresAt?: string;
+     deploymentAttestationEnabled?: boolean; deploymentAttestationExpiresAt?: string }) {
   const router = useRouter();
   const token = useRef("");
   const [authorized, setAuthorized] = useState(false);
@@ -208,6 +212,9 @@ export function AdminTransfertsPage({
 
         {oidcProbeEnabled ? (
           <AdminOidcProbeTrigger enabled expiresAt={oidcProbeExpiresAt} />
+        ) : null}
+        {deploymentAttestationEnabled ? (
+          <AdminDeploymentAttestationTrigger enabled expiresAt={deploymentAttestationExpiresAt} />
         ) : null}
 
         <section className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
