@@ -127,7 +127,9 @@ export function AdminTransferDetails({
                 </Button>
               </p>
               <Item label="Statut" value={transfer.status} />
-              <Item label="Date" value={transfer.sentAt} />
+              <Item label="Date d’envoi" value={transfer.sentAt} />
+              <Item label="Agent expéditeur" value={transfer.agentFrom || "—"} />
+              <Item label="Mise à jour" value={transfer.updatedAt || "—"} />
               <Item label="Observation" value={transfer.observation || "—"} />
             </div>
             {canCorrect && !correctionKind ? (

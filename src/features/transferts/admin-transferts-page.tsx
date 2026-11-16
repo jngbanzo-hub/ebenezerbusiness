@@ -30,7 +30,7 @@ import { AdminOidcProbeTrigger } from "@/features/transferts/admin-oidc-probe-pa
 import { AdminDeploymentAttestationTrigger } from "@/features/transferts/admin-deployment-attestation-panel";
 
 const fieldClassName =
-  "mt-2 h-11 w-full rounded-md border border-white/15 bg-white/[0.05] px-3 text-white outline-none";
+  "mt-2 h-11 min-w-0 w-full rounded-md border border-white/15 bg-white/[0.05] px-3 text-white outline-none";
 const periodLabels: Record<string, string> = {
   TODAY: "Aujourd’hui",
   THIS_WEEK: "Cette semaine",
@@ -45,6 +45,7 @@ export function AdminTransfertsPage({
   deploymentAttestationExpiresAt
 }: { oidcProbeEnabled?: boolean; oidcProbeExpiresAt?: string;
      deploymentAttestationEnabled?: boolean; deploymentAttestationExpiresAt?: string }) {
+  const [view, setView] = useState<"Envoyés" | "Reçus" | "Statistiques" | "Audit">("Envoyés");
   const router = useRouter();
   const token = useRef("");
   const [authorized, setAuthorized] = useState(false);
@@ -207,7 +208,7 @@ export function AdminTransfertsPage({
               Statistiques calculées côté serveur — fuseau Africa/Porto-Novo.
             </p>
           </div>
-          <div className="flex flex-wrap gap-3"><Button asChild variant="outline"><Link href="/admin">Retour au tableau de bord Admin</Link></Button><Button type="button" variant="outline" onClick={handleSignOut}><LogOut className="h-4 w-4" />Se déconnecter</Button></div>
+          <div className="flex flex-wrap gap-3"><Button asChild variant="outline" className="h-auto min-h-11 max-w-full whitespace-normal text-center"><Link href="/admin">Retour au tableau de bord Admin</Link></Button><Button type="button" variant="outline" onClick={handleSignOut}><LogOut className="h-4 w-4" />Se déconnecter</Button></div>
         </header>
 
         {oidcProbeEnabled ? (
@@ -231,6 +232,15 @@ export function AdminTransfertsPage({
           </GlassPanel>
         ) : null}
 
+        <nav aria-label="Vues de supervision" className="mt-6 grid grid-cols-1 min-[320px]:grid-cols-2 gap-1 rounded-xl border border-white/15 bg-white/[0.03] p-1 sm:grid-cols-4">
+          {(["Envoyés", "Reçus", "Statistiques", "Audit"] as const).map((tab) => (
+            <button key={tab} type="button" aria-pressed={view === tab} onClick={() => setView(tab)}
+              className={`min-h-11 rounded-lg px-3 text-sm font-semibold uppercase tracking-wide focus-visible:outline-accent ${view === tab ? "bg-accent text-ebe-night" : "text-muted-foreground hover:bg-white/10 hover:text-white"}`}>
+              {tab}
+            </button>
+          ))}
+        </nav>
+
         <Filters
           values={{ period, agencyFrom, agencyTo, circuit, status, currency, transferId, dateFrom, dateTo }}
           setters={{ setPeriod, setAgencyFrom, setAgencyTo, setCircuit, setStatus, setCurrency, setTransferId, setDateFrom, setDateTo }}
@@ -240,16 +250,16 @@ export function AdminTransfertsPage({
           <GlassPanel className="mt-6 p-6 text-center">
             <LoaderCircle className="mx-auto h-6 w-6 animate-spin text-accent" />
           </GlassPanel>
-        ) : result?.statistics ? (
+        ) : view === "Statistiques" && result?.statistics ? (
           <Statistics statistics={result.statistics} />
         ) : null}
 
-        {result?.adminEnabled ? (
-          <>
-            <TransferTable result={result} onSelect={setSelectedTransferId} />
-            <AuditTable audit={audit} loading={auditLoading} error={auditError} />
-          </>
-        ) : null}
+        {result?.adminEnabled && (view === "Envoyés" || view === "Reçus") && (
+          <TransferTable result={result} view={view} onSelect={setSelectedTransferId} />
+        )}
+        {result?.adminEnabled && view === "Audit" && (
+          <AuditTable audit={audit} loading={auditLoading} error={auditError} />
+        )}
 
         <GlassPanel className="mt-6 border-accent/20 p-5">
           <p className="flex gap-3 text-sm text-muted-foreground">
@@ -311,23 +321,64 @@ function Amounts({ values }: { values: CurrencyTotals }) {
   return <div className="space-y-1">{TRANSFER_CURRENCIES.map((currency) => <p key={currency}>{new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(values[currency])} {currency}</p>)}</div>;
 }
 
-function TransferTable({
-  result,
-  onSelect
-}: {
+const creationDate = new Intl.DateTimeFormat("fr-FR", {
+  timeZone: "Africa/Porto-Novo", dateStyle: "short", timeStyle: "short"
+});
+
+function TransferTable({ result, view, onSelect }: {
   result: TransfersPageResponse;
+  view: "Envoyés" | "Reçus";
   onSelect: (transferId: string) => void;
 }) {
+  const sent = view === "Envoyés";
+  const agencyField = sent ? "agencyFrom" : "agencyTo";
+  const columns = ["Création", "Circuit", "Code masqué", "Expéditeur / bénéficiaire", "Montant", "Statut", "Détail"];
+  const groups = useMemo(() => TRANSFER_AGENCIES.map(agency => ({
+    agency,
+    rows: result.transfers.filter(item => item[agencyField] === agency)
+      .map(item => ({item, time: Date.parse(item.createdAt)}))
+      .sort((a, b) => {
+        const difference = (Number.isFinite(b.time) ? b.time : -Infinity) -
+          (Number.isFinite(a.time) ? a.time : -Infinity);
+        return difference || (a.item.transferId < b.item.transferId ? -1 : Number(a.item.transferId > b.item.transferId));
+      })
+  })), [result.transfers, agencyField]);
+
   return (
-    <GlassPanel className="mt-6 overflow-x-auto p-5 sm:p-6">
-      <h2 className="text-xl font-semibold">Transferts ({result.transfers.length})</h2>
-      {result.transfers.length === 0 ? <p className="mt-4 text-sm text-muted-foreground">Aucun transfert ne correspond aux filtres.</p> : (
-        <table className="mt-5 min-w-full text-left text-sm">
-          <thead className="text-muted-foreground"><tr><th className="p-2">Transfer ID</th><th>Circuit</th><th>Expéditeur / bénéficiaire</th><th>Montant</th><th>Code</th><th>Statut</th><th>Agent</th><th>Envoi</th><th>Mise à jour</th><th>Détail</th></tr></thead>
-          <tbody>{result.transfers.map((item) => <tr key={item.transferId} className="border-t border-white/10"><td className="p-2">{item.transferId}</td><td>{item.agencyFrom} → {item.agencyTo}</td><td>{item.senderName || "—"} / {item.beneficiaryName || "—"}</td><td>{item.amount} {item.currency}</td><td>{item.maskedCode || "—"}</td><td>{item.status}</td><td>{item.agentFrom || "—"}</td><td>{item.sentAt}</td><td>{item.updatedAt || "—"}</td><td><Button type="button" size="sm" variant="outline" onClick={() => onSelect(item.transferId)}>Voir</Button></td></tr>)}</tbody>
-        </table>
-      )}
-    </GlassPanel>
+    <section className="mt-6 space-y-4">
+      <h2 className="text-xl font-semibold">{sent ? "Par agence d’origine" : "Par agence de destination"}</h2>
+      {!result.transfers.length && <p className="text-sm text-muted-foreground">Aucun transfert ne correspond aux filtres.</p>}
+      {groups.filter(group => group.rows.length > 0).map(({ agency, rows }) => (
+        <GlassPanel key={agency} className="min-w-0 p-4 sm:p-5">
+          <h3 className="flex items-baseline gap-3 text-lg font-semibold">{agency}
+            <span className="text-sm font-normal text-muted-foreground">{rows.length} transfert{rows.length > 1 ? "s" : ""}</span>
+          </h3>
+          <table aria-label={`${view} · ${agency}`} className="mt-3 block w-full text-left text-sm lg:table">
+            <thead className="hidden text-xs text-muted-foreground lg:table-header-group">
+              <tr>{columns.map(column => <th key={column} scope="col" className="px-2 py-3">{column}</th>)}</tr>
+            </thead>
+            <tbody className="grid gap-3 sm:grid-cols-2 lg:table-row-group">
+              {rows.map(({ item, time }) => {
+                const fields = [
+                  Number.isFinite(time) ? creationDate.format(time) : "—",
+                  `${item.agencyFrom} → ${item.agencyTo}`,
+                  item.maskedCode || "—",
+                  <span key="names">{item.senderName || "—"}<br />{item.beneficiaryName || "—"}</span>,
+                  `${item.amount} ${item.currency}`,
+                  item.status
+                ];
+                return <tr key={item.transferId} className="grid grid-cols-2 gap-2 rounded-lg border border-white/10 p-3 lg:table-row lg:border-x-0 lg:border-b-0">
+                  {fields.map((field, index) => <td key={columns[index]} className="min-w-0 break-words lg:px-2 lg:py-3">
+                    <span className="block text-xs text-muted-foreground lg:hidden">{columns[index]}</span>{field}
+                  </td>)}
+                  <td className="col-span-2 lg:px-2"><Button type="button" size="sm" variant="outline" onClick={() => onSelect(item.transferId)}>Voir les détails</Button></td>
+                </tr>;
+              })}
+            </tbody>
+          </table>
+        </GlassPanel>
+      ))}
+    </section>
   );
 }
 
@@ -362,5 +413,5 @@ function Filters({ values, setters }: { values: FilterValues; setters: FilterSet
   );
 }
 function Status({ label, value }: { label: string; value: string }) { return <GlassPanel className="p-5"><p className="text-sm text-muted-foreground">{label}</p><p className="mt-2 font-semibold">{value}</p></GlassPanel>; }
-function Select({ label, value, onChange, options, labels, all = true }: { label: string; value: string; onChange: (value: string) => void; options: string[]; labels?: Record<string, string>; all?: boolean }) { return <label className="text-sm">{label}<select className={fieldClassName} value={value} onChange={(event) => onChange(event.target.value)}>{all ? <option value="" className="bg-ebe-navy">Tous</option> : null}{options.map((option) => <option key={option} value={option} className="bg-ebe-navy">{labels?.[option] ?? option.replace(">", " → ")}</option>)}</select></label>; }
-function Input({ label, value, onChange, type = "text" }: { label: string; value: string; onChange: (value: string) => void; type?: string }) { return <label className="text-sm">{label}<input type={type} className={fieldClassName} value={value} onChange={(event) => onChange(event.target.value)} /></label>; }
+function Select({ label, value, onChange, options, labels, all = true }: { label: string; value: string; onChange: (value: string) => void; options: string[]; labels?: Record<string, string>; all?: boolean }) { return <label className="min-w-0 text-sm">{label}<select className={fieldClassName} value={value} onChange={(event) => onChange(event.target.value)}>{all ? <option value="" className="bg-ebe-navy">Tous</option> : null}{options.map((option) => <option key={option} value={option} className="bg-ebe-navy">{labels?.[option] ?? option.replace(">", " → ")}</option>)}</select></label>; }
+function Input({ label, value, onChange, type = "text" }: { label: string; value: string; onChange: (value: string) => void; type?: string }) { return <label className="min-w-0 text-sm">{label}<input type={type} className={fieldClassName} value={value} onChange={(event) => onChange(event.target.value)} /></label>; }
