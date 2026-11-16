@@ -1423,6 +1423,13 @@ function doPost(e) {
       );
     }
 
+    if (action === 'LIRE_DEPENSE_CAISSE_ADMIN') {
+      exigerRoleDepenses_(acteur, 'ADMIN');
+      return reponseJsonDepenses_(
+        lireDepenseCaisseAdmin_(donnees)
+      );
+    }
+
     if (action === 'ENREGISTRER_DEPENSE') {
       exigerRoleDepenses_(acteur, 'AGENT');
       return reponseJsonDepenses_(
@@ -1464,6 +1471,93 @@ function doPost(e) {
         'Une erreur interne est survenue.'
     });
   }
+}
+
+/** Lecture ciblée, sans verrou ni écriture, pour la reprise contrôlée Caisse. */
+function lireDepenseCaisseAdmin_(donnees) {
+  validerProprietesObjet_(donnees, ['expenseRequestId'], 'REQUETE_INVALIDE');
+  const id = validerUuidV4Depenses_(donnees.expenseRequestId, 'EXPENSE_REQUEST_ID_INVALIDE');
+  const classeur = SpreadsheetApp.getActiveSpreadsheet();
+  const correspondances = [];
+  CONFIG_DEPENSES.feuillesAgences.forEach(function(nom) {
+    const feuille = classeur.getSheetByName(nom);
+    if (!feuille || feuille.getLastRow() < 2) return;
+    const cellules = feuille.getRange(2, 2, feuille.getLastRow() - 1, 1)
+      .createTextFinder(id).matchCase(false).matchEntireCell(true)
+      .useRegularExpression(false).findAll();
+    cellules.forEach(function(cellule) {
+      correspondances.push({
+        feuille: nom,
+        ligne: cellule.getRow(),
+        valeurs: feuille.getRange(cellule.getRow(), 1, 1, CONFIG_DEPENSES.entetes.length).getValues()[0]
+      });
+    });
+  });
+  if (correspondances.length !== 1) {
+    throw erreurDepenses_(
+      correspondances.length ? 'DEPENSE_SOURCE_AMBIGUE' : 'DEPENSE_SOURCE_ABSENTE',
+      'Source de la dépense non certifiable.'
+    );
+  }
+  const source = correspondances[0];
+  const ligne = source.valeurs;
+  const date = analyserDateDepense_(ligne[0]);
+  if (!date || normaliserUuidDepenses_(ligne[1]) !== id || normaliserTexte_(ligne[2]) !== source.feuille) {
+    throw erreurDepenses_('DEPENSE_SOURCE_INCOHERENTE', 'Source de la dépense incohérente.');
+  }
+  const audit = classeur.getSheetByName('AUDIT DEPENSES');
+  let creationsTrouvees = 0;
+  let acteurCreationId = '';
+  let acteurCreationNom = '';
+  if (audit && audit.getLastRow() >= 2) {
+    const cellulesAudit = audit.getRange(2, 4, audit.getLastRow() - 1, 1)
+      .createTextFinder(id).matchCase(false).matchEntireCell(true)
+      .useRegularExpression(false).findAll();
+    cellulesAudit.forEach(function(cellule) {
+      const valeurs = audit.getRange(cellule.getRow(), 1, 1, 29).getValues()[0];
+      if (normaliserTexte_(valeurs[1]) === 'CREATION') {
+        creationsTrouvees++;
+        const dateAudit = analyserDateDepense_(valeurs[2]);
+        if (dateAudit && dateAudit.getTime() === date.getTime() &&
+            normaliserTexte_(valeurs[5]) === source.feuille &&
+            normaliserTexte_(valeurs[6]) === source.feuille &&
+            normaliserTexte_(valeurs[11]) === normaliserTexte_(ligne[11]) &&
+            normaliserTexte_(valeurs[13]) === normaliserTexte_(ligne[3]) &&
+            String(valeurs[15] || '') === String(ligne[4] || '') &&
+            analyserMontantDepense_(valeurs[17]) === analyserMontantDepense_(ligne[5]) &&
+            normaliserTexte_(valeurs[19]) === normaliserTexte_(ligne[6]) &&
+            String(valeurs[21] || '') === String(ligne[7] || '') &&
+            String(valeurs[23] || '') === String(ligne[8] || '') &&
+            normaliserTexte_(valeurs[27]) === 'SUCCES' &&
+            normaliserUuidDepenses_(valeurs[28]) === id) {
+          acteurCreationId = String(valeurs[7] || '');
+          acteurCreationNom = String(valeurs[8] || '');
+        }
+      }
+    });
+  }
+  return {
+    success: true,
+    code: 'DEPENSE_CAISSE_SOURCE_LUE',
+    lectureSeule: true,
+    depense: {
+      expenseRequestId: id,
+      dateHeure: date.toISOString(),
+      agence: source.feuille,
+      categorie: String(ligne[3] || ''),
+      description: String(ligne[4] || ''),
+      montant: analyserMontantDepense_(ligne[5]),
+      devise: normaliserTexte_(ligne[6]),
+      modePaiement: String(ligne[7] || ''),
+      reference: String(ligne[8] || ''),
+      agent: String(ligne[9] || ''),
+      observation: String(ligne[10] || ''),
+      statut: normaliserTexte_(ligne[11]),
+      creationAuditCount: creationsTrouvees,
+      creationActorId: acteurCreationId,
+      creationActorName: acteurCreationNom
+    }
+  };
 }
 
 /**

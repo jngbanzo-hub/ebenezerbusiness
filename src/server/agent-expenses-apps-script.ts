@@ -71,6 +71,31 @@ const adminExpenseResponseSchema = z.object({
   })
 });
 
+const cashRecoverySourceSchema = z.object({
+  success: z.literal(true),
+  code: z.literal("DEPENSE_CAISSE_SOURCE_LUE"),
+  lectureSeule: z.literal(true),
+  depense: z.object({
+    expenseRequestId: z.string().uuid(),
+    dateHeure: z.string().datetime({ offset: true }),
+    agence: z.enum(["COO", "FIH", "LSHI", "KLZ"]),
+    categorie: z.string(),
+    description: z.string(),
+    montant: z.number().positive(),
+    devise: z.enum(["USD", "FCFA", "CDF"]),
+    modePaiement: z.string(),
+    reference: z.string(),
+    agent: z.string(),
+    observation: z.string(),
+    statut: z.string(),
+    creationAuditCount: z.number().int().nonnegative(),
+    creationActorId: z.string(),
+    creationActorName: z.string()
+  })
+});
+
+export type CashRecoveryExpenseSource = z.infer<typeof cashRecoverySourceSchema>["depense"];
+
 const expenseReadDiagnosticSchema = z.object({
   complete: z.literal(true),
   agency: z.enum(["FIH", "LSHI", "KLZ"]),
@@ -239,6 +264,48 @@ export async function readAdminExpenses(
       throw new AdminExpenseDiagnosticTimeout();
     }
     throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** Lecture ciblée : aucune action d'enregistrement n'est envoyée à Apps Script. */
+export async function readCashRecoveryExpenseSource(
+  identity: AdminExpenseIdentity,
+  expenseRequestId: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<CashRecoveryExpenseSource> {
+  const id = z.string().uuid().parse(expenseRequestId).toLowerCase();
+  const { url, apiKey } = readExpensesAppsScriptConfiguration();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetchImpl(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        apiKey,
+        action: "LIRE_DEPENSE_CAISSE_ADMIN",
+        acteur: {
+          id: identity.userId,
+          nom: identity.email,
+          role: "ADMIN",
+          actif: true,
+          agence: identity.agency ?? ""
+        },
+        donnees: { expenseRequestId: id }
+      }),
+      cache: "no-store",
+      redirect: "follow",
+      signal: controller.signal
+    });
+    if (!response.ok) throw new AdminExpenseReadError("SOURCE_UNAVAILABLE", "Source Dépenses indisponible.");
+    const payload: unknown = await response.json();
+    const parsed = cashRecoverySourceSchema.safeParse(payload);
+    if (!parsed.success || parsed.data.depense.expenseRequestId.toLowerCase() !== id) {
+      throw new AdminExpenseReadError("SOURCE_UNCERTIFIED", "Dépense source non certifiable.");
+    }
+    return parsed.data.depense;
   } finally {
     clearTimeout(timeout);
   }
