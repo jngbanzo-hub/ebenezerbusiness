@@ -12,6 +12,11 @@ export function sentDestinationsForAgency(agency: TransferAgency): TransferAgenc
     .map(([, destination]) => destination);
 }
 
+function creationTime(transfer: TransferSummary): number {
+  const time = Date.parse(transfer.createdAt);
+  return Number.isFinite(time) ? time : Number.NEGATIVE_INFINITY;
+}
+
 export function visibleSentTransfers(
   transfers: TransferSummary[],
   agency: TransferAgency,
@@ -26,5 +31,11 @@ export function visibleSentTransfers(
     transfer.agencyTo === destination &&
     (!status || transfer.status === status) &&
     (!transferIdQuery || transfer.transferId.toLowerCase().includes(transferIdQuery))
-  );
+  ).sort((left, right) => {
+    const leftTime = creationTime(left);
+    const rightTime = creationTime(right);
+    if (leftTime !== rightTime) return rightTime - leftTime;
+    if (left.transferId === right.transferId) return 0;
+    return left.transferId < right.transferId ? -1 : 1;
+  });
 }

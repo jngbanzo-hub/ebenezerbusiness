@@ -19,6 +19,7 @@ const { sentDestinationsForAgency, visibleSentTransfers } = await import(
 
 const transfer = (id, from, to, status = "ENVOYE") => ({
   transferId: id,
+  createdAt: "2026-11-01T00:00:00Z",
   agencyFrom: from,
   agencyTo: to,
   status
@@ -31,7 +32,7 @@ test("les destinations envoyées suivent les six circuits autorisés", () => {
   }
 });
 
-test("COO voit séparément FIH, LSHI et KLZ dans l’ordre reçu de l’API", () => {
+test("COO voit séparément FIH, LSHI et KLZ", () => {
   const rows = [
     transfer("coo-fih-new", "COO", "FIH"),
     transfer("coo-lshi", "COO", "LSHI"),
@@ -74,4 +75,27 @@ test("statut et Transfer ID sont appliqués à la seule destination choisie", ()
   ];
   assert.deepEqual(visibleSentTransfers(rows, "COO", "FIH", "CONFIRME", " tr-00 ").map((row) => row.transferId), ["TR-002"]);
   assert.deepEqual(visibleSentTransfers(rows, "COO", "FIH", "ANNULE", ""), []);
+});
+
+test("les six circuits trient après filtrage, y compris lors d’une actualisation", () => {
+  for (const origin of ["COO", "FIH", "LSHI", "KLZ"]) {
+    for (const destination of sentDestinationsForAgency(origin)) {
+      const row = (id, createdAt, status = "ENVOYE") => ({
+        ...transfer(id, origin, destination, status), createdAt
+      });
+      const oldest = row("TR-Z", "2026-11-15T23:58:00Z");
+      const tiedB = row("TR-B", "2026-11-16T01:00:00+01:00");
+      const tiedA = row("TR-A", "2026-11-16T00:00:00Z");
+      const latest = row("TR-M", "2026-11-16T00:00:01Z");
+      const undated = row("TR-0", "");
+      const rows = [oldest, tiedB, undated, row("OTHER", latest.createdAt),
+        tiedA, row("TR-C", latest.createdAt, "CONFIRME")];
+      const select = (input) => visibleSentTransfers(input, origin, destination, "ENVOYE", " tr-");
+      assert.deepEqual(select(rows), [tiedA, tiedB, oldest, undated]);
+      const refreshed = [...rows].reverse().concat(latest);
+      assert.deepEqual(select(refreshed), [latest, tiedA, tiedB, oldest, undated]);
+      assert.equal(refreshed.at(-1), latest);
+      assert.equal(select(refreshed)[0], latest);
+    }
+  }
 });
