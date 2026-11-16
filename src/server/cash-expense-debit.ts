@@ -133,7 +133,7 @@ export async function attachConfirmedExpenseDebit(
   };
 }
 
-function createSupabaseExpenseDebitWriter(): ExpenseDebitWriter {
+export function createSupabaseExpenseDebitWriter(): ExpenseDebitWriter {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   if (!url || !serviceRoleKey) {
@@ -219,7 +219,7 @@ function businessDateInPortoNovo(date: Date) {
   }).format(date);
 }
 
-function fingerprint(value: Record<string, unknown>) {
+export function fingerprint(value: Record<string, unknown>) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
