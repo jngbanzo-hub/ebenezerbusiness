@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { resolveAuditUtcBounds } from "@/server/transferts-audit-date-bounds";
 
 import { authorizeAdminRequest } from "@/server/admin-authorization";
 import { callTransfertsReadApi, TransfertsConfigurationError } from "@/server/transferts-apps-script";
@@ -29,8 +30,7 @@ export async function GET(request: Request) {
     const payload = {
       agencyFrom: filters.agencyFrom,
       agencyTo: filters.agencyTo,
-      dateFrom: period.from,
-      dateTo: period.to,
+      ...resolveAuditUtcBounds(period),
       transferId: filters.transferId
     };
     const data = await callTransfertsReadApi(
