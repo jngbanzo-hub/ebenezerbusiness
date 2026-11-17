@@ -18,12 +18,15 @@ import { sentDestinationsForAgency, visibleSentTransfers } from "@/features/tran
 import { loadAgentTransfers, TransfertsApiError } from "@/features/transferts/api";
 import type { TransferAgency, TransferStatus, TransfersPageResponse } from "@/features/transferts/types";
 
+import { hasRecordedWithdrawalAndFinalization } from "./agent-transfer-history";
+import { AgentTransferHistoryPanel } from "./agent-transfer-history-panel";
+
 export function AgentTransfertsPage() {
   const router = useRouter();
   const [result, setResult] = useState<TransfersPageResponse | null>(null);
   const [error, setError] = useState("");
   const [token, setToken] = useState("");
-  const [direction, setDirection] = useState<"SENT" | "RECEIVED">("SENT");
+  const [direction, setDirection] = useState<"SENT" | "RECEIVED" | "WITHDRAWAL">("SENT");
   const [sentView, setSentView] = useState<"NEW" | "LIST" | "">("");
   const [destination, setDestination] = useState<TransferAgency | "">("");
   const [status, setStatus] = useState<TransferStatus | "">("");
@@ -67,7 +70,8 @@ export function AgentTransfertsPage() {
     if (direction === "SENT") {
       return visibleSentTransfers(result.transfers, result.agency, destination, status, search);
     }
-    return visibleAgentTransfers(result.transfers, result.agency, direction, origin, status, search);
+    return visibleAgentTransfers(result.transfers, result.agency, "RECEIVED", origin, status, search)
+      .filter(transfer => !hasRecordedWithdrawalAndFinalization(transfer));
   }, [destination, direction, origin, result, search, status]);
 
   const receivedOrigins = useMemo(
@@ -79,7 +83,7 @@ export function AgentTransfertsPage() {
     [result?.agency]
   );
   const selectedDestination = sentDestinations.includes(destination as TransferAgency) ? destination : "";
-  const showTransferList = direction === "RECEIVED" || sentView === "LIST";
+  const showTransferList = direction === "RECEIVED" || (direction === "SENT" && sentView === "LIST");
 
   return (
     <main className="min-h-screen bg-ebe-night py-8 text-white sm:py-12">
@@ -114,10 +118,15 @@ export function AgentTransfertsPage() {
             <p role="alert" className="text-sm text-amber-100">{error}</p>
           ) : result ? (
             <div className="space-y-3">
-              <div className="flex flex-wrap gap-2">
+              <nav aria-label="Vues des transferts" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 <Button variant={direction === "SENT" ? "default" : "outline"} onClick={() => setDirection("SENT")}>Envoyés</Button>
                 <Button variant={direction === "RECEIVED" ? "default" : "outline"} onClick={() => setDirection("RECEIVED")}>Reçus</Button>
-              </div>
+                <Button variant={direction === "WITHDRAWAL" ? "default" : "outline"} onClick={() => setDirection("WITHDRAWAL")}>Retrait</Button>
+              </nav>
+              {result.agency && (direction === "WITHDRAWAL") &&
+                <AgentTransferHistoryPanel key={direction} transfers={result.transfers} agency={result.agency}
+                  onSelect={setSelectedTransferId} />}
+              {direction === "RECEIVED" && <p className="text-sm text-muted-foreground">Les transferts finalisés avec retrait enregistré sont consultables dans Retrait.</p>}
               {direction === "SENT" && (
                 <div className="grid gap-2 sm:grid-cols-2" aria-label="Choix des transferts envoyés">
                   <Button type="button" variant={sentView === "NEW" ? "default" : "outline"} aria-pressed={sentView === "NEW"} onClick={() => setSentView("NEW")}>Nouveau transfert</Button>
@@ -162,6 +171,8 @@ export function AgentTransfertsPage() {
                     <p>Expéditeur : {transfer.senderName || "—"}</p>
                     <p>Bénéficiaire : {transfer.beneficiaryName || "—"}</p>
                   </div>
+                  {direction === "RECEIVED" && transfer.status === "CONFIRME" &&
+                    <p className="mt-2 text-amber-100">Clôture enregistrée — trace de retrait ou de finalisation incomplète ou incohérente. Vérification administrative nécessaire.</p>}
                   <Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => setSelectedTransferId(transfer.transferId)}>Voir les détails</Button>
                   {token && result.agency && <AgentTransferActions key={direction === "RECEIVED" ? transfer.status : direction} receivedView={direction === "RECEIVED"} token={token} transfer={transfer} agency={result.agency} enabled={result.writesEnabled} onSuccess={reload} />}
                 </div>
