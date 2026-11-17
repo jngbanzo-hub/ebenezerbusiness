@@ -256,8 +256,8 @@ test("affiche les libellés français tout en conservant les valeurs techniques"
   ]) {
     assert.match(source, new RegExp(`${value}: \\\"${label}`));
   }
-  assert.match(source, /customPeriodIncomplete = period === "CUSTOM" && \(!dateFrom \|\| !dateTo\)/);
-  assert.match(source, /!authorized \|\| !token\.current \|\| customPeriodIncomplete/);
+  assert.match(source, /customPeriodInvalid = period === "CUSTOM" && \(!dateFrom \|\| !dateTo \|\| dateFrom > dateTo\)/);
+  assert.match(source, /!authorized \|\| !token\.current \|\| customPeriodInvalid/);
 });
 
 test("refuse proprement les filtres, dates et circuits invalides", () => {
@@ -298,4 +298,19 @@ test("les routes Admin restent GET, contrôlent agence et flag avant Apps Script
   assert.ok(listRoute.includes("La consultation administrative des transferts n’est pas encore activée."));
   assert.ok(listRoute.includes("AdminTransferFilterError"));
   assert.ok(listRoute.includes("}, 400)"));
+});
+
+test("période personnalisée : journées civiles inclusives et filtres cumulés", () => {
+  const rows = [
+    ["avant","2026-10-31T22:59:59.999Z"], ["début","2026-10-31T23:00:00Z"],
+    ["fin1","2026-11-01T22:59:59.999Z"], ["fin2","2026-11-02T22:59:59.999Z"],
+    ["après","2026-11-02T23:00:00Z"]
+  ].map(([transferId,sentAt]) => transfer({transferId,sentAt}));
+  rows.push(...[{agencyFrom:"KLZ"},{agencyFrom:"COO",agencyTo:"FIH"},{status:"ANNULE"},{currency:"CDF"}]
+    .map(other => transfer({...rows[1], transferId:"exclu", ...other})));
+  const ids = (to) => statistics.filterAdminTransfers(rows, statistics.parseAdminTransferFilters(
+    new URLSearchParams({period:"CUSTOM",from:"2026-11-01",to,agencyFrom:"FIH",agencyTo:"COO",circuit:"FIH>COO",status:"ENVOYE",currency:"USD"})
+  )).map(row => row.transferId);
+  assert.deepEqual(ids("2026-11-01"), ["début","fin1"]);
+  assert.deepEqual(ids("2026-11-02"), ["début","fin1","fin2"]);
 });

@@ -66,7 +66,7 @@ export function AdminTransfertsPage({
   const [dateTo, setDateTo] = useState("");
   const [selectedTransferId, setSelectedTransferId] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
-  const customPeriodIncomplete = period === "CUSTOM" && (!dateFrom || !dateTo);
+  const customPeriodInvalid = period === "CUSTOM" && (!dateFrom || !dateTo || dateFrom > dateTo);
   const filters = useMemo(
     () => ({
       period,
@@ -76,8 +76,8 @@ export function AdminTransfertsPage({
       status,
       currency,
       transferId,
-      from: dateFrom,
-      to: dateTo
+      from: period === "CUSTOM" ? dateFrom : "",
+      to: period === "CUSTOM" ? dateTo : ""
     }),
     [agencyFrom, agencyTo, circuit, currency, dateFrom, dateTo, period, status, transferId]
   );
@@ -107,7 +107,7 @@ export function AdminTransfertsPage({
   }, [router]);
 
   useEffect(() => {
-    if (!authorized || !token.current || customPeriodIncomplete) return;
+    if (!authorized || !token.current || customPeriodInvalid) return;
     const controller = new AbortController();
     let active = true;
     async function load() {
@@ -144,10 +144,10 @@ export function AdminTransfertsPage({
     }
     void load();
     return () => { active = false; controller.abort(); };
-  }, [agencyFrom, agencyTo, authorized, circuit, currency, customPeriodIncomplete, dateFrom, dateTo, filters, period, reloadKey, router, status, transferId]);
+  }, [agencyFrom, agencyTo, authorized, circuit, currency, customPeriodInvalid, dateFrom, dateTo, filters, period, reloadKey, router, status, transferId]);
 
   useEffect(() => {
-    if (!authorized || !token.current || !result?.adminEnabled || customPeriodIncomplete) return;
+    if (!authorized || !token.current || !result?.adminEnabled || customPeriodInvalid) return;
     const controller = new AbortController();
     let active = true;
     async function loadAudit() {
@@ -157,7 +157,7 @@ export function AdminTransfertsPage({
       try {
         const loadedAudit = await loadAdminTransfersAudit(
           token.current,
-          { period, from: dateFrom, to: dateTo, agencyFrom, agencyTo, circuit, status, currency, transferId },
+          filters,
           controller.signal
         );
         if (active) setAudit(loadedAudit);
@@ -175,7 +175,7 @@ export function AdminTransfertsPage({
     }
     void loadAudit();
     return () => { active = false; controller.abort(); };
-  }, [agencyFrom, agencyTo, authorized, circuit, currency, customPeriodIncomplete, dateFrom, dateTo, period, reloadKey, result?.adminEnabled, router, status, transferId]);
+  }, [agencyFrom, agencyTo, authorized, circuit, currency, customPeriodInvalid, dateFrom, dateTo, filters, period, reloadKey, result?.adminEnabled, router, status, transferId]);
 
   async function handleSignOut() {
     await signOutAgent();
@@ -246,18 +246,20 @@ export function AdminTransfertsPage({
           setters={{ setPeriod, setAgencyFrom, setAgencyTo, setCircuit, setStatus, setCurrency, setTransferId, setDateFrom, setDateTo }}
         />
 
-        {loading ? (
+        {customPeriodInvalid ? (
+          <p role="status" className="mt-6">{dateFrom && dateTo ? "La fin ne peut pas précéder le début." : "Choisissez une date de début et une date de fin."}</p>
+        ) : loading ? (
           <GlassPanel className="mt-6 p-6 text-center">
             <LoaderCircle className="mx-auto h-6 w-6 animate-spin text-accent" />
           </GlassPanel>
         ) : view === "Statistiques" && result?.statistics ? (
-          <Statistics statistics={result.statistics} />
+          <Statistics statistics={result.statistics} transfers={result.transfers} periodLabel={period === "CUSTOM" ? `${dateFrom} au ${dateTo}` : periodLabels[period]} />
         ) : null}
 
-        {result?.adminEnabled && (view === "Envoyés" || view === "Reçus") && (
+        {!customPeriodInvalid && result?.adminEnabled && (view === "Envoyés" || view === "Reçus") && (
           <TransferTable result={result} view={view} onSelect={setSelectedTransferId} />
         )}
-        {result?.adminEnabled && view === "Audit" && (
+        {!customPeriodInvalid && result?.adminEnabled && view === "Audit" && (
           <AuditTable audit={audit} loading={auditLoading} error={auditError} />
         )}
 
@@ -280,15 +282,36 @@ export function AdminTransfertsPage({
   );
 }
 
-function Statistics({ statistics }: { statistics: AdminTransferStatistics }) {
+function Statistics({ statistics, transfers, periodLabel }: {
+  statistics: AdminTransferStatistics; transfers: TransfersPageResponse["transfers"]; periodLabel: string;
+}) {
+  const [circuitsOpen, setCircuitsOpen] = useState(false);
+  const selected = useMemo(() => {
+    const totals: AdminTransferStatistics["today"] = {
+      count: transfers.length, amountsByCurrency: { USD: 0, CDF: 0, XOF: 0 },
+      statuses: { ENVOYE: 0, CODE_RECU: 0, FONDS_RETIRES: 0, CONFIRME: 0, A_VERIFIER: 0, ANNULE: 0 }
+    };
+    for (const transfer of transfers) {
+      totals.amountsByCurrency[transfer.currency] += transfer.amount;
+      totals.statuses[transfer.status]++;
+    }
+    return totals;
+  }, [transfers]);
   return (
     <>
+      <p className="my-4 text-sm text-muted-foreground">Chiffres établis sur les transferts renvoyés par le serveur. La période porte sur la date d’envoi à Porto-Novo.</p>
+      <PeriodCard title={`Période sélectionnée · ${periodLabel}`} data={selected} />
+      <p className="mt-6 text-sm text-muted-foreground">Repères fixes : le jour, le mois et les circuits du mois suivent les autres filtres, indépendamment de la période sélectionnée.</p>
       <section className="mt-6 grid gap-5 lg:grid-cols-2">
         <PeriodCard title={`Aujourd’hui · ${statistics.todayKey}`} data={statistics.today} />
         <PeriodCard title={`Mois en cours · ${statistics.monthKey}`} data={statistics.currentMonth} />
       </section>
       <GlassPanel className="mt-6 overflow-x-auto p-5 sm:p-6">
         <h2 className="text-xl font-semibold">Circuits du mois</h2>
+        <button type="button" aria-expanded={circuitsOpen} aria-controls="monthly-circuits" onClick={() => setCircuitsOpen(open => !open)} className="mt-3 min-h-11 rounded-md border border-white/20 px-4 text-sm font-semibold">
+          {circuitsOpen ? "MASQUER LES CIRCUITS" : "VOIR LES CIRCUITS"}
+        </button>
+        <div id="monthly-circuits" hidden={!circuitsOpen}>
         <table className="mt-5 min-w-full text-left text-sm">
           <thead className="text-muted-foreground"><tr><th className="p-2">Circuit</th><th>Codes</th><th>Montants</th><th>ENVOYE</th><th>CODE_RECU</th><th>FONDS_RETIRES</th><th>CONFIRME</th><th>A_VERIFIER</th><th>ANNULE</th></tr></thead>
           <tbody>
@@ -298,6 +321,7 @@ function Statistics({ statistics }: { statistics: AdminTransferStatistics }) {
             })}
           </tbody>
         </table>
+        </div>
       </GlassPanel>
     </>
   );
