@@ -119,9 +119,9 @@ export function AgentTransfertsPage() {
           ) : result ? (
             <div className="space-y-3">
               <nav aria-label="Vues des transferts" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                <Button variant={direction === "SENT" ? "default" : "outline"} onClick={() => setDirection("SENT")}>Envoyés</Button>
-                <Button variant={direction === "RECEIVED" ? "default" : "outline"} onClick={() => setDirection("RECEIVED")}>Reçus</Button>
-                <Button variant={direction === "WITHDRAWAL" ? "default" : "outline"} onClick={() => setDirection("WITHDRAWAL")}>Retrait</Button>
+                <Button variant={direction === "SENT" ? "default" : "outline"} aria-pressed={direction === "SENT"} className={direction === "SENT" ? "bg-ebe-growth text-ebe-night hover:bg-ebe-growth focus-visible:ring-ebe-growth" : undefined} onClick={() => setDirection("SENT")}>Envoyés</Button>
+                <Button variant={direction === "RECEIVED" ? "default" : "outline"} aria-pressed={direction === "RECEIVED"} className={direction === "RECEIVED" ? "bg-ebe-growth text-ebe-night hover:bg-ebe-growth focus-visible:ring-ebe-growth" : undefined} onClick={() => setDirection("RECEIVED")}>Reçus</Button>
+                <Button variant={direction === "WITHDRAWAL" ? "default" : "outline"} aria-pressed={direction === "WITHDRAWAL"} className={direction === "WITHDRAWAL" ? "bg-ebe-growth text-ebe-night hover:bg-ebe-growth focus-visible:ring-ebe-growth" : undefined} onClick={() => setDirection("WITHDRAWAL")}>Retrait</Button>
               </nav>
               {result.agency && (direction === "WITHDRAWAL") &&
                 <AgentTransferHistoryPanel key={direction} transfers={result.transfers} agency={result.agency}
@@ -129,8 +129,8 @@ export function AgentTransfertsPage() {
               {direction === "RECEIVED" && <p className="text-sm text-muted-foreground">Les transferts finalisés avec retrait enregistré sont consultables dans Retrait.</p>}
               {direction === "SENT" && (
                 <div className="grid gap-2 sm:grid-cols-2" aria-label="Choix des transferts envoyés">
-                  <Button type="button" variant={sentView === "NEW" ? "default" : "outline"} aria-pressed={sentView === "NEW"} onClick={() => setSentView("NEW")}>Nouveau transfert</Button>
-                  <Button type="button" variant={sentView === "LIST" ? "default" : "outline"} aria-pressed={sentView === "LIST"} onClick={() => setSentView("LIST")}>Les transferts</Button>
+                  <Button type="button" variant={sentView === "NEW" ? "default" : "outline"} aria-pressed={sentView === "NEW"} className={sentView === "NEW" ? "bg-ebe-growth text-ebe-night hover:bg-ebe-growth focus-visible:ring-ebe-growth" : undefined} onClick={() => setSentView("NEW")}>Nouveau transfert</Button>
+                  <Button type="button" variant={sentView === "LIST" ? "default" : "outline"} aria-pressed={sentView === "LIST"} className={sentView === "LIST" ? "bg-ebe-growth text-ebe-night hover:bg-ebe-growth focus-visible:ring-ebe-growth" : undefined} onClick={() => setSentView("LIST")}>Les transferts</Button>
                 </div>
               )}
               {showTransferList && <div className="flex flex-wrap gap-2">
