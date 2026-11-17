@@ -163,7 +163,7 @@ export function AgentTransfertsPage() {
                     <p>Bénéficiaire : {transfer.beneficiaryName || "—"}</p>
                   </div>
                   <Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => setSelectedTransferId(transfer.transferId)}>Voir les détails</Button>
-                  {token && result.agency && <AgentTransferActions token={token} transfer={transfer} agency={result.agency} enabled={result.writesEnabled} onSuccess={reload} />}
+                  {token && result.agency && <AgentTransferActions key={direction === "RECEIVED" ? transfer.status : direction} receivedView={direction === "RECEIVED"} token={token} transfer={transfer} agency={result.agency} enabled={result.writesEnabled} onSuccess={reload} />}
                 </div>
               ))}
               {showTransferList && (direction === "RECEIVED" || selectedDestination) && !visibleTransfers.length && (
